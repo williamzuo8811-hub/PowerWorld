@@ -191,6 +191,8 @@ function openFinance(): void {
       hedges: sim.hedges,
       insured: sim.insured,
       premiumPerDay: sim.insurancePremiumPerDay,
+      creditRating: sim.creditRating,
+      creditScore: sim.creditScore,
     },
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },

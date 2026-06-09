@@ -112,6 +112,10 @@ export const LOAN_BASE_CREDIT = 250_000; // 基础信用额度
 export const LOAN_CREDIT_ASSET_FRAC = 0.6; // 资产可抵押比例
 export const LOAN_BASE_DAILY_RATE = 0.004; // 基础日利率（0.4%/游戏天）
 export const LOAN_RISK_SPREAD = 0.006; // 负债率风险溢价（最高再加 0.6%/天）
+// 信用评级：由净资产/杠杆/可靠性/盈利综合而成，影响利率与融资上限。
+export const RATING_RATE_SPAN = 0.012; // 评级对日利率的最大附加（最差评级 +1.2%/天）
+export const RATING_REF_NETWORTH = 1_000_000; // 净资产评分参考
+export const RATING_REF_PROFIT = 40_000; // 日均利润评分参考
 
 // —— 远期合约 / 套期保值 ——
 // 锁定一部分电量的结算价（差价合约）：市价低于锁价时获补偿、高于时让出收益，平抑波动。

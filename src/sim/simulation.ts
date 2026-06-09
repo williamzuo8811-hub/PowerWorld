@@ -10,7 +10,8 @@ import { demandMultiplier, renewableAvailability } from './profiles';
 import {
   PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
-  LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE, LOAN_RISK_SPREAD,
+  LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE,
+  RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
   MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS,
@@ -243,16 +244,40 @@ export class Simulation {
     for (const ln of this.grid.lines.values()) v += ln.length * VOLTAGE[ln.voltage].costPerTile;
     return v;
   }
-  /** 信用额度 = 基础额度 + 资产抵押 */
+  /** 杠杆率（以资产+基础额度为基数，避免与信用额度循环依赖） */
+  get leverage(): number {
+    return this.debt / Math.max(this.assetValue + LOAN_BASE_CREDIT, 1);
+  }
+  /** 信用评分 0..100：净资产/杠杆/可靠性/盈利综合 */
+  get creditScore(): number {
+    const leverageScore = 1 - clamp(this.leverage, 0, 1);
+    const netWorthScore = clamp(0.5 + this.netWorth / (2 * RATING_REF_NETWORTH), 0, 1);
+    const reliabScore = clamp(this.reliability, 0, 1);
+    const profitScore = clamp(0.5 + this.finance.net / (2 * RATING_REF_PROFIT), 0, 1);
+    return (0.3 * leverageScore + 0.3 * netWorthScore + 0.2 * reliabScore + 0.2 * profitScore) * 100;
+  }
+  /** 信用评级字母 */
+  get creditRating(): string {
+    const s = this.creditScore;
+    if (s >= 90) return 'AAA';
+    if (s >= 80) return 'AA';
+    if (s >= 70) return 'A';
+    if (s >= 60) return 'BBB';
+    if (s >= 50) return 'BB';
+    if (s >= 40) return 'B';
+    if (s >= 25) return 'CCC';
+    return 'D';
+  }
+  /** 信用额度 = (基础额度 + 资产抵押) × 评级系数(0.5~1.5) */
   get creditLimit(): number {
-    return LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC;
+    return (LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC) * (0.5 + this.creditScore / 100);
   }
   get debtRatio(): number {
     return this.creditLimit > 0 ? this.debt / this.creditLimit : 0;
   }
-  /** 日利率：基础 + 负债率风险溢价 */
+  /** 日利率：基础 + 评级风险溢价（评级越差越高） */
   get loanDailyRate(): number {
-    return LOAN_BASE_DAILY_RATE + clamp(this.debtRatio, 0, 1) * LOAN_RISK_SPREAD;
+    return LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN;
   }
   /** 净资产 = 现金 + 资产 − 负债 */
   get netWorth(): number {
