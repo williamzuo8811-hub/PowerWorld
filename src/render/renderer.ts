@@ -3,7 +3,7 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { Bus, Line } from '../sim/types';
 import { Grid } from '../sim/grid';
-import { PLANTS, VOLTAGE } from '../config/components';
+import { PLANTS, VOLTAGE, BATTERY } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
@@ -203,6 +203,14 @@ export class Renderer {
         // 用一个房子状的多边形表示负荷
         g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
           .fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+      } else if (bus.kind === 'storage') {
+        // 储能：圆角矩形 + 底部 SoC 电量条
+        g.roundRect(cx - r, cy - r * 0.85, r * 2, r * 1.7, 3).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        const bat = this.grid.batteriesAtBus(bus.id)[0];
+        if (bat) {
+          const f = Math.max(0, Math.min(1, bat.soc / bat.energyCapacity));
+          g.rect(cx - r + 1.5, cy + r * 0.5, (r * 2 - 3) * f, 3).fill({ color: 0xeafff2 });
+        }
       } else {
         // 变电站：菱形
         g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
@@ -253,6 +261,7 @@ function busColor(grid: Grid, bus: Bus): number {
     return gen ? PLANTS[gen.type].color : 0x9aa4ad;
   }
   if (bus.kind === 'substation') return 0x4f6b82;
+  if (bus.kind === 'storage') return BATTERY.color;
   // 负荷按画像着色
   const load = grid.loadsAtBus(bus.id)[0];
   if (load?.profile === 'industrial') return 0xc98b6b;
@@ -272,6 +281,14 @@ function busLabel(grid: Grid, bus: Bus): string {
   if (bus.kind === 'substation') {
     if (bus.transformerTripped) return `${bus.name} ⚠跳闸`;
     return `${bus.name} ${(bus.throughput ?? 0).toFixed(0)}/${bus.rating ?? 0}`;
+  }
+  if (bus.kind === 'storage') {
+    const b = grid.batteriesAtBus(bus.id)[0];
+    if (b) {
+      const pct = ((b.soc / b.energyCapacity) * 100).toFixed(0);
+      const act = b.output > 0.1 ? `放${b.output.toFixed(0)}` : b.output < -0.1 ? `充${(-b.output).toFixed(0)}` : '待机';
+      return `${bus.name} ${pct}% ${act}`;
+    }
   }
   return bus.name;
 }

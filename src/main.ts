@@ -3,12 +3,12 @@ import { Simulation } from './sim/simulation';
 import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
 import type { Bus } from './sim/types';
-import { PLANTS, SUBSTATION_CAPEX, VOLTAGE } from './config/components';
+import { PLANTS, SUBSTATION_CAPEX, BATTERY, VOLTAGE } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -112,6 +112,15 @@ function handleClick(clientX: number, clientY: number): void {
       } else flashHint('资金不足');
       return;
     }
+    case 'battery': {
+      const p = snap(tile);
+      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
+      if (sim.spend(BATTERY.capex)) {
+        sim.grid.addBattery(p.x, p.y);
+        sim.log('info', `新建储能 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（需经变电站接入）`);
+      } else flashHint('资金不足');
+      return;
+    }
     case 'bulldoze': {
       if (bus) {
         sim.grid.removeBus(bus.id);
@@ -167,6 +176,13 @@ function busInspectorHtml(bus: Bus): string {
     rows.push(row('状态', bus.transformerTripped ? '⚠ 跳闸(点此重合闸)' : '正常'));
     const n = [...sim.grid.lines.values()].filter((ln) => ln.from === bus.id || ln.to === bus.id).length;
     rows.push(row('接入线路', `${n} 条`));
+  } else if (bus.kind === 'storage') {
+    const b = sim.grid.batteriesAtBus(bus.id)[0];
+    if (b) {
+      rows.push(row('电量', `${b.soc.toFixed(0)} / ${b.energyCapacity} MWh (${((b.soc / b.energyCapacity) * 100).toFixed(0)}%)`));
+      rows.push(row('功率', `${b.powerRating} MW`));
+      rows.push(row('状态', b.output > 0.1 ? `放电 ${b.output.toFixed(1)}MW` : b.output < -0.1 ? `充电 ${(-b.output).toFixed(1)}MW` : '待机'));
+    }
   }
   return rows.join('');
 }

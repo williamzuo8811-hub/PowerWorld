@@ -47,6 +47,16 @@ export const PLANTS: Record<PlantType, PlantSpec> = {
 export const SUBSTATION_CAPEX = 32_000; // 变电站造价
 export const SUBSTATION_RATING = 90; // 变电站变压器默认容量 (MW)
 
+// —— 储能电池规格 ——
+export const BATTERY = {
+  label: '储能',
+  powerRating: 25, // 充放电功率 (MW)
+  energyCapacity: 100, // 容量 (MWh) ≈ 满功率 4 小时
+  capex: 175_000,
+  roundTrip: 0.9, // 往返效率
+  color: 0x4ade80,
+};
+
 // —— 电压等级规格 ——
 // HV 高压输电：损耗低、容量大、造价高；MV 中压配电：损耗高、容量小、造价低。
 // 这就是"为什么要升压远距离输电、再降压配电"的玩法动机。

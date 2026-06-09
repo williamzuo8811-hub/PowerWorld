@@ -2,7 +2,7 @@
 // 整个仿真核心是纯数据 + 纯函数，不依赖任何渲染库，便于单元测试与替换前端。
 
 /** 母线（电网节点）的种类 */
-export type BusKind = 'plant' | 'substation' | 'load';
+export type BusKind = 'plant' | 'substation' | 'load' | 'storage';
 
 /** 机组类型 */
 export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear';
@@ -44,6 +44,17 @@ export interface Generator {
   marginalCost: number; // 边际（燃料）成本 ($/MWh)
   dispatchable: boolean; // 是否可调度（火电/核电=是；风/光=否，靠天吃饭）
   availability: number; // 0..1，本 tick 可用出力系数（新能源由天气决定）
+}
+
+/** 储能电池（双向：放电=电源，充电=负荷） */
+export interface Battery {
+  id: number;
+  busId: number;
+  powerRating: number; // 充放电功率上限 (MW)
+  energyCapacity: number; // 能量容量 (MWh)
+  soc: number; // 当前储能 (MWh)
+  output: number; // 本 tick 出力 (MW)：放电为正、充电为负
+  roundTrip: number; // 往返效率 0..1（充电按此打折计入 SoC）
 }
 
 /** 负荷（用电需求，挂在某条母线上） */

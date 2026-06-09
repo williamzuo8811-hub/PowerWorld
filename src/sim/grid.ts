@@ -1,12 +1,13 @@
 // 电网图容器：管理母线、机组、负荷、线路，并提供拓扑分析（连通分量 = 孤岛）。
-import type { Bus, Generator, Load, Line, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
-import { PLANTS, VOLTAGE, SUBSTATION_RATING, X_PER_TILE, R_PER_TILE } from '../config/components';
+import type { Bus, Generator, Load, Line, Battery, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
+import { PLANTS, VOLTAGE, SUBSTATION_RATING, BATTERY, X_PER_TILE, R_PER_TILE } from '../config/components';
 
 export class Grid {
   buses = new Map<number, Bus>();
   gens = new Map<number, Generator>();
   loads = new Map<number, Load>();
   lines = new Map<number, Line>();
+  batteries = new Map<number, Battery>();
   private nextId = 1;
 
   private id(): number {
@@ -40,6 +41,22 @@ export class Grid {
     bus.transformerTripped = false;
     bus.transformerTimer = 0;
     return bus;
+  }
+
+  /** 建一座储能电站：自动创建母线 + 电池 */
+  addBattery(x: number, y: number): { bus: Bus; battery: Battery } {
+    const bus = this.addBus('storage', x, y, BATTERY.label);
+    const battery: Battery = {
+      id: this.id(), busId: bus.id,
+      powerRating: BATTERY.powerRating, energyCapacity: BATTERY.energyCapacity,
+      soc: BATTERY.energyCapacity * 0.5, output: 0, roundTrip: BATTERY.roundTrip,
+    };
+    this.batteries.set(battery.id, battery);
+    return { bus, battery };
+  }
+
+  batteriesAtBus(busId: number): Battery[] {
+    return [...this.batteries.values()].filter((b) => b.busId === busId);
   }
 
   /** 建一个负荷点（城市区块），用于关卡初始化 */
@@ -98,6 +115,7 @@ export class Grid {
   removeBus(busId: number): void {
     for (const g of [...this.gens.values()]) if (g.busId === busId) this.gens.delete(g.id);
     for (const l of [...this.loads.values()]) if (l.busId === busId) this.loads.delete(l.id);
+    for (const b of [...this.batteries.values()]) if (b.busId === busId) this.batteries.delete(b.id);
     for (const ln of [...this.lines.values()]) if (ln.from === busId || ln.to === busId) this.lines.delete(ln.id);
     this.buses.delete(busId);
   }

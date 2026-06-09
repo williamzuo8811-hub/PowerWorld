@@ -2,13 +2,13 @@
 // 渲染与仿真无关，只读快照 + 暴露当前工具/速度给 main 使用。
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, VOLTAGE, TIME_SCALES,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, BATTERY, VOLTAGE, TIME_SCALES,
   FREQ_NOMINAL, WIN_DAY, WIN_RELIABILITY,
 } from '../config/components';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'bulldoze';
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'bulldoze';
 
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
@@ -21,6 +21,7 @@ const TOOLS: ToolDef[] = [
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·看风` },
   { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·白天` },
   { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·基荷` },
+  { id: 'battery', label: `▰ 储能 ${BATTERY.powerRating}MW`, sub: `¥${fmt(BATTERY.capex)}·${BATTERY.energyCapacity}MWh` },
   { id: 'bulldoze', label: '✕ 拆除', sub: '移除设备 / 线路' },
 ];
 

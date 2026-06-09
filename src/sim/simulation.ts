@@ -216,27 +216,56 @@ export class Simulation {
     }
     // 新能源先按可用出力发满
     for (const g of gens) if (!g.dispatchable) g.output = availMax.get(g.id) ?? 0;
+    let genBase = gens.reduce((s, g) => s + g.output, 0);
 
-    let totalGen = gens.reduce((s, g) => s + g.output, 0);
+    // —— 储能调度：缺电则放电补缺口，过剩则充电吸收 ——
+    const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId));
+    for (const b of batteries) b.output = 0;
+    const net = demand - genBase; // >0 缺口；<0 过剩
+    if (net > 0.01) {
+      let need = net;
+      for (const b of [...batteries].sort((x, y) => y.soc - x.soc)) {
+        const avail = Math.min(b.powerRating, b.soc / Math.max(dtHours, 1e-6));
+        const give = clamp(need, 0, avail);
+        b.output = give;
+        b.soc = Math.max(0, b.soc - give * dtHours);
+        need -= give;
+      }
+    } else if (net < -0.01) {
+      let surplus = -net;
+      for (const b of [...batteries].sort((x, y) => x.soc - y.soc)) {
+        const room = (b.energyCapacity - b.soc) / Math.max(dtHours * b.roundTrip, 1e-6);
+        const take = clamp(surplus, 0, Math.min(b.powerRating, room));
+        b.output = -take;
+        b.soc = Math.min(b.energyCapacity, b.soc + take * b.roundTrip * dtHours);
+        surplus -= take;
+      }
+    }
+    const dischargeSum = batteries.reduce((s, b) => s + Math.max(0, b.output), 0);
+    const chargeSum = batteries.reduce((s, b) => s + Math.max(0, -b.output), 0);
 
-    // 过剩则弃风弃光（优先削减新能源，保持系统平衡）
-    if (totalGen > demand + 0.01 && demand > 0.01) {
-      let excess = totalGen - demand;
+    // 仍有过剩（充电也吸收不完）则弃风弃光，保持系统平衡
+    let supply = genBase + dischargeSum;
+    const consumption = demand + chargeSum;
+    if (supply > consumption + 0.01) {
+      const excess = supply - consumption;
       const renew = gens.filter((g) => !g.dispatchable && g.output > 0);
       const renewTotal = renew.reduce((s, g) => s + g.output, 0);
       if (renewTotal > 0) {
         const scale = Math.max(0, (renewTotal - excess) / renewTotal);
         for (const g of renew) g.output *= scale;
       }
-      totalGen = gens.reduce((s, g) => s + g.output, 0);
+      genBase = gens.reduce((s, g) => s + g.output, 0);
+      supply = genBase + dischargeSum;
     }
 
-    const served = Math.min(demand, totalGen);
+    const totalGen = supply; // 含储能放电的总电源
+    const served = Math.min(demand, supply - chargeSum); // 扣掉充电占用后真正送到负荷的功率
     const ratio = demand > 0 ? served / demand : 1;
-    const islandDead = totalGen < 0.01 && demand > 0.01;
+    const islandDead = supply < 0.01 && demand > 0.01;
 
-    // 频率：低于阈值视为低频减载（已通过 served<demand 自然甩负荷）
-    const freq = freqFromBalance(totalGen, demand);
+    // 频率：由"总供给 vs 总消费(含充电)"失衡推算，过低则甩负荷
+    const freq = freqFromBalance(supply, consumption);
     const shedding = freq < FREQ_SHED_THRESHOLD || islandDead;
 
     // 分配实际供电到各负荷，并标记停电
@@ -255,6 +284,7 @@ export class Simulation {
     const injection = new Map<number, number>();
     for (const id of busIds) injection.set(id, 0);
     for (const g of gens) injection.set(g.busId, (injection.get(g.busId) ?? 0) + g.output);
+    for (const b of batteries) injection.set(b.busId, (injection.get(b.busId) ?? 0) + b.output); // 放电+ / 充电-
     for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served);
 
     const islandLines = [...this.grid.lines.values()].filter(
