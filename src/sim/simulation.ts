@@ -29,6 +29,7 @@ import {
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
+  CAPACITY_PRICE_PER_MW_DAY, CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT,
   type CompetitorSpec,
 } from '../config/components';
 
@@ -141,7 +142,7 @@ export class Simulation {
   options: PriceOption[] = []; // 活跃电力期权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -193,7 +194,7 @@ export class Simulation {
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -754,6 +755,18 @@ export class Simulation {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
 
+    // —— 容量补偿：按可用确定性容量获补偿（奖励保留备用）——
+    let firmCapacity = 0;
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      firmCapacity += g.capacity * CAPACITY_CREDIT[g.type];
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) firmCapacity += b.powerRating * BATTERY_CAPACITY_CREDIT;
+    }
+    const capacityIncome = firmCapacity * CAPACITY_PRICE_PER_MW_DAY * omDayFrac;
+
     // —— 贷款利息 + 保险费 + 市场购电/联络线费 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
@@ -762,8 +775,8 @@ export class Simulation {
     const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（扣除各项成本，加套保差价/绿证收入）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee + hedgeIncome + recIncome;
+    // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee + hedgeIncome + recIncome + capacityIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -779,6 +792,7 @@ export class Simulation {
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
     this.finance.market = ema(this.finance.market, -(importCost + marketFee) * toDay);
+    this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
@@ -786,7 +800,7 @@ export class Simulation {
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty
-      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market;
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
