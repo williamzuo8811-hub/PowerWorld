@@ -29,6 +29,8 @@ export interface FinanceData {
   competitors: { name: string; capacity: number; marginalCost: number }[];
   capacityPrice: number;
   capacityAdequacy: number;
+  regPrice: number;
+  reservePrice: number;
   capCommitMW: number;
   zoneNorth: number;
   zoneSouth: number;
@@ -132,6 +134,7 @@ export class FinancePanel {
         d.capacityAdequacy < 1 ? 'freq-warn' : '')
       + row('北区/南区价 · 跨区套利', `¥${d.zoneNorth.toFixed(0)} / ¥${d.zoneSouth.toFixed(0)} · ${d.zoneArbMW.toFixed(0)}MW`,
         d.zoneArbMW > 0 ? 'freq-ok' : '')
+      + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`)
       + d.competitors.map((c) => row(`· ${c.name}`, `${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh`)).join('');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {

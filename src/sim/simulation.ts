@@ -32,7 +32,9 @@ import {
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
-  AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR, FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
+  AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
+  AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX,
+  FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
@@ -165,6 +167,8 @@ export class Simulation {
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
   capacityPrice = CAPACITY_PRICE_BASE; // 当前容量拍卖价 ¥/(MW·天)
   capacityAdequacy = 1; // 区域容量充裕度
+  regPrice = AS_REG_PRICE_BASE; // 当前调频出清价 ¥/(MW·天)
+  reservePrice = AS_RESERVE_PRICE_BASE; // 当前备用出清价 ¥/(MW·天)
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -234,6 +238,8 @@ export class Simulation {
     this.marketShare = 0;
     this.capacityPrice = CAPACITY_PRICE_BASE;
     this.capacityAdequacy = 1;
+    this.regPrice = AS_REG_PRICE_BASE;
+    this.reservePrice = AS_RESERVE_PRICE_BASE;
     this.history = [];
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
@@ -907,7 +913,15 @@ export class Simulation {
       const bus = this.grid.buses.get(b.busId);
       if (bus && !bus.underConstruction) regCap += b.powerRating * this.tech.batteryPowerFactor;
     }
-    const ancillaryIncome = (regCap * AS_REG_PRICE + reserveCap * AS_RESERVE_PRICE) * omDayFrac;
+    // 辅助服务竞价出清：需求∝区域需求，供给含竞争对手快速/闲置容量
+    const compCap = this.competitors.reduce((s, c) => s + c.capacity, 0);
+    const regReq = this.regionalDemand * AS_REG_REQ_FRAC;
+    const regSupply = regCap + compCap * AS_COMP_FAST_FRAC;
+    this.regPrice = AS_REG_PRICE_BASE * clamp(1 + (AS_ADEQ_REF - regSupply / Math.max(regReq, 1)) * AS_K, AS_PRICE_MIN, AS_PRICE_MAX);
+    const reserveReq = this.regionalDemand * AS_RESERVE_REQ_FRAC;
+    const reserveSupply = reserveCap + compCap * AS_COMP_RESERVE_FRAC;
+    this.reservePrice = AS_RESERVE_PRICE_BASE * clamp(1 + (AS_ADEQ_REF - reserveSupply / Math.max(reserveReq, 1)) * AS_K, AS_PRICE_MIN, AS_PRICE_MAX);
+    const ancillaryIncome = (regCap * this.regPrice + reserveCap * this.reservePrice) * omDayFrac;
 
     // —— 远期容量结算：差价合约(锁价−现货) − 欠交付罚款 ——
     this.capCommitments = this.capCommitments.filter((c) => this.clock < c.endClock);

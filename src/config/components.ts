@@ -210,11 +210,19 @@ export const DR_FRACTION = 0.12; // 可削减的需求比例
 export const DR_TRIGGER_PRICE = 110; // 现货价高于此触发需求响应
 export const DR_INCENTIVE = 90; // 削减激励 ¥/MWh（低于峰荷供电成本）
 
-// —— 辅助服务市场（调频 + 运行备用）——
-// 快速资源(储能/燃气)提供调频、闲置可调容量提供备用，各获容量型收入。
-export const AS_REG_PRICE = 6; // 调频容量价 ¥/(MW·天)
-export const AS_RESERVE_PRICE = 2.5; // 备用容量价 ¥/(MW·天)
+// —— 辅助服务市场（调频 + 运行备用，竞价出清）——
+// 系统调频/备用需求∝区域需求；供给=你+竞争对手的快速/闲置容量。紧张则价高。
+export const AS_REG_PRICE_BASE = 6; // 调频基准价 ¥/(MW·天)
+export const AS_RESERVE_PRICE_BASE = 2.5; // 备用基准价 ¥/(MW·天)
 export const AS_GAS_REG_FACTOR = 0.5; // 燃气可提供调频的容量比例
+export const AS_REG_REQ_FRAC = 0.10; // 调频需求占区域需求比例
+export const AS_RESERVE_REQ_FRAC = 0.20; // 备用需求占区域需求比例
+export const AS_COMP_FAST_FRAC = 0.05; // 竞争对手可提供调频的容量比例（仅少量机组快速）
+export const AS_COMP_RESERVE_FRAC = 0.10; // 竞争对手可提供备用的容量比例
+export const AS_ADEQ_REF = 1.2; // 充裕度参考点
+export const AS_K = 2.5; // 价格对充裕度的敏感度
+export const AS_PRICE_MIN = 0.4; // 价格下限系数
+export const AS_PRICE_MAX = 3.0; // 价格上限系数
 
 // —— 远期容量拍卖 ——
 // 提前承诺一定容量、锁定容量价（差价合约），平抑容量价波动；但负有交付义务，欠交付罚款。
