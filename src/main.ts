@@ -14,7 +14,10 @@ import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
-import { PLANTS, SUBSTATION_CAPEX, BATTERY, VOLTAGE } from './config/components';
+import {
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE,
+  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE,
+} from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
@@ -188,6 +191,12 @@ function snap(t: { x: number; y: number }): { x: number; y: number } {
   return { x: Math.round(t.x), y: Math.round(t.y) };
 }
 
+/** 把刚下单的资产置为"在建中"：已付 capex，工期结束后才投运 */
+function startBuild(target: { underConstruction?: boolean; commissionAt?: number }, days: number): void {
+  target.underConstruction = true;
+  target.commissionAt = sim.clock + days * 24;
+}
+
 function handleClick(clientX: number, clientY: number): void {
   if (menuOpen || panelOpen || sim.gameOver) return;
   const tile = renderer.screenToTile(clientX, clientY);
@@ -232,10 +241,11 @@ function handleClick(clientX: number, clientY: number): void {
           } else {
             const cost = sim.grid.lineCost(pendingFrom.id, bus.id);
             if (sim.spend(cost)) {
-              sim.grid.addLine(pendingFrom.id, bus.id);
+              const ln = sim.grid.addLine(pendingFrom.id, bus.id);
+              startBuild(ln, LINE_BUILD_DAYS_BASE + LINE_BUILD_DAYS_PER_TILE * ln.length);
               invalidateN1();
               sound.build();
-              sim.log('info', `架设${VOLTAGE[chk.voltage!].label}线路 ¥${cost.toLocaleString('en-US')}`);
+              sim.log('info', `架设${VOLTAGE[chk.voltage!].label}线路开工 ¥${cost.toLocaleString('en-US')}`);
             } else {
               flashHint('资金不足，无法架线'); sound.error();
             }
@@ -250,10 +260,11 @@ function handleClick(clientX: number, clientY: number): void {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       if (sim.spend(SUBSTATION_CAPEX)) {
-        sim.grid.addSubstation(p.x, p.y);
+        const sub = sim.grid.addSubstation(p.x, p.y);
+        startBuild(sub, SUBSTATION_BUILD_DAYS);
         invalidateN1();
         sound.build();
-        sim.log('info', '新建变电站');
+        sim.log('info', `变电站开工（工期${SUBSTATION_BUILD_DAYS}天）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -261,10 +272,11 @@ function handleClick(clientX: number, clientY: number): void {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       if (sim.spend(BATTERY.capex)) {
-        sim.grid.addBattery(p.x, p.y);
+        const { bus: bbus } = sim.grid.addBattery(p.x, p.y);
+        startBuild(bbus, BATTERY.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `新建储能 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（需经变电站接入）`);
+        sim.log('info', `储能开工 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（工期${BATTERY.buildDays}天，需经变电站接入）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -288,10 +300,11 @@ function handleClick(clientX: number, clientY: number): void {
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       const spec = PLANTS[type];
       if (sim.spend(spec.capex)) {
-        sim.grid.addPlant(type, p.x, p.y);
+        const { bus: pbus } = sim.grid.addPlant(type, p.x, p.y);
+        startBuild(pbus, spec.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `新建${spec.label}电厂 (${spec.capacity}MW)`);
+        sim.log('info', `${spec.label}电厂开工 (${spec.capacity}MW·工期${spec.buildDays}天)`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -306,6 +319,10 @@ function flashHint(text: string): void {
 
 function busInspectorHtml(bus: Bus): string {
   const rows: string[] = [`<div class="h">${bus.name}</div>`];
+  if (bus.underConstruction) {
+    const remDays = Math.max(0, ((bus.commissionAt ?? 0) - sim.clock) / 24);
+    rows.push(row('状态', `🏗 建设中 · 剩 ${remDays.toFixed(1)} 天`));
+  }
   if (bus.kind === 'plant') {
     const gen = sim.grid.gensAtBus(bus.id)[0];
     if (gen) {
@@ -410,6 +427,7 @@ async function start(): Promise<void> {
       if (sim.gameOver && !wasGameOver) (sim.win ? sound.win() : sound.lose());
       wasGameOver = sim.gameOver;
     }
+    renderer.clock = sim.clock;
     renderer.update(dt);
     if (hintTimer > 0) {
       hintTimer -= dt;

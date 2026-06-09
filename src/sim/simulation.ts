@@ -7,7 +7,7 @@ import { EventSystem } from './events';
 import { TechState } from './tech';
 import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
-import { PLANTS, VOLTAGE } from '../config/components';
+import { PLANTS, VOLTAGE, BATTERY, SUBSTATION_OM_PER_DAY } from '../config/components';
 import {
   START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -191,6 +191,17 @@ export class Simulation {
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
     this.events.update(this);
 
+    // —— 工程投运：到期的在建资产投入运行 ——
+    for (const bus of this.grid.buses.values()) {
+      if (bus.underConstruction && this.clock >= (bus.commissionAt ?? 0)) {
+        bus.underConstruction = false;
+        this.log('good', `🏗 ${bus.name} 建成投运`);
+      }
+    }
+    for (const ln of this.grid.lines.values()) {
+      if (ln.underConstruction && this.clock >= (ln.commissionAt ?? 0)) ln.underConstruction = false;
+    }
+
     // —— 更新负荷需求（城市增长 + 噪声 + 事件需求系数 + 需求响应科技）——
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * dtHours;
@@ -284,8 +295,21 @@ export class Simulation {
     // —— 碳成本 ——
     const carbonCost = co2Rate * this.carbonPrice * dtHours;
 
-    // —— 结算（口碑影响等效电价）——
-    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty;
+    // —— 固定运维成本（仅已投运资产）——
+    const omDayFrac = dtHours / 24;
+    let omCost = 0;
+    for (const g of this.grid.gens.values()) {
+      if (!this.grid.buses.get(g.busId)?.underConstruction) omCost += PLANTS[g.type].omPerDay * omDayFrac;
+    }
+    for (const bt of this.grid.batteries.values()) {
+      if (!this.grid.buses.get(bt.busId)?.underConstruction) omCost += BATTERY.omPerDay * omDayFrac;
+    }
+    for (const b of this.grid.buses.values()) {
+      if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
+    }
+
+    // —— 结算（口碑影响等效电价；扣除燃料/碳/失负荷/运维）——
+    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty - omCost;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
@@ -313,7 +337,8 @@ export class Simulation {
   private solveIsland(busIds: number[], dtSim: number): IslandResult {
     const dtHours = dtSim / 3600;
     const set = new Set(busIds);
-    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId));
+    const uc = (busId: number) => this.grid.buses.get(busId)?.underConstruction === true; // 在建中不参与运行
+    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId) && !uc(g.busId));
     const loads = [...this.grid.loads.values()].filter((l) => set.has(l.busId));
     const demand = loads.reduce((s, l) => s + l.demand, 0);
 
@@ -354,7 +379,7 @@ export class Simulation {
     let genBase = gens.reduce((s, g) => s + g.output, 0);
 
     // —— 储能调度：缺电则放电补缺口，过剩则充电吸收 ——
-    const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId));
+    const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId) && !uc(b.busId));
     for (const b of batteries) b.output = 0;
     const net = demand - genBase; // >0 缺口；<0 过剩
     const batPowerFactor = this.tech.batteryPowerFactor; // 先进储能科技

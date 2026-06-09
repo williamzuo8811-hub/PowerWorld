@@ -30,6 +30,7 @@ export class Renderer {
   // N-1 校核标注的薄弱元件
   n1Lines = new Set<number>();
   n1Subs = new Set<number>();
+  clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
 
   constructor(private grid: Grid) {}
 
@@ -151,8 +152,11 @@ export class Renderer {
       const width = (isHV ? 3.4 : 1.9) + Math.min(5, ln.capacity / 30);
 
       if (!this.grid.lineActive(ln)) {
-        // 跳闸 / 变压器断开：暗红虚线
-        drawDashed(lg, ax, ay, bx, by, 0x6b2030, width * 0.7);
+        const constructing = ln.underConstruction
+          || this.grid.buses.get(ln.from)?.underConstruction
+          || this.grid.buses.get(ln.to)?.underConstruction;
+        // 建设中：暗黄绿虚线；跳闸/断开：暗红虚线
+        drawDashed(lg, ax, ay, bx, by, constructing ? 0x6a7a3a : 0x6b2030, width * 0.7);
         continue;
       }
       // N-1 薄弱线路：黄色光晕
@@ -194,7 +198,10 @@ export class Renderer {
       const cx = bus.x * TILE, cy = bus.y * TILE;
       const r = bus.kind === 'substation' ? 7 : 11;
       const color = busColor(this.grid, bus);
+      const alpha = bus.underConstruction ? 0.3 : 1; // 在建中半透明
 
+      // 建设中黄环
+      if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
       // 停电红环
       if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
       // 变电站变压器跳闸：橙色警示环
@@ -207,22 +214,22 @@ export class Renderer {
       }
 
       if (bus.kind === 'plant') {
-        g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
       } else if (bus.kind === 'load') {
         // 用一个房子状的多边形表示负荷
         g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
-          .fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+          .fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
       } else if (bus.kind === 'storage') {
         // 储能：圆角矩形 + 底部 SoC 电量条
-        g.roundRect(cx - r, cy - r * 0.85, r * 2, r * 1.7, 3).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        g.roundRect(cx - r, cy - r * 0.85, r * 2, r * 1.7, 3).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
         const bat = this.grid.batteriesAtBus(bus.id)[0];
-        if (bat) {
+        if (bat && !bus.underConstruction) {
           const f = Math.max(0, Math.min(1, bat.soc / bat.energyCapacity));
           g.rect(cx - r + 1.5, cy + r * 0.5, (r * 2 - 3) * f, 3).fill({ color: 0xeafff2 });
         }
       } else {
         // 变电站：菱形
-        g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
       }
     }
   }
@@ -240,10 +247,12 @@ export class Renderer {
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
       }
-      t.text = busLabel(this.grid, bus);
+      t.text = bus.underConstruction
+        ? `${bus.name} 🏗${Math.max(0, ((bus.commissionAt ?? 0) - this.clock) / 24).toFixed(1)}d`
+        : busLabel(this.grid, bus);
       t.x = bus.x * TILE;
       t.y = bus.y * TILE + 14;
-      t.style.fill = bus.blackout ? 0xef5d60 : 0x9bb0c2;
+      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : 0x9bb0c2;
     }
     // 清理已删除的母线标签
     for (const [id, t] of [...this.labels]) {

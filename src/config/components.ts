@@ -9,43 +9,48 @@ export interface PlantSpec {
   rampRate: number; // MW / 仿真秒（火电慢、燃气快、核电极慢、新能源不限）
   marginalCost: number; // $/MWh
   capex: number; // 一次性建造成本 $
+  buildDays: number; // 建设工期（天）—— 期间已付钱但不发电
+  omPerDay: number; // 固定运维成本 ($/天，仅投运后计)
+  cf: number; // 代表性容量系数（0..1），用于投资回报估算
   dispatchable: boolean;
   co2: number; // 吨 / MWh
   color: number; // 渲染颜色
   desc: string;
 }
 
-// 数值刻意区分出"基荷/调峰/间歇"三类角色，构成核心组合谜题。
+// 数值刻意区分出"基荷/调峰/间歇"三类角色，并加入工期/运维，构成"投资 vs 收益"权衡。
 export const PLANTS: Record<PlantType, PlantSpec> = {
   nuclear: {
     type: 'nuclear', label: '核电', capacity: 120, pmin: 80, rampRate: 0.08,
-    marginalCost: 10, capex: 820_000, dispatchable: true, co2: 0,
-    color: 0xa78bfa, desc: '巨大基荷·投资高·几乎不可调',
+    marginalCost: 10, capex: 820_000, buildDays: 8, omPerDay: 1_200, cf: 0.9, dispatchable: true, co2: 0,
+    color: 0xa78bfa, desc: '巨大基荷·投资高·工期最长·几乎不可调',
   },
   coal: {
     type: 'coal', label: '燃煤', capacity: 60, pmin: 18, rampRate: 0.35,
-    marginalCost: 26, capex: 230_000, dispatchable: true, co2: 0.95,
+    marginalCost: 26, capex: 230_000, buildDays: 4, omPerDay: 600, cf: 0.6, dispatchable: true, co2: 0.95,
     color: 0x9aa4ad, desc: '便宜基荷·爬坡慢·高排放',
   },
   gas: {
     type: 'gas', label: '燃气', capacity: 40, pmin: 0, rampRate: 2.2,
-    marginalCost: 58, capex: 110_000, dispatchable: true, co2: 0.45,
-    color: 0xf2994a, desc: '灵活调峰·爬坡快·燃料贵',
+    marginalCost: 58, capex: 110_000, buildDays: 1.5, omPerDay: 250, cf: 0.25, dispatchable: true, co2: 0.45,
+    color: 0xf2994a, desc: '工期短·灵活调峰·爬坡快·燃料贵',
   },
   wind: {
     type: 'wind', label: '风电', capacity: 30, pmin: 0, rampRate: 999,
-    marginalCost: 0, capex: 150_000, dispatchable: false, co2: 0,
-    color: 0x56ccf2, desc: '零燃料·看风·夜间也可发',
+    marginalCost: 0, capex: 150_000, buildDays: 3, omPerDay: 200, cf: 0.35, dispatchable: false, co2: 0,
+    color: 0x56ccf2, desc: '零燃料·工期较长·看风·夜间也可发',
   },
   solar: {
     type: 'solar', label: '光伏', capacity: 30, pmin: 0, rampRate: 999,
-    marginalCost: 0, capex: 125_000, dispatchable: false, co2: 0,
-    color: 0xf2c94c, desc: '零燃料·只在白天·午间最强',
+    marginalCost: 0, capex: 125_000, buildDays: 2, omPerDay: 150, cf: 0.2, dispatchable: false, co2: 0,
+    color: 0xf2c94c, desc: '零燃料·工期中等·只在白天·午间最强',
   },
 };
 
 export const SUBSTATION_CAPEX = 32_000; // 变电站造价
 export const SUBSTATION_RATING = 90; // 变电站变压器默认容量 (MW)
+export const SUBSTATION_BUILD_DAYS = 1; // 变电站工期（天）
+export const SUBSTATION_OM_PER_DAY = 80; // 变电站运维 ($/天)
 
 // —— 储能电池规格 ——
 export const BATTERY = {
@@ -53,9 +58,18 @@ export const BATTERY = {
   powerRating: 25, // 充放电功率 (MW)
   energyCapacity: 100, // 容量 (MWh) ≈ 满功率 4 小时
   capex: 175_000,
+  buildDays: 1.5, // 工期（天）
+  omPerDay: 120, // 运维 ($/天)
   roundTrip: 0.9, // 往返效率
   color: 0x4ade80,
 };
+
+// —— 线路工期 ——
+export const LINE_BUILD_DAYS_BASE = 0.4; // 线路基础工期
+export const LINE_BUILD_DAYS_PER_TILE = 0.04; // 每瓦片附加工期
+
+// —— 投资回报估算 ——
+export const LCOE_LIFETIME_DAYS = 300; // 折旧寿命（游戏天），用于度电成本估算
 
 // —— 电压等级规格 ——
 // HV 高压输电：损耗低、容量大、造价高；MV 中压配电：损耗高、容量小、造价低。

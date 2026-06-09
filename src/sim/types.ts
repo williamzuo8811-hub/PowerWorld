@@ -25,6 +25,9 @@ export interface Bus {
   y: number;
   /** 本 tick 是否处于停电（所在孤岛无电源 / 被甩负荷） */
   blackout: boolean;
+  // —— 建设工期（电厂/变电站/储能）——
+  underConstruction?: boolean; // 在建中：已付 capex 但尚未投运
+  commissionAt?: number; // 投运时刻（累计仿真小时）
   // —— 变电站专用字段（其余母线忽略）——
   rating?: number; // 变压器额定容量 (MW)：HV→MV 降压通过能力
   throughput?: number; // 本 tick 经变压器下送的功率 (MW)
@@ -83,6 +86,8 @@ export interface Line {
   loss: number; // 当前线损 (MW)
   tripped: boolean; // 是否已跳闸（过载保护动作）
   overloadTimer: number; // 持续过载累计时间（仿真秒）
+  underConstruction?: boolean; // 在建中：尚未导通
+  commissionAt?: number; // 投运时刻（累计仿真小时）
 }
 
 /** 一条日志/告警 */

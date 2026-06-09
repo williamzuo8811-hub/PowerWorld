@@ -191,9 +191,10 @@ export class Grid {
     return undefined;
   }
 
-  /** 线路是否导通：未跳闸，且（若为 MV 配电线）其变电站变压器未跳闸 */
+  /** 线路是否导通：已投运、未跳闸、两端母线均已投运，且（若为 MV）变压器未跳闸 */
   lineActive(ln: Line): boolean {
-    if (ln.tripped) return false;
+    if (ln.tripped || ln.underConstruction) return false;
+    if (this.buses.get(ln.from)?.underConstruction || this.buses.get(ln.to)?.underConstruction) return false;
     if (ln.voltage === 'MV') {
       const sub = this.substationOf(ln);
       if (sub?.transformerTripped) return false;
