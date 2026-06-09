@@ -43,3 +43,15 @@ export function renewableAvailability(type: PlantType, hour: number, windBase: n
   }
   return 1;
 }
+
+/**
+ * 季节强度：把年内相位 phase∈[0,1) 映射为 {summer, winter}∈[0,1]。
+ * - phase 0：春（中性，summer=winter=0）
+ * - phase 0.25：盛夏（summer=1）
+ * - phase 0.5：秋（中性）
+ * - phase 0.75：深冬（winter=1）
+ */
+export function seasonIntensity(phase: number): { summer: number; winter: number } {
+  const s = Math.sin(((phase % 1) + 1) % 1 * 2 * Math.PI);
+  return { summer: Math.max(0, s), winter: Math.max(0, -s) };
+}

@@ -6,7 +6,7 @@ import { solveDC } from './powerflow';
 import { EventSystem } from './events';
 import { TechState } from './tech';
 import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
-import { demandMultiplier, renewableAvailability } from './profiles';
+import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
   PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
@@ -28,6 +28,7 @@ import {
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
+  SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
@@ -358,6 +359,33 @@ export class Simulation {
     const s = this.cyclePhase;
     return s > 0.3 ? '繁荣' : s < -0.3 ? '衰退' : '平稳';
   }
+  /** 年内相位 [0,1)：0=春、0.25=夏、0.5=秋、0.75=冬 */
+  get yearPhase(): number {
+    return (this.day % SEASON_YEAR_DAYS) / SEASON_YEAR_DAYS;
+  }
+  /** 季节需求系数（盛夏制冷 + 深冬采暖双峰） */
+  get seasonDemandFactor(): number {
+    const s = seasonIntensity(this.yearPhase);
+    return 1 + SEASON_SUMMER_DEMAND * s.summer + SEASON_WINTER_DEMAND * s.winter;
+  }
+  /** 光伏季节系数（夏强冬弱） */
+  get seasonSolarFactor(): number {
+    const s = seasonIntensity(this.yearPhase);
+    return clamp(1 + SEASON_SOLAR_AMP * (s.summer - s.winter), 0, 2);
+  }
+  /** 风电季节系数（冬强夏弱） */
+  get seasonWindFactor(): number {
+    const s = seasonIntensity(this.yearPhase);
+    return clamp(1 + SEASON_WIND_AMP * (s.winter - s.summer), 0, 2);
+  }
+  /** 季节标签 */
+  get seasonLabel(): string {
+    const p = this.yearPhase;
+    if (p < 0.125 || p >= 0.875) return '春';
+    if (p < 0.375) return '夏';
+    if (p < 0.625) return '秋';
+    return '冬';
+  }
   /** 北区(便宜)电价 */
   get zoneNorthPrice(): number {
     const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24));
@@ -373,12 +401,12 @@ export class Simulation {
     return Math.abs(this.zoneSouthPrice - this.zoneNorthPrice);
   }
 
-  /** 区域市场总需求 (MW)：日曲线 × 景气 */
+  /** 区域市场总需求 (MW)：日曲线 × 景气 × 季节 */
   get regionalDemand(): number {
     const m = (demandMultiplier(this.hourOfDay, 'residential')
       + demandMultiplier(this.hourOfDay, 'commercial')
       + demandMultiplier(this.hourOfDay, 'industrial')) / 3;
-    return REGIONAL_BASE_DEMAND * m * this.cycleFactor;
+    return REGIONAL_BASE_DEMAND * m * this.cycleFactor * this.seasonDemandFactor;
   }
   /** 区域市场出清：你与竞争对手按报价排序，对区域需求出清 */
   private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } {
@@ -747,7 +775,7 @@ export class Simulation {
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
-      const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor;
+      const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor * this.seasonDemandFactor;
       load.demand = full * drFactor;
       this.drCurtailedMW += full - load.demand;
     }
@@ -756,8 +784,8 @@ export class Simulation {
     for (const g of this.grid.gens.values()) {
       if (!g.dispatchable) {
         let a = renewableAvailability(g.type, this.hourOfDay, this.windBase);
-        if (g.type === 'wind') a *= this.events.windCap;
-        if (g.type === 'solar') a *= this.events.solarCap;
+        if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor;
+        if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
         g.availability = clamp(a, 0, 1);
       }
     }
@@ -917,7 +945,7 @@ export class Simulation {
     let regionFirm = firmCapacity;
     for (const c of this.competitors) regionFirm += c.capacity;
     for (const m of this.mergedCapacity) regionFirm += m.mw;
-    const capTarget = REGIONAL_BASE_DEMAND * (1 + RESERVE_REQUIREMENT) * this.cycleFactor;
+    const capTarget = REGIONAL_BASE_DEMAND * (1 + RESERVE_REQUIREMENT) * this.cycleFactor * this.seasonDemandFactor;
     this.capacityAdequacy = regionFirm / Math.max(capTarget, 1);
     this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
     const capacityIncome = firmCapacity * this.capacityPrice * omDayFrac;
@@ -1279,6 +1307,8 @@ export class Simulation {
       renewableShare: this.renewableShare,
       cycle: this.cycleLabel,
       cycleFactor: this.cycleFactor,
+      season: this.seasonLabel,
+      seasonFactor: this.seasonDemandFactor,
       marketShare: this.marketShare,
       marketClearingPrice: this.marketClearingPrice,
       regionalDemand: this.regionalDemand,

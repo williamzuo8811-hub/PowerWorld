@@ -156,6 +156,13 @@ export const FTR_MARKUP = 1.05; // 权利金相对当前价差的溢价
 export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）
 export const CYCLE_AMPLITUDE = 0.15; // 对需求的振幅（±15%）
 
+// —— 季节性（年度循环：需求与新能源随四季摆动；第 0 天为春，中性起点）——
+export const SEASON_YEAR_DAYS = 24; // 一年的游戏天数（四季各约 6 天）
+export const SEASON_SUMMER_DEMAND = 0.18; // 盛夏制冷高峰需求加成（+18%）
+export const SEASON_WINTER_DEMAND = 0.12; // 深冬采暖高峰需求加成（+12%）
+export const SEASON_SOLAR_AMP = 0.3; // 光伏季节摆幅（夏强冬弱 ±30%）
+export const SEASON_WIND_AMP = 0.35; // 风电季节摆幅（冬强夏弱 ±35%）
+
 // —— 历史走势采样 ——
 export const HISTORY_SAMPLE_HOURS = 2; // 采样间隔（游戏小时）
 export const HISTORY_MAX = 160; // 最多保留样本数
