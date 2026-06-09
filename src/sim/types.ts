@@ -52,10 +52,11 @@ export interface Generator {
   ccs?: boolean; // 是否加装碳捕集（捕碳但边际成本上升）
 }
 
-/** 储能电池（双向：放电=电源，充电=负荷） */
+/** 储能（双向：放电=电源，充电=负荷）。多类型：电池/抽蓄/氢储 */
 export interface Battery {
   id: number;
   busId: number;
+  type: import('../config/components').StorageType; // 储能类型
   powerRating: number; // 充放电功率上限 (MW)
   energyCapacity: number; // 能量容量 (MWh)
   soc: number; // 当前储能 (MWh)

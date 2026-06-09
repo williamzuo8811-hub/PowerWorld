@@ -8,7 +8,7 @@ import { TechState } from './tech';
 import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
 import {
-  PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
+  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE,
   RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT, ESG_RATE_DISCOUNT,
@@ -30,7 +30,7 @@ import {
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
-  CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
+  CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
@@ -353,7 +353,7 @@ export class Simulation {
   get assetValue(): number {
     let v = 0;
     for (const g of this.grid.gens.values()) v += PLANTS[g.type].capex;
-    for (const b of this.grid.batteries.values()) { void b; v += BATTERY.capex; }
+    for (const b of this.grid.batteries.values()) v += STORAGE[b.type].capex;
     for (const bus of this.grid.buses.values()) if (bus.kind === 'substation') v += SUBSTATION_CAPEX;
     for (const ln of this.grid.lines.values()) v += ln.length * VOLTAGE[ln.voltage].costPerTile;
     return v;
@@ -545,7 +545,10 @@ export class Simulation {
       const capex = g ? PLANTS[g.type].capex : 0;
       return Math.round(capex * SALVAGE_FRACTION * (1 - deprec));
     }
-    if (bus.kind === 'storage') return Math.round(BATTERY.capex * SALVAGE_FRACTION);
+    if (bus.kind === 'storage') {
+      const bat = this.grid.batteriesAtBus(busId)[0];
+      return Math.round((bat ? STORAGE[bat.type].capex : STORAGE.battery.capex) * SALVAGE_FRACTION);
+    }
     if (bus.kind === 'substation') return Math.round(SUBSTATION_CAPEX * SALVAGE_FRACTION);
     return 0;
   }
@@ -790,7 +793,7 @@ export class Simulation {
       if (!this.grid.buses.get(g.busId)?.underConstruction) omCost += PLANTS[g.type].omPerDay * (1 + this.wear(g) * WEAR_OM_FACTOR) * omDayFrac;
     }
     for (const bt of this.grid.batteries.values()) {
-      if (!this.grid.buses.get(bt.busId)?.underConstruction) omCost += BATTERY.omPerDay * omDayFrac;
+      if (!this.grid.buses.get(bt.busId)?.underConstruction) omCost += STORAGE[bt.type].omPerDay * omDayFrac;
     }
     for (const b of this.grid.buses.values()) {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
@@ -804,7 +807,7 @@ export class Simulation {
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
-      if (bus && !bus.underConstruction) firmCapacity += b.powerRating * BATTERY_CAPACITY_CREDIT;
+      if (bus && !bus.underConstruction) firmCapacity += b.powerRating * STORAGE[b.type].capacityCredit;
     }
     // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
     let regionFirm = firmCapacity;

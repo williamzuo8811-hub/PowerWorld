@@ -1,6 +1,6 @@
 // 电网图容器：管理母线、机组、负荷、线路，并提供拓扑分析（连通分量 = 孤岛）。
 import type { Bus, Generator, Load, Line, Battery, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
-import { PLANTS, VOLTAGE, SUBSTATION_RATING, BATTERY, X_PER_TILE, R_PER_TILE } from '../config/components';
+import { PLANTS, VOLTAGE, SUBSTATION_RATING, STORAGE, type StorageType, X_PER_TILE, R_PER_TILE } from '../config/components';
 
 /** 电网可序列化数据（存档用） */
 export interface GridData {
@@ -86,13 +86,14 @@ export class Grid {
     return bus;
   }
 
-  /** 建一座储能电站：自动创建母线 + 电池 */
-  addBattery(x: number, y: number): { bus: Bus; battery: Battery } {
-    const bus = this.addBus('storage', x, y, BATTERY.label);
+  /** 建一座储能电站（按类型）：自动创建母线 + 储能单元 */
+  addBattery(x: number, y: number, type: StorageType = 'battery'): { bus: Bus; battery: Battery } {
+    const spec = STORAGE[type];
+    const bus = this.addBus('storage', x, y, spec.label);
     const battery: Battery = {
-      id: this.id(), busId: bus.id,
-      powerRating: BATTERY.powerRating, energyCapacity: BATTERY.energyCapacity,
-      soc: BATTERY.energyCapacity * 0.5, output: 0, roundTrip: BATTERY.roundTrip,
+      id: this.id(), busId: bus.id, type,
+      powerRating: spec.powerRating, energyCapacity: spec.energyCapacity,
+      soc: spec.energyCapacity * 0.5, output: 0, roundTrip: spec.roundTrip,
     };
     this.batteries.set(battery.id, battery);
     return { bus, battery };

@@ -52,17 +52,25 @@ export const SUBSTATION_RATING = 90; // 变电站变压器默认容量 (MW)
 export const SUBSTATION_BUILD_DAYS = 1; // 变电站工期（天）
 export const SUBSTATION_OM_PER_DAY = 80; // 变电站运维 ($/天)
 
-// —— 储能电池规格 ——
-export const BATTERY = {
-  label: '储能',
-  powerRating: 25, // 充放电功率 (MW)
-  energyCapacity: 100, // 容量 (MWh) ≈ 满功率 4 小时
-  capex: 175_000,
-  buildDays: 1.5, // 工期（天）
-  omPerDay: 120, // 运维 ($/天)
-  roundTrip: 0.9, // 往返效率
-  color: 0x4ade80,
+// —— 储能规格（多类型：电池/抽蓄/氢储）——
+export type StorageType = 'battery' | 'pumped' | 'hydrogen';
+export interface StorageSpec {
+  label: string;
+  powerRating: number; // 充放电功率 (MW)
+  energyCapacity: number; // 容量 (MWh)
+  capex: number;
+  buildDays: number; // 工期（天）
+  omPerDay: number; // 运维 ($/天)
+  roundTrip: number; // 往返效率
+  capacityCredit: number; // 容量信用（长时储能更高）
+  color: number;
+}
+export const STORAGE: Record<StorageType, StorageSpec> = {
+  battery: { label: '电池储能', powerRating: 25, energyCapacity: 100, capex: 175_000, buildDays: 1.5, omPerDay: 120, roundTrip: 0.9, capacityCredit: 0.5, color: 0x4ade80 }, // ≈4h
+  pumped: { label: '抽水蓄能', powerRating: 60, energyCapacity: 720, capex: 520_000, buildDays: 5, omPerDay: 300, roundTrip: 0.8, capacityCredit: 0.75, color: 0x38bdf8 }, // ≈12h
+  hydrogen: { label: '氢储能', powerRating: 30, energyCapacity: 1800, capex: 480_000, buildDays: 4, omPerDay: 280, roundTrip: 0.4, capacityCredit: 0.55, color: 0xa78bfa }, // ≈60h 多日
 };
+export const BATTERY = STORAGE.battery; // 兼容旧引用
 
 // —— 线路工期 ——
 export const LINE_BUILD_DAYS_BASE = 0.4; // 线路基础工期
@@ -170,7 +178,6 @@ export const CAP_PRICE_MAX_FRAC = 2.2; // 容量价上限系数
 export const CAPACITY_CREDIT: Record<PlantType, number> = {
   nuclear: 1, coal: 1, gas: 1, wind: 0.15, solar: 0.1, // 新能源容量信用低（非确定性）
 };
-export const BATTERY_CAPACITY_CREDIT = 0.5; // 储能容量信用（受时长限制）
 
 // —— 碳捕集（CCS）改造 ——
 // 给火电加装碳捕集：捕集大部分 CO2，但边际成本上升（能耗惩罚），并需改造投资。

@@ -2,12 +2,12 @@
 // 渲染与仿真无关，只读快照 + 暴露当前工具/速度给 main 使用。
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
 } from '../config/components';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'maintenance' | 'ccs' | 'bulldoze';
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen' | 'maintenance' | 'ccs' | 'bulldoze';
 
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
@@ -20,7 +20,9 @@ const TOOLS: ToolDef[] = [
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·工期${PLANTS.wind.buildDays}天·看风` },
   { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·工期${PLANTS.solar.buildDays}天·白天` },
   { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·工期${PLANTS.nuclear.buildDays}天·基荷` },
-  { id: 'battery', label: `▰ 储能 ${BATTERY.powerRating}MW`, sub: `¥${fmt(BATTERY.capex)}·工期${BATTERY.buildDays}天` },
+  { id: 'battery', label: `▰ 电池 ${STORAGE.battery.powerRating}MW`, sub: `¥${fmt(STORAGE.battery.capex)}·4h·工期${STORAGE.battery.buildDays}天` },
+  { id: 'pumped', label: `▰ 抽蓄 ${STORAGE.pumped.powerRating}MW`, sub: `¥${fmt(STORAGE.pumped.capex)}·12h·工期${STORAGE.pumped.buildDays}天` },
+  { id: 'hydrogen', label: `▰ 氢储 ${STORAGE.hydrogen.powerRating}MW`, sub: `¥${fmt(STORAGE.hydrogen.capex)}·60h·工期${STORAGE.hydrogen.buildDays}天` },
   { id: 'maintenance', label: '🛠 计划检修', sub: '点电厂大修·降役龄/故障率' },
   { id: 'ccs', label: '🌫 碳捕集', sub: '点火电改造·捕碳但成本升' },
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },

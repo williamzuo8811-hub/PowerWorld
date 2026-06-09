@@ -3,7 +3,7 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { Bus, Line } from '../sim/types';
 import { Grid } from '../sim/grid';
-import { PLANTS, VOLTAGE, BATTERY } from '../config/components';
+import { PLANTS, VOLTAGE, STORAGE } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
@@ -288,7 +288,10 @@ function busColor(grid: Grid, bus: Bus): number {
     return gen ? PLANTS[gen.type].color : 0x9aa4ad;
   }
   if (bus.kind === 'substation') return 0x4f6b82;
-  if (bus.kind === 'storage') return BATTERY.color;
+  if (bus.kind === 'storage') {
+    const bat = grid.batteriesAtBus(bus.id)[0];
+    return bat ? STORAGE[bat.type].color : STORAGE.battery.color;
+  }
   // 负荷按画像着色
   const load = grid.loadsAtBus(bus.id)[0];
   if (load?.profile === 'industrial') return 0xc98b6b;

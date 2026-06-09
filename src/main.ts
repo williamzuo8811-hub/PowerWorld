@@ -18,14 +18,14 @@ import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TARIFF, TARIFF_CLASS,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TARIFF, TARIFF_CLASS,
   LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE,
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'maintenance', 'ccs', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'maintenance', 'ccs', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -341,15 +341,18 @@ function handleClick(clientX: number, clientY: number): void {
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
-    case 'battery': {
+    case 'battery':
+    case 'pumped':
+    case 'hydrogen': {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
-      if (sim.spend(BATTERY.capex)) {
-        const { bus: bbus } = sim.grid.addBattery(p.x, p.y);
-        startBuild(bbus, BATTERY.buildDays);
+      const spec = STORAGE[tool];
+      if (sim.spend(spec.capex)) {
+        const { bus: bbus } = sim.grid.addBattery(p.x, p.y, tool);
+        startBuild(bbus, spec.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `储能开工 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（工期${BATTERY.buildDays}天，需经变电站接入）`);
+        sim.log('info', `${spec.label}开工 ${spec.powerRating}MW/${spec.energyCapacity}MWh（工期${spec.buildDays}天，需经变电站接入）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -446,8 +449,9 @@ function busInspectorHtml(bus: Bus): string {
   } else if (bus.kind === 'storage') {
     const b = sim.grid.batteriesAtBus(bus.id)[0];
     if (b) {
+      rows.push(row('类型', `${STORAGE[b.type].label}（${(b.energyCapacity / b.powerRating).toFixed(0)}h）`));
       rows.push(row('电量', `${b.soc.toFixed(0)} / ${b.energyCapacity} MWh (${((b.soc / b.energyCapacity) * 100).toFixed(0)}%)`));
-      rows.push(row('功率', `${b.powerRating} MW`));
+      rows.push(row('功率', `${b.powerRating} MW · 效率 ${(b.roundTrip * 100).toFixed(0)}%`));
       rows.push(row('状态', b.output > 0.1 ? `放电 ${b.output.toFixed(1)}MW` : b.output < -0.1 ? `充电 ${(-b.output).toFixed(1)}MW` : '待机'));
     }
   }
