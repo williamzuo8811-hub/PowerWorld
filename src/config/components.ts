@@ -116,6 +116,7 @@ export const LOAN_RISK_SPREAD = 0.006; // 负债率风险溢价（最高再加 0
 export const RATING_RATE_SPAN = 0.012; // 评级对日利率的最大附加（最差评级 +1.2%/天）
 export const RATING_REF_NETWORTH = 1_000_000; // 净资产评分参考
 export const RATING_REF_PROFIT = 40_000; // 日均利润评分参考
+export const ESG_RATE_DISCOUNT = 0.003; // ESG 满分时对日利率的最大折扣（−0.3%/天）
 
 // —— 远期合约 / 套期保值 ——
 // 锁定一部分电量的结算价（差价合约）：市价低于锁价时获补偿、高于时让出收益，平抑波动。

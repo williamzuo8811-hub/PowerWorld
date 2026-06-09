@@ -11,7 +11,7 @@ import {
   PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE,
-  RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT,
+  RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT, ESG_RATE_DISCOUNT,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
   MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS,
@@ -365,9 +365,27 @@ export class Simulation {
   get debtRatio(): number {
     return this.creditLimit > 0 ? this.debt / this.creditLimit : 0;
   }
-  /** 日利率：基础 + 评级风险溢价（评级越差越高） */
+  /** ESG 评分 0..100（环境/社会/治理三维平均） */
+  get esgScore(): number {
+    const intensity = this.co2Rate / Math.max(this.totalServed, 1);
+    const e = clamp(this.renewableShare * 0.6 + (1 - clamp(intensity / 0.9, 0, 1)) * 0.4, 0, 1); // 环境
+    const s = clamp(this.reliability * 0.5 + (this.reputation / 100) * 0.5, 0, 1); // 社会
+    const gov = clamp(this.creditScore / 100, 0, 1); // 治理
+    return ((e + s + gov) / 3) * 100;
+  }
+  /** ESG 评级字母 */
+  get esgRating(): string {
+    const s = this.esgScore;
+    if (s >= 85) return 'A+';
+    if (s >= 70) return 'A';
+    if (s >= 55) return 'B';
+    if (s >= 40) return 'C';
+    return 'D';
+  }
+  /** 日利率：基础 + 评级风险溢价 − ESG 绿色折扣 */
   get loanDailyRate(): number {
-    return LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN;
+    const base = LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN;
+    return Math.max(0.001, base - (this.esgScore / 100) * ESG_RATE_DISCOUNT);
   }
   /** 净资产 = 现金 + 资产 − 负债 */
   get netWorth(): number {

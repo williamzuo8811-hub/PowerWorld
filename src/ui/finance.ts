@@ -16,6 +16,8 @@ export interface FinanceData {
   premiumPerDay: number;
   creditRating: string;
   creditScore: number;
+  esgRating: string;
+  esgScore: number;
   marketEnabled: boolean;
   marketImport: number;
   marketShare: number;
@@ -81,6 +83,8 @@ export class FinancePanel {
       + row('净资产', `¥${fmt(d.netWorth)}`, d.netWorth < 0 ? 'freq-bad' : 'freq-ok')
       + row('信用评级', `${d.creditRating}（${d.creditScore.toFixed(0)}）`,
         d.creditScore >= 70 ? 'freq-ok' : d.creditScore >= 40 ? 'freq-warn' : 'freq-bad')
+      + row('ESG 评级', `${d.esgRating}（${d.esgScore.toFixed(0)}）· 绿色融资折扣`,
+        d.esgScore >= 70 ? 'freq-ok' : d.esgScore >= 40 ? 'freq-warn' : 'freq-bad')
       + section('每日损益（按当前运行估算）')
       + row('售电收入', `${sign(f.revenue)}${abs(f.revenue)}/天`, 'freq-ok')
       + row('· 居民 / 商业 / 工业', `${abs(f.byClass.residential)} / ${abs(f.byClass.commercial)} / ${abs(f.byClass.industrial)}`)

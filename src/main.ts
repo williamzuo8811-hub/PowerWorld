@@ -203,6 +203,8 @@ function openFinance(): void {
       premiumPerDay: sim.insurancePremiumPerDay,
       creditRating: sim.creditRating,
       creditScore: sim.creditScore,
+      esgRating: sim.esgRating,
+      esgScore: sim.esgScore,
       marketEnabled: sim.marketEnabled,
       marketImport: sim.marketImportMW,
       marketShare: sim.marketShare,
