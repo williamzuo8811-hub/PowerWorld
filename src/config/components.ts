@@ -147,8 +147,13 @@ export const TARIFF_CLASS: Record<LoadProfile, number> = {
   residential: 1.25, commercial: 1.0, industrial: 0.8,
 };
 export const UNSERVED_PENALTY = 240; // 失负荷罚款 $/MWh（停电代价远高于电价）
-export const CARBON_PRICE_START = 4; // 碳价 $/吨，随时间上涨制造减碳压力
+export const CARBON_PRICE_START = 4; // 配额价 $/吨，随时间上涨
 export const CARBON_PRICE_GROWTH_PER_DAY = 0.6;
+// 碳配额交易（基准分配）：按送达电量免费发放排放配额，基准强度随时间收紧。
+// 排放强度低于基准 → 卖出富余配额获利；高于基准 → 买入配额付费。
+export const CARBON_BENCH_START = 0.55; // 基准排放强度起点 (t/MWh)
+export const CARBON_BENCH_DECLINE_PER_DAY = 0.02; // 每天收紧
+export const CARBON_BENCH_MIN = 0.1; // 基准下限
 
 // —— 公众形象 / 口碑 ——
 export const POLLUTION_RADIUS = 5; // 火电厂污染影响半径（瓦片）

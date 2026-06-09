@@ -173,11 +173,17 @@ function openEconomics(): void {
 function openFinance(): void {
   panelOpen = true;
   hud.setSpeed(0);
+  const snap = sim.snapshot();
   finPanel.show({
     data: {
       money: sim.money, assetValue: sim.assetValue, debt: sim.debt, creditLimit: sim.creditLimit,
       netWorth: sim.netWorth, dailyRate: sim.loanDailyRate, finance: sim.finance,
       spotPrice: sim.spotPrice, reserveMargin: sim.reserveMargin, fuelPrice: sim.fuelPrice,
+      carbon: {
+        intensity: snap.co2 / Math.max(snap.totalServed, 1),
+        benchmark: sim.benchmarkIntensity,
+        price: sim.carbonPrice,
+      },
     },
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },

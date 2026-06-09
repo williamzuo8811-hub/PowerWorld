@@ -13,6 +13,7 @@ export interface FinanceData {
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
+  carbon: { intensity: number; benchmark: number; price: number };
 }
 
 export interface FinancePanelOptions {
@@ -60,7 +61,7 @@ export class FinancePanel {
       + row('售电收入', `${sign(f.revenue)}${abs(f.revenue)}/天`, 'freq-ok')
       + row('· 居民 / 商业 / 工业', `${abs(f.byClass.residential)} / ${abs(f.byClass.commercial)} / ${abs(f.byClass.industrial)}`)
       + row('燃料成本', `−${abs(f.fuel)}/天`)
-      + row('碳成本', `−${abs(f.carbon)}/天`)
+      + row('碳配额', `${f.carbon >= 0 ? '−' : '+'}${abs(f.carbon)}/天`, f.carbon < 0 ? 'freq-ok' : '')
       + row('运维成本', `−${abs(f.om)}/天`)
       + row('贷款利息', `−${abs(f.interest)}/天`)
       + row('失负荷罚款', `−${abs(f.penalty)}/天`, f.penalty > 1 ? 'freq-bad' : '')
@@ -69,6 +70,10 @@ export class FinancePanel {
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
       + row('备用率', `${(d.reserveMargin * 100).toFixed(0)}%`, d.reserveMargin < 1 ? 'freq-bad' : '')
       + row('燃料指数（煤/气/铀）', `${d.fuelPrice.coal.toFixed(2)} / ${d.fuelPrice.gas.toFixed(2)} / ${d.fuelPrice.uranium.toFixed(2)}`)
+      + section('碳配额市场')
+      + row('排放强度 / 基准', `${d.carbon.intensity.toFixed(2)} / ${d.carbon.benchmark.toFixed(2)} t/MWh`,
+        d.carbon.intensity > d.carbon.benchmark ? 'freq-warn' : 'freq-ok')
+      + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`)
       + section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`);
 
     // 贷款按钮

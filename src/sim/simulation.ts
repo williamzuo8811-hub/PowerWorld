@@ -17,6 +17,7 @@ import {
 import type { Generator, Line, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
+  CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
@@ -185,6 +186,10 @@ export class Simulation {
   }
   get carbonPrice(): number {
     return CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day;
+  }
+  /** 当前免费排放基准强度 (t/MWh)，随时间收紧 */
+  get benchmarkIntensity(): number {
+    return Math.max(CARBON_BENCH_MIN, CARBON_BENCH_START - CARBON_BENCH_DECLINE_PER_DAY * this.day);
   }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
@@ -465,8 +470,9 @@ export class Simulation {
       + classServed.commercial * TARIFF_CLASS.commercial
       + classServed.industrial * TARIFF_CLASS.industrial) * this.spotPrice * dtHours;
 
-    // —— 碳成本 ——
-    const carbonCost = co2Rate * this.carbonPrice * dtHours;
+    // —— 碳配额交易：免费配额 = 送达电量 × 基准强度；超出买入、富余卖出（可为负=获利）——
+    const allowanceRate = aggServed * this.benchmarkIntensity; // t/h 免费配额
+    const carbonCost = (co2Rate - allowanceRate) * this.carbonPrice * dtHours;
 
     // —— 固定运维成本（仅已投运资产）——
     const omDayFrac = dtHours / 24;
