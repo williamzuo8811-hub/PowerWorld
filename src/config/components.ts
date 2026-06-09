@@ -198,6 +198,12 @@ export const DR_FRACTION = 0.12; // 可削减的需求比例
 export const DR_TRIGGER_PRICE = 110; // 现货价高于此触发需求响应
 export const DR_INCENTIVE = 90; // 削减激励 ¥/MWh（低于峰荷供电成本）
 
+// —— 辅助服务市场（调频 + 运行备用）——
+// 快速资源(储能/燃气)提供调频、闲置可调容量提供备用，各获容量型收入。
+export const AS_REG_PRICE = 6; // 调频容量价 ¥/(MW·天)
+export const AS_RESERVE_PRICE = 2.5; // 备用容量价 ¥/(MW·天)
+export const AS_GAS_REG_FACTOR = 0.5; // 燃气可提供调频的容量比例
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。

@@ -32,6 +32,7 @@ import {
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
+  AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -158,7 +159,7 @@ export class Simulation {
   options: PriceOption[] = []; // 活跃电力期权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -215,7 +216,7 @@ export class Simulation {
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -835,6 +836,19 @@ export class Simulation {
     this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
     const capacityIncome = firmCapacity * this.capacityPrice * omDayFrac;
 
+    // —— 辅助服务：快速资源(储能/燃气)提供调频，闲置可调容量提供运行备用 ——
+    let regCap = 0, reserveCap = 0;
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      if (g.type === 'gas') regCap += g.capacity * AS_GAS_REG_FACTOR;
+      if (g.dispatchable) reserveCap += Math.max(0, g.capacity - g.output);
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) regCap += b.powerRating * this.tech.batteryPowerFactor;
+    }
+    const ancillaryIncome = (regCap * AS_REG_PRICE + reserveCap * AS_RESERVE_PRICE) * omDayFrac;
+
     // —— 需求响应激励：付费换取尖峰削减 ——
     const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours;
 
@@ -858,7 +872,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -875,6 +889,7 @@ export class Simulation {
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
     this.finance.market = ema(this.finance.market, (exportIncome - importCost - marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
+    this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
     this.finance.dr = ema(this.finance.dr, -drCost * toDay);
     const repF = this.reputationTariffFactor;
@@ -884,7 +899,7 @@ export class Simulation {
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty
-      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion + this.finance.dr;
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion + this.finance.dr + this.finance.ancillary;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
