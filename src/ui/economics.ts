@@ -1,8 +1,10 @@
-// 投资对比面板：按当前电价展示各机组的工期 / 度电成本 / 日均毛利 / 回本周期（复用 #panel）。
+// 投资对比面板：按当前电价/燃料价展示各机组的工期 / 度电成本 / 日均毛利 / 回本（复用 #panel）。
 import { genEconomics } from '../game/economics';
+import type { FuelType } from '../config/components';
 
 export interface EconPanelOptions {
   tariff: number;
+  fuelPrice: Record<FuelType, number>;
   onClose: () => void;
 }
 
@@ -18,11 +20,12 @@ export class EconomicsPanel {
   }
 
   show(o: EconPanelOptions): void {
-    const rows = genEconomics(o.tariff);
+    const rows = genEconomics(o.tariff, o.fuelPrice);
     this.el.innerHTML = '';
     const panel = document.createElement('div');
     panel.className = 'menu-panel';
-    panel.innerHTML = `<h1>💹 投资对比</h1><p class="sub">理想满发估算（按代表容量系数，未计新能源间歇/弃风）· 电价 ¥${o.tariff}/MWh · 回本含工期</p>`;
+    const fp = o.fuelPrice;
+    panel.innerHTML = `<h1>💹 投资对比</h1><p class="sub">理想满发估算（未计间歇/弃风）· 电价 ¥${o.tariff}/MWh · 燃料指数 煤${fp.coal.toFixed(2)}/气${fp.gas.toFixed(2)}/铀${fp.uranium.toFixed(2)} · 回本含工期</p>`;
 
     const head = `<tr><th>类型</th><th>工期</th><th>容量</th><th>造价</th><th>燃料</th><th>运维/天</th><th>度电成本</th><th>日均毛利</th><th>回本</th></tr>`;
     const body = rows.map((r) => {

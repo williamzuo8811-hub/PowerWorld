@@ -71,6 +71,22 @@ export const LINE_BUILD_DAYS_PER_TILE = 0.04; // 每瓦片附加工期
 // —— 投资回报估算 ——
 export const LCOE_LIFETIME_DAYS = 300; // 折旧寿命（游戏天），用于度电成本估算
 
+// —— 燃料市场 ——
+// 煤/气/铀价格以"指数"形式波动（1=基准）。新能源无燃料，不受影响。
+export type FuelType = 'coal' | 'gas' | 'uranium';
+export const PLANT_FUEL: Record<PlantType, FuelType | null> = {
+  coal: 'coal', gas: 'gas', nuclear: 'uranium', wind: null, solar: null,
+};
+export const FUEL_INFO: Record<FuelType, { label: string; volatility: number }> = {
+  coal: { label: '煤', volatility: 0.05 },
+  gas: { label: '天然气', volatility: 0.11 }, // 天然气最敏感
+  uranium: { label: '铀', volatility: 0.02 }, // 核燃料最稳定
+};
+export const FUEL_MEAN_REVERT = 0.06; // 向基准 1.0 回归速度（每天）
+export const FUEL_MIN = 0.45;
+export const FUEL_MAX = 2.6;
+export const FUEL_SHOCK_CHANCE_PER_DAY = 0.12; // 燃料价格跳涨概率（每天）
+
 // —— 电压等级规格 ——
 // HV 高压输电：损耗低、容量大、造价高；MV 中压配电：损耗高、容量小、造价低。
 // 这就是"为什么要升压远距离输电、再降压配电"的玩法动机。

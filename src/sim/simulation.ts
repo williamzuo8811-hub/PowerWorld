@@ -7,7 +7,11 @@ import { EventSystem } from './events';
 import { TechState } from './tech';
 import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
-import { PLANTS, VOLTAGE, BATTERY, SUBSTATION_OM_PER_DAY } from '../config/components';
+import {
+  PLANTS, VOLTAGE, BATTERY, SUBSTATION_OM_PER_DAY,
+  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, type FuelType,
+} from '../config/components';
+import type { Generator } from './types';
 import {
   START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -43,6 +47,7 @@ export interface SimSaveState {
   grid: GridData;
   events: { active: EventSystem['active']; nextAt: number };
   tech: { unlocked: TechId[]; points: number };
+  fuelPrice: Record<FuelType, number>;
 }
 
 export class Simulation {
@@ -65,6 +70,7 @@ export class Simulation {
   sandbox = false; // 沙盒模式：无输赢、无破产
   events = new EventSystem();
   tech = new TechState();
+  fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
 
   constructor() {
     this.events.schedule(0);
@@ -95,6 +101,7 @@ export class Simulation {
     this.events = new EventSystem();
     this.events.schedule(0);
     this.tech = new TechState();
+    this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
   }
 
   /** 导出存档 */
@@ -108,6 +115,7 @@ export class Simulation {
       grid: this.grid.serialize(),
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
+      fuelPrice: { ...this.fuelPrice },
     };
   }
 
@@ -134,6 +142,8 @@ export class Simulation {
     this.tech = new TechState();
     this.tech.points = d.tech?.points ?? 0;
     for (const id of d.tech?.unlocked ?? []) this.tech.unlocked.add(id);
+    this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
+    if (d.fuelPrice) this.fuelPrice = { ...this.fuelPrice, ...d.fuelPrice };
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -152,6 +162,29 @@ export class Simulation {
   }
   get carbonPrice(): number {
     return CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day;
+  }
+
+  /** 机组的有效边际成本 = 基准 × 燃料价格指数 × 高效机组科技系数 */
+  effMarginalCost(g: Generator): number {
+    const fuel = PLANT_FUEL[g.type];
+    const idx = fuel ? this.fuelPrice[fuel] : 1;
+    return g.marginalCost * idx * this.tech.fuelCostFactor;
+  }
+
+  /** 燃料价格波动：均值回归 + 随机游走 + 偶发跳涨 */
+  private updateFuelPrices(dtHours: number): void {
+    const dtDay = dtHours / 24;
+    for (const fuel of Object.keys(this.fuelPrice) as FuelType[]) {
+      const info = FUEL_INFO[fuel];
+      let p = this.fuelPrice[fuel];
+      p += (1 - p) * FUEL_MEAN_REVERT * dtDay; // 向基准回归
+      p += (Math.random() * 2 - 1) * info.volatility * Math.sqrt(dtDay); // 随机游走
+      if (Math.random() < FUEL_SHOCK_CHANCE_PER_DAY * dtDay) {
+        p *= 1 + Math.random() * 0.5; // 供给冲击：跳涨 0~50%
+        this.log('warn', `📈 ${info.label}价格跳涨（指数 ${clamp(p, FUEL_MIN, FUEL_MAX).toFixed(2)}）`);
+      }
+      this.fuelPrice[fuel] = clamp(p, FUEL_MIN, FUEL_MAX);
+    }
   }
   /** 口碑越好，公众/监管越认可，等效电价越高（0.85 ~ 1.15） */
   get reputationTariffFactor(): number {
@@ -201,6 +234,9 @@ export class Simulation {
     for (const ln of this.grid.lines.values()) {
       if (ln.underConstruction && this.clock >= (ln.commissionAt ?? 0)) ln.underConstruction = false;
     }
+
+    // —— 燃料价格波动 ——
+    this.updateFuelPrices(dtHours);
 
     // —— 更新负荷需求（城市增长 + 噪声 + 事件需求系数 + 需求响应科技）——
     for (const load of this.grid.loads.values()) {
@@ -357,8 +393,8 @@ export class Simulation {
     const target = demand * (1 + this.lastLossFraction);
     let remaining = Math.max(0, target - renewAvail);
 
-    // 可调机组按边际成本排序（merit order），贪心填充期望出力
-    const disp = gens.filter((g) => g.dispatchable).sort((x, y) => x.marginalCost - y.marginalCost);
+    // 可调机组按"有效边际成本"排序（merit order，随燃料价格变化）
+    const disp = gens.filter((g) => g.dispatchable).sort((x, y) => this.effMarginalCost(x) - this.effMarginalCost(y));
     const desired = new Map<number, number>();
     let rem = remaining;
     for (const g of disp) {
@@ -472,10 +508,10 @@ export class Simulation {
       }
     }
 
-    // 经济量（高效机组科技降低燃料成本与碳排）
+    // 经济量（燃料价格 × 高效机组科技；碳排单列）
     let fuelCost = 0, co2 = 0;
     for (const g of gens) {
-      fuelCost += g.output * g.marginalCost * this.tech.fuelCostFactor * dtHours;
+      fuelCost += g.output * this.effMarginalCost(g) * dtHours;
       co2 += g.output * PLANTS[g.type].co2 * this.tech.co2Factor;
     }
 

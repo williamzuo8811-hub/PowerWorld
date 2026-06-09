@@ -161,6 +161,7 @@ function openEconomics(): void {
   hud.setSpeed(0);
   econPanel.show({
     tariff: TARIFF,
+    fuelPrice: sim.fuelPrice,
     onClose: () => { econPanel.hide(); panelOpen = false; },
   });
 }
