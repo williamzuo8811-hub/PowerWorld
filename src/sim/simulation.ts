@@ -21,7 +21,7 @@ import {
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
-  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT,
+  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
 } from '../config/components';
 
 interface IslandResult {
@@ -31,6 +31,13 @@ interface IslandResult {
   loss: number;
   fuelCost: number;
   co2: number; // 吨/h
+}
+
+/** 一笔远期套保合约（差价合约） */
+export interface Hedge {
+  volume: number; // 锁定电量 (MW)
+  strike: number; // 锁定价 ¥/MWh
+  endClock: number; // 到期时刻（累计仿真小时）
 }
 
 /** 存档状态（可 JSON 序列化） */
@@ -53,6 +60,8 @@ export interface SimSaveState {
   tech: { unlocked: TechId[]; points: number };
   fuelPrice: Record<FuelType, number>;
   debt: number;
+  avgSpot: number;
+  hedges: Hedge[];
 }
 
 export class Simulation {
@@ -78,11 +87,13 @@ export class Simulation {
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
   forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
+  avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
   reserveMargin = 1; // 当前备用率（可用容量/需求）
   debt = 0; // 未偿贷款本金
+  hedges: Hedge[] = []; // 活跃套保合约
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -117,11 +128,13 @@ export class Simulation {
     this.tech = new TechState();
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     this.spotPrice = TARIFF;
+    this.avgSpot = TARIFF;
     this.reserveMargin = 1;
     this.debt = 0;
+    this.hedges = [];
     this.forcedOutages = true;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -139,6 +152,8 @@ export class Simulation {
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
       fuelPrice: { ...this.fuelPrice },
       debt: this.debt,
+      avgSpot: this.avgSpot,
+      hedges: this.hedges.map((h) => ({ ...h })),
     };
   }
 
@@ -168,6 +183,8 @@ export class Simulation {
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     if (d.fuelPrice) this.fuelPrice = { ...this.fuelPrice, ...d.fuelPrice };
     this.debt = d.debt ?? 0;
+    this.avgSpot = d.avgSpot ?? TARIFF;
+    this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -216,6 +233,18 @@ export class Simulation {
   get netWorth(): number {
     return this.money + this.assetValue - this.debt;
   }
+  /** 签订一笔远期套保合约：锁定 volume MW × days 天，锁价 = 当前远期报价(avgSpot)；收手续费 */
+  addHedge(volume: number, days: number): boolean {
+    if (volume <= 0 || days <= 0) return false;
+    const fee = volume * days * HEDGE_FEE_PER_MW_DAY;
+    if (this.money < fee) return false;
+    this.money -= fee;
+    const strike = Math.round(this.avgSpot);
+    this.hedges.push({ volume, strike, endClock: this.clock + days * 24 });
+    this.log('info', `🔒 套保 ${volume}MW × ${days}天 @ ¥${strike}/MWh（手续费 ¥${Math.round(fee).toLocaleString('en-US')}）`);
+    return true;
+  }
+
   /** 借款（受信用额度约束），成功返回 true */
   borrow(amount: number): boolean {
     if (amount <= 0 || this.debt + amount > this.creditLimit) return false;
@@ -463,6 +492,15 @@ export class Simulation {
     const fuelInfluence = clamp(SPOT.fuelMin + marginalUnitCost / SPOT.fuelRef, SPOT.fuelMin, SPOT.fuelMax);
     this.spotPrice = clamp(TARIFF * scarcityMult * fuelInfluence, SPOT.floor, SPOT.cap);
     this.reserveMargin = reserveRatio;
+    // 远期报价（现货均值）
+    const aS = clamp(dtHours / 12, 0, 1);
+    this.avgSpot = this.avgSpot * (1 - aS) + this.spotPrice * aS;
+
+    // 套保结算（差价合约）：市价低于锁价获补偿，高于则让出收益（可为负）
+    this.hedges = this.hedges.filter((h) => this.clock < h.endClock);
+    let hedgeIncome = 0;
+    for (const h of this.hedges) hedgeIncome += (h.strike - this.spotPrice) * h.volume * dtHours;
+
     // 分类电价：按客户类别加权计算售电收入
     const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0 };
     for (const l of this.grid.loads.values()) classServed[l.profile] += l.served;
@@ -491,8 +529,8 @@ export class Simulation {
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（扣除燃料/碳/失负荷/运维/利息）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost;
+    // —— 结算（扣除燃料/碳/失负荷/运维/利息，加套保差价）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost + hedgeIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -504,13 +542,14 @@ export class Simulation {
     this.finance.om = ema(this.finance.om, omCost * toDay);
     this.finance.interest = ema(this.finance.interest, interestCost * toDay);
     this.finance.penalty = ema(this.finance.penalty, penalty * toDay);
+    this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
       this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
-      - this.finance.om - this.finance.interest - this.finance.penalty;
+      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

@@ -7,19 +7,23 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
   carbon: { intensity: number; benchmark: number; price: number };
+  avgSpot: number;
+  clock: number;
+  hedges: { volume: number; strike: number; endClock: number }[];
 }
 
 export interface FinancePanelOptions {
   data: FinanceData;
   onBorrow: (amount: number) => void;
   onRepay: (amount: number) => void;
+  onHedge: (volume: number, days: number) => void;
   onClose: () => void;
 }
 
@@ -65,6 +69,7 @@ export class FinancePanel {
       + row('运维成本', `−${abs(f.om)}/天`)
       + row('贷款利息', `−${abs(f.interest)}/天`)
       + row('失负荷罚款', `−${abs(f.penalty)}/天`, f.penalty > 1 ? 'freq-bad' : '')
+      + row('套保差价', `${f.hedge >= 0 ? '+' : '−'}${abs(f.hedge)}/天`, f.hedge < 0 ? '' : 'freq-ok')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
       + section('市场行情')
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
@@ -74,24 +79,47 @@ export class FinancePanel {
       + row('排放强度 / 基准', `${d.carbon.intensity.toFixed(2)} / ${d.carbon.benchmark.toFixed(2)} t/MWh`,
         d.carbon.intensity > d.carbon.benchmark ? 'freq-warn' : 'freq-ok')
       + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`)
-      + section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`);
+      + section(`套期保值（远期报价 ¥${d.avgSpot.toFixed(0)}/MWh · 锁价以平抑现货波动）`);
 
-    // 贷款按钮
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
-    const mkBtn = (text: string, enabled: boolean, fn: () => void) => {
+    const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');
       b.textContent = text;
       b.disabled = !enabled;
       b.style.cssText = 'background:#182431;color:var(--text);border:1px solid var(--panel-border);border-radius:6px;padding:7px 11px;cursor:pointer;font-family:inherit;font-size:12px';
       if (!enabled) b.style.opacity = '0.45';
       else b.onclick = fn;
-      btns.appendChild(b);
+      parent.appendChild(b);
     };
-    mkBtn('借入 ¥100k', avail >= 100_000, () => o.onBorrow(100_000));
-    mkBtn('借入可借上限', avail >= 1000, () => o.onBorrow(Math.floor(avail)));
-    mkBtn('还款 ¥100k', d.debt > 0 && d.money > 0, () => o.onRepay(Math.min(100_000, d.debt)));
-    mkBtn('还清全部', d.debt > 0 && d.money > 0, () => o.onRepay(d.debt));
+
+    // 活跃套保合约列表
+    const hedgeList = document.createElement('div');
+    hedgeList.style.cssText = 'font-size:12px;margin:2px 0 8px';
+    if (d.hedges.length === 0) {
+      hedgeList.innerHTML = `<span style="color:var(--text-dim)">暂无活跃合约</span>`;
+    } else {
+      hedgeList.innerHTML = d.hedges.map((h) => {
+        const daysLeft = Math.max(0, (h.endClock - d.clock) / 24);
+        const plDay = (h.strike - d.spotPrice) * h.volume * 24;
+        return `<div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">${h.volume}MW @ ¥${h.strike} · 剩 ${daysLeft.toFixed(1)}天</span><b class="${plDay >= 0 ? 'freq-ok' : 'freq-bad'}">${plDay >= 0 ? '+' : '−'}¥${fmt(Math.abs(plDay))}/天</b></div>`;
+      }).join('');
+    }
+    panel.appendChild(hedgeList);
+
+    const hedgeBtns = document.createElement('div');
+    hedgeBtns.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px';
+    mkBtn(hedgeBtns, '锁定 20MW×5天', d.money > 0, () => o.onHedge(20, 5));
+    mkBtn(hedgeBtns, '锁定 50MW×10天', d.money > 0, () => o.onHedge(50, 10));
+    panel.appendChild(hedgeBtns);
+
+    panel.insertAdjacentHTML('beforeend', section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`));
+
+    // 贷款按钮
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+    mkBtn(btns, '借入 ¥100k', avail >= 100_000, () => o.onBorrow(100_000));
+    mkBtn(btns, '借入可借上限', avail >= 1000, () => o.onBorrow(Math.floor(avail)));
+    mkBtn(btns, '还款 ¥100k', d.debt > 0 && d.money > 0, () => o.onRepay(Math.min(100_000, d.debt)));
+    mkBtn(btns, '还清全部', d.debt > 0 && d.money > 0, () => o.onRepay(d.debt));
     panel.appendChild(btns);
 
     const close = document.createElement('button');

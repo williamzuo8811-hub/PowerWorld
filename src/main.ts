@@ -184,9 +184,13 @@ function openFinance(): void {
         benchmark: sim.benchmarkIntensity,
         price: sim.carbonPrice,
       },
+      avgSpot: sim.avgSpot,
+      clock: sim.clock,
+      hedges: sim.hedges,
     },
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
+    onHedge: (vol, days) => { if (sim.addHedge(vol, days)) sound.build(); else sound.error(); openFinance(); },
     onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }
