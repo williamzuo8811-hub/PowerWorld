@@ -32,7 +32,7 @@ import {
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
-  AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR,
+  AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR, FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -75,6 +75,13 @@ export interface FuelContract {
   endClock: number; // 到期时刻（累计仿真小时）
 }
 
+/** 一份远期容量承诺（差价合约 + 交付义务） */
+export interface CapacityCommitment {
+  mw: number; // 承诺容量 (MW)
+  price: number; // 锁定容量价 ¥/(MW·天)
+  endClock: number; // 到期时刻（累计仿真小时）
+}
+
 /** 一份电力期权（put=价格下限保护；call=价格上限保护） */
 export interface PriceOption {
   kind: 'put' | 'call';
@@ -107,6 +114,7 @@ export interface SimSaveState {
   avgSpot: number;
   hedges: Hedge[];
   options: PriceOption[];
+  capCommitments: CapacityCommitment[];
   insured: boolean;
   marketEnabled: boolean;
   demandResponse: boolean;
@@ -157,6 +165,7 @@ export class Simulation {
   debt = 0; // 未偿贷款本金
   hedges: Hedge[] = []; // 活跃套保合约
   options: PriceOption[] = []; // 活跃电力期权
+  capCommitments: CapacityCommitment[] = []; // 活跃远期容量承诺
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
     revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
@@ -200,6 +209,7 @@ export class Simulation {
     this.debt = 0;
     this.hedges = [];
     this.options = [];
+    this.capCommitments = [];
     this.forcedOutages = true;
     this.insured = false;
     this.marketEnabled = false;
@@ -238,6 +248,7 @@ export class Simulation {
       avgSpot: this.avgSpot,
       hedges: this.hedges.map((h) => ({ ...h })),
       options: this.options.map((o) => ({ ...o })),
+      capCommitments: this.capCommitments.map((c) => ({ ...c })),
       insured: this.insured,
       marketEnabled: this.marketEnabled,
       demandResponse: this.demandResponse,
@@ -276,6 +287,7 @@ export class Simulation {
     this.avgSpot = d.avgSpot ?? TARIFF;
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
     this.options = (d.options ?? []).map((o) => ({ ...o }));
+    this.capCommitments = (d.capCommitments ?? []).map((c) => ({ ...c }));
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
     this.demandResponse = d.demandResponse ?? false;
@@ -459,6 +471,14 @@ export class Simulation {
     const strike = Math.round(this.avgSpot);
     this.options.push({ kind, volume, strike, endClock: this.clock + days * 24 });
     this.log('info', `🎟 ${kind === 'put' ? '看跌(保底)' : '看涨(封顶)'}期权 ${volume}MW × ${days}天 @ ¥${strike}（权利金 ¥${Math.round(premium).toLocaleString('en-US')}）`);
+    return true;
+  }
+
+  /** 承诺远期容量：锁定容量价×溢价 days 天（差价合约 + 交付义务） */
+  addCapacityCommitment(mw: number, days: number): boolean {
+    if (mw <= 0 || days <= 0) return false;
+    this.capCommitments.push({ mw, price: this.capacityPrice * FORWARD_CAP_PREMIUM, endClock: this.clock + days * 24 });
+    this.log('info', `📜 远期容量 ${mw}MW × ${days}天 @ ¥${(this.capacityPrice * FORWARD_CAP_PREMIUM).toFixed(1)}/MW·天（须交付，否则罚款）`);
     return true;
   }
 
@@ -849,6 +869,14 @@ export class Simulation {
     }
     const ancillaryIncome = (regCap * AS_REG_PRICE + reserveCap * AS_RESERVE_PRICE) * omDayFrac;
 
+    // —— 远期容量结算：差价合约(锁价−现货) − 欠交付罚款 ——
+    this.capCommitments = this.capCommitments.filter((c) => this.clock < c.endClock);
+    let forwardCapCash = 0;
+    for (const c of this.capCommitments) {
+      forwardCapCash += (c.price - this.capacityPrice) * c.mw * omDayFrac;
+      forwardCapCash -= Math.max(0, c.mw - firmCapacity) * CAP_DELIVERY_PENALTY * omDayFrac;
+    }
+
     // —— 需求响应激励：付费换取尖峰削减 ——
     const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours;
 
@@ -872,7 +900,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -888,7 +916,7 @@ export class Simulation {
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
     this.finance.market = ema(this.finance.market, (exportIncome - importCost - marketFee) * toDay);
-    this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
+    this.finance.capacity = ema(this.finance.capacity, (capacityIncome + forwardCapCash) * toDay);
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
     this.finance.dr = ema(this.finance.dr, -drCost * toDay);

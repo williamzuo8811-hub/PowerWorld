@@ -29,6 +29,7 @@ export interface FinanceData {
   competitors: { name: string; capacity: number; marginalCost: number }[];
   capacityPrice: number;
   capacityAdequacy: number;
+  capCommitMW: number;
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -47,6 +48,7 @@ export interface FinancePanelOptions {
   onHedge: (volume: number, days: number) => void;
   onOption: (kind: 'put' | 'call', volume: number, days: number) => void;
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
+  onCapacityCommit: (mw: number, days: number) => void;
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
   onToggleDR: () => void;
@@ -195,6 +197,14 @@ export class FinancePanel {
     mktBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(mktBtns, d.marketEnabled ? '断开联络线' : '接入市场', true, () => o.onToggleMarket());
     panel.appendChild(mktBtns);
+
+    // 远期容量
+    panel.insertAdjacentHTML('beforeend', section(`远期容量（已承诺 ${d.capCommitMW.toFixed(0)}MW · 锁定容量价对冲波动，须交付）`));
+    const capBtns = document.createElement('div');
+    capBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(capBtns, '承诺 50MW×10天', d.money > 0, () => o.onCapacityCommit(50, 10));
+    mkBtn(capBtns, '承诺 100MW×20天', d.money > 0, () => o.onCapacityCommit(100, 20));
+    panel.appendChild(capBtns);
 
     // 需求响应
     panel.insertAdjacentHTML('beforeend', section(`需求响应（${d.demandResponse ? '已启用' : '未启用'} · 高价时削峰 · 当前削减 ${d.drCurtailed.toFixed(0)}MW）`));

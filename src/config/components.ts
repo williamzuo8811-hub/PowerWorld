@@ -204,6 +204,11 @@ export const AS_REG_PRICE = 6; // 调频容量价 ¥/(MW·天)
 export const AS_RESERVE_PRICE = 2.5; // 备用容量价 ¥/(MW·天)
 export const AS_GAS_REG_FACTOR = 0.5; // 燃气可提供调频的容量比例
 
+// —— 远期容量拍卖 ——
+// 提前承诺一定容量、锁定容量价（差价合约），平抑容量价波动；但负有交付义务，欠交付罚款。
+export const FORWARD_CAP_PREMIUM = 1.1; // 远期容量锁价相对现货容量价的溢价
+export const CAP_DELIVERY_PENALTY = 14; // 欠交付罚款 ¥/(MW·天)
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。
