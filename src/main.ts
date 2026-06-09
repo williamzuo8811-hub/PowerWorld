@@ -3,6 +3,7 @@ import { Simulation } from './sim/simulation';
 import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
 import { Menu } from './ui/menu';
+import { analyzeN1 } from './sim/contingency';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, hasSave } from './game/save';
 import type { Bus } from './sim/types';
@@ -40,6 +41,7 @@ function continueGame(): void {
 
 function enterGame(): void {
   setPending(null);
+  invalidateN1();
   hud.setSpeed(0);
   menu.hide();
   menuOpen = false;
@@ -65,6 +67,35 @@ function openMenu(): void {
 
 function doSave(): void {
   flashHint(saveGame(sim, currentScenarioId) ? '已存档 💾' : '存档失败');
+}
+
+/** 运行 N-1 冗余校核并把薄弱元件标注到画面 */
+function runN1(): void {
+  const rep = analyzeN1(sim.grid);
+  renderer.n1Lines = rep.vulnerableLineIds;
+  renderer.n1Subs = rep.vulnerableSubIds;
+  if (rep.checked === 0) { flashHint('先建好电网再做 N-1 校核'); return; }
+  if (rep.secure) {
+    sim.log('good', `✅ N-1 校核通过：任一元件单独失效都不会停电（已校核 ${rep.checked} 个）`);
+    flashHint('N-1 安全 ✅');
+    return;
+  }
+  sim.log('warn', `⚠ N-1 校核：${rep.contingencies.length}/${rep.checked} 个薄弱点（黄圈标注，建冗余线路/变电站）`);
+  for (const c of rep.contingencies.slice(0, 3)) {
+    const parts: string[] = [];
+    if (c.lostLoadMW > 0.5) parts.push(`失负荷${c.lostLoadMW.toFixed(0)}MW`);
+    if (c.overloads.length) parts.push(`过载${c.overloads.length}处`);
+    sim.log('warn', `· 失去「${c.name}」→ ${parts.join('、')}`);
+  }
+  flashHint(`N-1 发现 ${rep.contingencies.length} 个薄弱点 ⚠`);
+}
+
+/** 电网结构变化后，清除过期的 N-1 标注 */
+function invalidateN1(): void {
+  if (renderer.n1Lines.size || renderer.n1Subs.size) {
+    renderer.n1Lines = new Set();
+    renderer.n1Subs = new Set();
+  }
 }
 
 // ——————————————————— 交互 ———————————————————
@@ -127,6 +158,7 @@ function handleClick(clientX: number, clientY: number): void {
             const cost = sim.grid.lineCost(pendingFrom.id, bus.id);
             if (sim.spend(cost)) {
               sim.grid.addLine(pendingFrom.id, bus.id);
+              invalidateN1();
               sim.log('info', `架设${VOLTAGE[chk.voltage!].label}线路 ¥${cost.toLocaleString('en-US')}`);
             } else {
               flashHint('资金不足，无法架线');
@@ -143,6 +175,7 @@ function handleClick(clientX: number, clientY: number): void {
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
       if (sim.spend(SUBSTATION_CAPEX)) {
         sim.grid.addSubstation(p.x, p.y);
+        invalidateN1();
         sim.log('info', '新建变电站');
       } else flashHint('资金不足');
       return;
@@ -152,6 +185,7 @@ function handleClick(clientX: number, clientY: number): void {
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
       if (sim.spend(BATTERY.capex)) {
         sim.grid.addBattery(p.x, p.y);
+        invalidateN1();
         sim.log('info', `新建储能 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（需经变电站接入）`);
       } else flashHint('资金不足');
       return;
@@ -159,11 +193,12 @@ function handleClick(clientX: number, clientY: number): void {
     case 'bulldoze': {
       if (bus) {
         sim.grid.removeBus(bus.id);
+        invalidateN1();
         sim.log('warn', `拆除 ${bus.name}`);
         return;
       }
       const ln = renderer.nearestLine(tile.x, tile.y);
-      if (ln) { sim.grid.removeLine(ln.id); sim.log('warn', '拆除线路'); }
+      if (ln) { sim.grid.removeLine(ln.id); invalidateN1(); sim.log('warn', '拆除线路'); }
       return;
     }
     default: {
@@ -175,6 +210,7 @@ function handleClick(clientX: number, clientY: number): void {
       const spec = PLANTS[type];
       if (sim.spend(spec.capex)) {
         sim.grid.addPlant(type, p.x, p.y);
+        invalidateN1();
         sim.log('info', `新建${spec.label}电厂 (${spec.capacity}MW)`);
       } else flashHint('资金不足');
       return;
@@ -267,6 +303,7 @@ async function start(): Promise<void> {
   hud.build();
   hud.onSave = doSave;
   hud.onMenu = openMenu;
+  hud.onN1 = runN1;
   bindInput();
   openMenu(); // 开局先进主菜单选关
 

@@ -28,6 +28,7 @@ export class Hud {
   currentTool: ToolId = 'line';
   onSave?: () => void; // 存档按钮回调
   onMenu?: () => void; // 菜单按钮回调
+  onN1?: () => void; // N-1 校核按钮回调
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
   private statVals = new Map<string, HTMLElement>();
@@ -89,13 +90,16 @@ export class Hud {
     });
     bar.appendChild(speed);
 
-    // 存档 / 菜单
+    // N-1 校核 / 存档 / 菜单
     const sys = document.createElement('div');
     sys.id = 'speed';
+    const n1Btn = document.createElement('button');
+    n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const saveBtn = document.createElement('button');
     saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
     menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
+    sys.appendChild(n1Btn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
     bar.appendChild(sys);

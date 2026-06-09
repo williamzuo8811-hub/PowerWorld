@@ -203,13 +203,13 @@ export class Grid {
 
   /**
    * 计算连通分量（孤岛）：只沿导通的线路连接。
-   * 返回若干个母线 id 数组，每个数组就是一个电气孤岛。
+   * @param isActive 自定义"线路是否在运"判据（N-1 校核时用来模拟某元件停运）；默认用 lineActive。
    */
-  islands(): number[][] {
+  islands(isActive: (ln: Line) => boolean = (ln) => this.lineActive(ln)): number[][] {
     const adj = new Map<number, number[]>();
     for (const id of this.buses.keys()) adj.set(id, []);
     for (const ln of this.lines.values()) {
-      if (!this.lineActive(ln)) continue;
+      if (!isActive(ln)) continue;
       adj.get(ln.from)?.push(ln.to);
       adj.get(ln.to)?.push(ln.from);
     }

@@ -27,6 +27,9 @@ export class Renderer {
   pendingFromBus: Bus | null = null;
   cursorTile: { x: number; y: number } | null = null;
   hoverBusId: number | null = null;
+  // N-1 校核标注的薄弱元件
+  n1Lines = new Set<number>();
+  n1Subs = new Set<number>();
 
   constructor(private grid: Grid) {}
 
@@ -152,6 +155,10 @@ export class Renderer {
         drawDashed(lg, ax, ay, bx, by, 0x6b2030, width * 0.7);
         continue;
       }
+      // N-1 薄弱线路：黄色光晕
+      if (this.n1Lines.has(ln.id)) {
+        lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 8, color: 0xf2c94c, alpha: 0.32 });
+      }
       // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 });
       const color = loadColor(load);
@@ -192,6 +199,8 @@ export class Renderer {
       if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
       // 变电站变压器跳闸：橙色警示环
       if (bus.kind === 'substation' && bus.transformerTripped) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2994a, alpha: 0.95 });
+      // N-1 薄弱变电站：黄色虚警环
+      if (this.n1Subs.has(bus.id)) g.circle(cx, cy, r + 8).stroke({ width: 2, color: 0xf2c94c, alpha: 0.8 });
       // 悬停高亮 / 拉线起点高亮
       if (bus.id === this.hoverBusId || bus.id === this.pendingFromBus?.id) {
         g.circle(cx, cy, r + 3).stroke({ width: 2, color: 0x38d39f, alpha: 0.9 });
