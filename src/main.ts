@@ -8,6 +8,7 @@ import { AchievementsPanel } from './ui/achievements';
 import { EconomicsPanel } from './ui/economics';
 import { FinancePanel } from './ui/finance';
 import { HistoryPanel } from './ui/history';
+import { IRPPanel } from './ui/irp';
 import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
@@ -36,6 +37,7 @@ const achvPanel = new AchievementsPanel();
 const econPanel = new EconomicsPanel();
 const finPanel = new FinancePanel();
 const historyPanel = new HistoryPanel();
+const irpPanel = new IRPPanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
@@ -76,6 +78,7 @@ function enterGame(): void {
   econPanel.hide();
   finPanel.hide();
   historyPanel.hide();
+  irpPanel.hide();
   panelOpen = false;
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
@@ -156,6 +159,13 @@ function openHistory(): void {
   panelOpen = true;
   hud.setSpeed(0);
   historyPanel.show({ history: sim.history, onClose: () => { historyPanel.hide(); panelOpen = false; } });
+}
+
+/** 打开长期规划压力测试面板（IRP） */
+function openIRP(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  irpPanel.show({ results: sim.stressTest(), onClose: () => { irpPanel.hide(); panelOpen = false; } });
 }
 
 /** 打开成就面板 */
@@ -526,6 +536,7 @@ async function start(): Promise<void> {
   hud.onEconomics = openEconomics;
   hud.onFinance = openFinance;
   hud.onHistory = openHistory;
+  hud.onIRP = openIRP;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.setSoundLabel(sound.muted);
   bindInput();

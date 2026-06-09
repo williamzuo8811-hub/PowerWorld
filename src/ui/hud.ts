@@ -38,6 +38,7 @@ export class Hud {
   onEconomics?: () => void; // 投资对比面板按钮回调
   onFinance?: () => void; // 财务报表面板按钮回调
   onHistory?: () => void; // 走势面板按钮回调
+  onIRP?: () => void; // 长期规划压力测试面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
@@ -129,6 +130,8 @@ export class Hud {
     finBtn.textContent = '📊'; finBtn.title = '财务报表 / 贷款'; finBtn.onclick = () => this.onFinance?.();
     const histBtn = document.createElement('button');
     histBtn.textContent = '📈'; histBtn.title = '市场 / 财务走势'; histBtn.onclick = () => this.onHistory?.();
+    const irpBtn = document.createElement('button');
+    irpBtn.textContent = '🧭'; irpBtn.title = '长期规划压力测试（IRP）'; irpBtn.onclick = () => this.onIRP?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
@@ -143,6 +146,7 @@ export class Hud {
     sys.appendChild(econBtn);
     sys.appendChild(finBtn);
     sys.appendChild(histBtn);
+    sys.appendChild(irpBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
     sys.appendChild(saveBtn);

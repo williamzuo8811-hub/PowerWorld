@@ -163,6 +163,30 @@ export const SEASON_WINTER_DEMAND = 0.12; // 深冬采暖高峰需求加成（+1
 export const SEASON_SOLAR_AMP = 0.3; // 光伏季节摆幅（夏强冬弱 ±30%）
 export const SEASON_WIND_AMP = 0.35; // 风电季节摆幅（冬强夏弱 ±35%）
 
+// —— 长期规划压力测试（IRP：在现有机队上跑 what-if 情景，评估充裕度与经济韧性）——
+export const IRP_LOAD_FACTOR = 0.72; // 平均负荷 / 峰值负荷
+export const IRP_SUMMER_PEAK = 1 + SEASON_SUMMER_DEMAND; // 评估用夏季制冷峰乘子
+export const IRP_SOLAR_PEAK_CREDIT = 0.05; // 光伏对晚峰的容量信用（很低）
+export const IRP_WIND_PEAK_CREDIT = 0.15; // 风电对峰值的容量信用
+export const IRP_RENEW_CF = 0.28; // 新能源平均容量因子（用于电量贡献估算）
+export const IRP_TIGHT_MARGIN = 0.15; // 备用率低于此视为「偏紧」
+export interface StressScenarioSpec {
+  id: string;
+  name: string;
+  demandGrowth: number; // 峰值需求乘子
+  renewDerate: number; // 新能源出力折减（1=正常）
+  fuelMult: number; // 燃料价格乘子
+  carbonMult: number; // 碳价乘子
+}
+export const IRP_SCENARIOS: StressScenarioSpec[] = [
+  { id: 'base', name: '基准', demandGrowth: 1.0, renewDerate: 1.0, fuelMult: 1.0, carbonMult: 1.0 },
+  { id: 'growth', name: '需求高增长', demandGrowth: 1.35, renewDerate: 1.0, fuelMult: 1.0, carbonMult: 1.0 },
+  { id: 'fuel', name: '燃料飙升', demandGrowth: 1.0, renewDerate: 1.0, fuelMult: 1.6, carbonMult: 1.0 },
+  { id: 'carbon', name: '碳价收紧', demandGrowth: 1.0, renewDerate: 1.0, fuelMult: 1.0, carbonMult: 2.5 },
+  { id: 'drought', name: '新能源枯竭', demandGrowth: 1.0, renewDerate: 0.4, fuelMult: 1.0, carbonMult: 1.0 },
+  { id: 'extreme', name: '极端高温叠加', demandGrowth: 1.45, renewDerate: 0.7, fuelMult: 1.3, carbonMult: 1.3 },
+];
+
 // —— 历史走势采样 ——
 export const HISTORY_SAMPLE_HOURS = 2; // 采样间隔（游戏小时）
 export const HISTORY_MAX = 160; // 最多保留样本数

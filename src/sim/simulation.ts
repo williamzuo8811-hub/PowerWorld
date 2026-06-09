@@ -29,6 +29,8 @@ import {
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP,
+  IRP_LOAD_FACTOR, IRP_SUMMER_PEAK, IRP_SOLAR_PEAK_CREDIT, IRP_WIND_PEAK_CREDIT, IRP_RENEW_CF,
+  IRP_TIGHT_MARGIN, IRP_SCENARIOS, type StressScenarioSpec,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
@@ -53,6 +55,17 @@ export interface HistorySample {
   spot: number;
   netWorth: number;
   demand: number;
+}
+
+/** 压力测试单情景结果（IRP） */
+export interface StressResult {
+  id: string;
+  name: string;
+  peakDemand: number; // 夏季晚峰需求 (MW)
+  firmSupply: number; // 可信容量（可调+储能+新能源信用）(MW)
+  reserveMargin: number; // firmSupply/peakDemand − 1
+  verdict: 'adequate' | 'tight' | 'shortfall';
+  dailyNet: number; // 该情景下粗估日净现金流 (¥/天)
 }
 
 interface IslandResult {
@@ -1283,6 +1296,65 @@ export class Simulation {
       this.win = true;
       this.log('good', '🏆 达成关卡目标，灯火通明，你赢了！');
     }
+  }
+
+  /**
+   * 长期规划压力测试（IRP）：在当前机队上跑一组 what-if 情景，
+   * 评估各情景下的容量充裕度（备用率）与经济韧性（粗估日净现金流）。
+   * 纯分析，不改动任何仿真状态。
+   */
+  stressTest(scenarios: StressScenarioSpec[] = IRP_SCENARIOS): StressResult[] {
+    // 每类负荷的日峰值乘子（采样日内曲线取最大）
+    const dayPeak = (profile: LoadProfile): number => {
+      let mx = 0;
+      for (let h = 0; h < 24; h++) mx = Math.max(mx, demandMultiplier(h, profile));
+      return mx;
+    };
+    // 基础夏季晚峰需求（剔除当前季节/景气，取纯峰）
+    let basePeak = 0;
+    for (const load of this.grid.loads.values()) basePeak += load.baseDemand * dayPeak(load.profile);
+    basePeak *= IRP_SUMMER_PEAK;
+
+    const gens = [...this.grid.gens.values()];
+    const disp = gens.filter((g) => g.dispatchable);
+    const renew = gens.filter((g) => !g.dispatchable);
+    const dispFirm = disp.reduce((s, g) => s + g.capacity * CAPACITY_CREDIT[g.type], 0);
+    const storageFirm = [...this.grid.batteries.values()].reduce((s, b) => s + b.powerRating * STORAGE[b.type].capacityCredit, 0);
+    const dispOrder = disp.slice().sort((a, b) => this.effMarginalCost(a) - this.effMarginalCost(b));
+
+    return scenarios.map((sc) => {
+      const peak = basePeak * sc.demandGrowth;
+      const renewFirm = renew.reduce((s, g) => {
+        const credit = g.type === 'solar' ? IRP_SOLAR_PEAK_CREDIT : IRP_WIND_PEAK_CREDIT;
+        return s + g.capacity * credit * sc.renewDerate;
+      }, 0);
+      const firm = dispFirm + storageFirm + renewFirm;
+      const margin = peak > 0 ? firm / peak - 1 : (firm > 0 ? 1 : 0);
+      const verdict: StressResult['verdict'] = margin < 0 ? 'shortfall' : margin < IRP_TIGHT_MARGIN ? 'tight' : 'adequate';
+
+      // —— 经济韧性（粗估）——
+      const potentialAvg = peak * IRP_LOAD_FACTOR; // 期望平均负荷
+      // 新能源先供（按平均容量因子 × 折减）
+      const renewAvg = renew.reduce((s, g) => s + g.capacity * IRP_RENEW_CF * sc.renewDerate, 0);
+      const renewServed = Math.min(potentialAvg, renewAvg);
+      let residual = Math.max(0, potentialAvg - renewServed);
+      let fuelCost = 0, carbonCost = 0, dispServed = 0;
+      for (const g of dispOrder) {
+        if (residual <= 1e-9) break;
+        const take = Math.min(g.capacity, residual);
+        residual -= take;
+        dispServed += take;
+        fuelCost += take * 24 * this.effMarginalCost(g) * sc.fuelMult;
+        carbonCost += take * 24 * this.effCo2(g) * this.carbonPrice * sc.carbonMult;
+      }
+      const served = renewServed + dispServed;
+      const unserved = Math.max(0, potentialAvg - served);
+      const revenue = served * 24 * TARIFF; // 用固定电价保持情景间可比
+      const penalty = unserved * 24 * UNSERVED_PENALTY;
+      const dailyNet = revenue - fuelCost - carbonCost - penalty;
+
+      return { id: sc.id, name: sc.name, peakDemand: peak, firmSupply: firm, reserveMargin: margin, verdict, dailyNet };
+    });
   }
 
   snapshot(): SimSnapshot {
