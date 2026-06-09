@@ -27,6 +27,7 @@ import {
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
+  CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE,
 } from '../config/components';
 
 interface IslandResult {
@@ -242,6 +243,19 @@ export class Simulation {
   /** 当前绿证价 ¥/MWh，随政策退坡 */
   get recPrice(): number {
     return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day);
+  }
+  /** 经济周期正弦相位（-1..1） */
+  private get cyclePhase(): number {
+    return Math.sin((2 * Math.PI * this.clock) / (CYCLE_PERIOD_DAYS * 24));
+  }
+  /** 景气需求系数（繁荣>1、衰退<1） */
+  get cycleFactor(): number {
+    return 1 + CYCLE_AMPLITUDE * this.cyclePhase;
+  }
+  /** 景气阶段标签 */
+  get cycleLabel(): string {
+    const s = this.cyclePhase;
+    return s > 0.3 ? '繁荣' : s < -0.3 ? '衰退' : '平稳';
   }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
@@ -492,7 +506,7 @@ export class Simulation {
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
-      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor;
+      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor;
     }
 
     // —— 更新新能源可用系数（叠加天气事件对风/光的压制）——
@@ -920,6 +934,8 @@ export class Simulation {
       researchPoints: this.tech.points,
       reputation: this.reputation,
       renewableShare: this.renewableShare,
+      cycle: this.cycleLabel,
+      cycleFactor: this.cycleFactor,
       spotPrice: this.spotPrice,
       reserveMargin: this.reserveMargin,
       fuelPrice: { ...this.fuelPrice },

@@ -127,6 +127,11 @@ export const INTERCONNECTOR_CAPACITY = 40; // 联络线容量 (MW)
 export const IMPORT_MARKUP = 1.15; // 购电相对市场均价的加价
 export const MARKET_FEE_PER_DAY = 1_200; // 联络线容量预留日费
 
+// —— 经济周期（景气循环）——
+// 宏观繁荣/衰退周期性振荡，影响用电需求（进而影响电价/稀缺）。
+export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）
+export const CYCLE_AMPLITUDE = 0.15; // 对需求的振幅（±15%）
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。
