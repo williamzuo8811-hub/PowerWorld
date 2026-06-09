@@ -9,6 +9,7 @@ import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
+import { Tutorial } from './game/tutorial';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
@@ -29,6 +30,7 @@ const achvPanel = new AchievementsPanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
+const tutorial = new Tutorial();
 let lastBadEvents = 0; // 上一帧的严重事件计数，用于触发报警音
 let wasGameOver = false; // 用于检测输赢瞬间
 
@@ -42,6 +44,8 @@ function newGame(scenario: Scenario): void {
   scenario.setup(sim);
   currentScenarioId = scenario.id;
   enterGame();
+  if (scenario.id === 'tutorial') tutorial.start();
+  else { tutorial.stop(); hud.setTutorial(null); }
   hud.setHint(scenario.hint);
 }
 
@@ -51,6 +55,8 @@ function continueGame(): void {
   sim.deserialize(data.save);
   currentScenarioId = data.scenarioId;
   enterGame();
+  tutorial.stop();
+  hud.setTutorial(null);
 }
 
 function enterGame(): void {
@@ -394,6 +400,9 @@ async function start(): Promise<void> {
       sim.tick(dt, hud.timeScale);
       hud.update(sim.snapshot(), sim.logs);
       pollAchievements();
+      // 新手教程引导
+      if (tutorial.active) hud.setTutorial(tutorial.update(sim));
+      if (tutorial.takeCompleted()) { hud.setTutorial(null); hud.toast('🎓 教程完成！进入自由建造'); sound.win(); }
       // 严重事件（跳闸/破产）触发报警音
       if (sim.badEventCount > lastBadEvents) sound.trip();
       lastBadEvents = sim.badEventCount;

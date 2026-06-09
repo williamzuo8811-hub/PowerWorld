@@ -75,6 +75,24 @@ export const SCENARIOS: Scenario[] = [
   },
 ];
 
+// 新手教程：手把手学会核心操作
+SCENARIOS.push({
+  id: 'tutorial',
+  name: '＋ 新手教程',
+  brief: '手把手学会：建变电站、拉高压/中压线、开始供电。无输赢压力，适合第一次上手。',
+  hint: '跟着屏幕中央的教程提示一步步操作即可。',
+  setup(sim) {
+    sim.sandbox = true; // 教程无输赢压力
+    sim.money = 600_000;
+    sim.goalDay = Infinity;
+    sim.goalReliability = 1;
+    const g = sim.grid;
+    g.addPlant('coal', 5, 8); // 免费电厂（待连接）
+    g.addLoad(16, 8, 'residential', 24, '居民区', 0); // 待接入的城区
+    sim.log('info', '【新手教程】跟着上方提示一步步来。');
+  },
+});
+
 // 沙盒：无限资金、无输赢，自由实验
 SCENARIOS.push({
   id: 'sandbox',

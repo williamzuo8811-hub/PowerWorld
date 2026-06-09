@@ -91,6 +91,14 @@
       #inspector .row { display: flex; justify-content: space-between; color: var(--text-dim); }
       #inspector .row b { color: var(--text); font-weight: 600; }
 
+      /* 新手教程提示条 */
+      #tutorial {
+        position: fixed; top: 62px; left: 50%; transform: translateX(-50%); z-index: 11;
+        max-width: 600px; text-align: center; background: rgba(86, 204, 242, 0.14);
+        border: 1px solid #56ccf2; color: #d6effb; padding: 9px 18px; border-radius: 10px;
+        font-size: 13px; line-height: 1.5; display: none; pointer-events: none;
+      }
+
       /* 提示条 */
       #hint {
         position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 10;
@@ -154,6 +162,7 @@
     <div id="log"></div>
     <div id="inspector"></div>
     <div id="hint"></div>
+    <div id="tutorial"></div>
     <div id="menu"></div>
     <div id="panel"></div>
     <div id="toast"></div>

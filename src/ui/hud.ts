@@ -41,6 +41,7 @@ export class Hud {
   private logEl!: HTMLElement;
   private inspectorEl!: HTMLElement;
   private hintEl!: HTMLElement;
+  private tutorialEl!: HTMLElement;
 
   get timeScale(): number {
     return TIME_SCALES[this.speedIndex];
@@ -56,6 +57,12 @@ export class Hud {
     this.logEl.innerHTML = `<div class="title">事件日志</div><div id="log-body"></div>`;
     this.inspectorEl = document.getElementById('inspector')!;
     this.hintEl = document.getElementById('hint')!;
+    this.tutorialEl = document.getElementById('tutorial')!;
+  }
+
+  setTutorial(text: string | null): void {
+    this.tutorialEl.style.display = text ? 'block' : 'none';
+    if (text) this.tutorialEl.textContent = text;
   }
 
   private buildTopbar(): void {
