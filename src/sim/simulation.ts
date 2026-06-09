@@ -76,6 +76,8 @@ export class Simulation {
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   reserveMargin = 1; // 当前备用率（可用容量/需求）
   debt = 0; // 未偿贷款本金
+  // 现金流（按日估算，EMA 平滑，供财务报表显示）
+  finance = { revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0 };
 
   constructor() {
     this.events.schedule(0);
@@ -110,6 +112,7 @@ export class Simulation {
     this.spotPrice = TARIFF;
     this.reserveMargin = 1;
     this.debt = 0;
+    this.finance = { revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0 };
   }
 
   /** 导出存档 */
@@ -417,9 +420,23 @@ export class Simulation {
 
     // —— 贷款利息 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
+    const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（口碑影响等效电价；扣除燃料/碳/失负荷/运维/利息）——
-    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty - omCost - interestCost;
+    // —— 结算（扣除燃料/碳/失负荷/运维/利息）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost;
+
+    // —— 现金流按日估算（EMA 平滑，供财务报表）——
+    const toDay = dtHours > 0 ? 24 / dtHours : 0;
+    const aF = clamp(dtHours / 3, 0, 1);
+    const ema = (cur: number, val: number) => cur * (1 - aF) + val * aF;
+    this.finance.revenue = ema(this.finance.revenue, revEff * toDay);
+    this.finance.fuel = ema(this.finance.fuel, fuelCost * toDay);
+    this.finance.carbon = ema(this.finance.carbon, carbonCost * toDay);
+    this.finance.om = ema(this.finance.om, omCost * toDay);
+    this.finance.interest = ema(this.finance.interest, interestCost * toDay);
+    this.finance.penalty = ema(this.finance.penalty, penalty * toDay);
+    this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
+      - this.finance.om - this.finance.interest - this.finance.penalty;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

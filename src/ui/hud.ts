@@ -32,6 +32,7 @@ export class Hud {
   onResearch?: () => void; // 研发面板按钮回调
   onAchievements?: () => void; // 成就面板按钮回调
   onEconomics?: () => void; // 投资对比面板按钮回调
+  onFinance?: () => void; // 财务报表面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
@@ -116,6 +117,8 @@ export class Hud {
     achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
     const econBtn = document.createElement('button');
     econBtn.textContent = '💹'; econBtn.title = '投资对比（工期/度电成本/回本）'; econBtn.onclick = () => this.onEconomics?.();
+    const finBtn = document.createElement('button');
+    finBtn.textContent = '📊'; finBtn.title = '财务报表 / 贷款'; finBtn.onclick = () => this.onFinance?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
@@ -128,6 +131,7 @@ export class Hud {
     sys.appendChild(researchBtn);
     sys.appendChild(achvBtn);
     sys.appendChild(econBtn);
+    sys.appendChild(finBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
     sys.appendChild(saveBtn);

@@ -6,6 +6,7 @@ import { Menu } from './ui/menu';
 import { ResearchPanel } from './ui/research';
 import { AchievementsPanel } from './ui/achievements';
 import { EconomicsPanel } from './ui/economics';
+import { FinancePanel } from './ui/finance';
 import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
@@ -32,6 +33,7 @@ const menu = new Menu();
 const research = new ResearchPanel();
 const achvPanel = new AchievementsPanel();
 const econPanel = new EconomicsPanel();
+const finPanel = new FinancePanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
@@ -70,6 +72,7 @@ function enterGame(): void {
   research.hide();
   achvPanel.hide();
   econPanel.hide();
+  finPanel.hide();
   panelOpen = false;
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
@@ -163,6 +166,22 @@ function openEconomics(): void {
     tariff: TARIFF,
     fuelPrice: sim.fuelPrice,
     onClose: () => { econPanel.hide(); panelOpen = false; },
+  });
+}
+
+/** 打开财务报表 / 贷款面板 */
+function openFinance(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  finPanel.show({
+    data: {
+      money: sim.money, assetValue: sim.assetValue, debt: sim.debt, creditLimit: sim.creditLimit,
+      netWorth: sim.netWorth, dailyRate: sim.loanDailyRate, finance: sim.finance,
+      spotPrice: sim.spotPrice, reserveMargin: sim.reserveMargin, fuelPrice: sim.fuelPrice,
+    },
+    onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
+    onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
+    onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }
 
@@ -421,6 +440,7 @@ async function start(): Promise<void> {
   hud.onResearch = openResearch;
   hud.onAchievements = openAchievements;
   hud.onEconomics = openEconomics;
+  hud.onFinance = openFinance;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.setSoundLabel(sound.muted);
   bindInput();
