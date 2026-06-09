@@ -86,6 +86,7 @@ export const FUEL_MEAN_REVERT = 0.06; // 向基准 1.0 回归速度（每天）
 export const FUEL_MIN = 0.45;
 export const FUEL_MAX = 2.6;
 export const FUEL_SHOCK_CHANCE_PER_DAY = 0.12; // 燃料价格跳涨概率（每天）
+export const FUEL_CONTRACT_PREMIUM = 1.03; // 燃料长约锁价相对现货的溢价（确定性的代价）
 
 // —— 机组老化 / 强迫停运 / 退役 ——
 export const WEAR_FULL_DAYS = 40; // 多少天磨损达到满值（1.0）

@@ -13,6 +13,7 @@ export interface FinanceData {
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
+  fuelContracts: Partial<Record<'coal' | 'gas' | 'uranium', { index: number; endClock: number }>>;
   carbon: { intensity: number; benchmark: number; price: number };
   avgSpot: number;
   clock: number;
@@ -24,6 +25,7 @@ export interface FinancePanelOptions {
   onBorrow: (amount: number) => void;
   onRepay: (amount: number) => void;
   onHedge: (volume: number, days: number) => void;
+  onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onClose: () => void;
 }
 
@@ -78,8 +80,7 @@ export class FinancePanel {
       + section('碳配额市场')
       + row('排放强度 / 基准', `${d.carbon.intensity.toFixed(2)} / ${d.carbon.benchmark.toFixed(2)} t/MWh`,
         d.carbon.intensity > d.carbon.benchmark ? 'freq-warn' : 'freq-ok')
-      + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`)
-      + section(`套期保值（远期报价 ¥${d.avgSpot.toFixed(0)}/MWh · 锁价以平抑现货波动）`);
+      + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`);
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');
@@ -90,6 +91,31 @@ export class FinancePanel {
       else b.onclick = fn;
       parent.appendChild(b);
     };
+
+    // 燃料长约
+    panel.insertAdjacentHTML('beforeend', section('燃料长约（锁定燃料价格指数，对冲涨价）'));
+    const fuels = ['coal', 'gas', 'uranium'] as const;
+    const fuelLabel: Record<typeof fuels[number], string> = { coal: '煤', gas: '气', uranium: '铀' };
+    const fuelInfo = document.createElement('div');
+    fuelInfo.style.cssText = 'font-size:12px;margin:2px 0 6px';
+    fuelInfo.innerHTML = fuels.map((fu) => {
+      const c = d.fuelContracts[fu];
+      const active = !!c && d.clock < c.endClock;
+      const status = active
+        ? `锁定 ${c!.index.toFixed(2)} · 剩 ${((c!.endClock - d.clock) / 24).toFixed(1)}天`
+        : `现货 ${d.fuelPrice[fu].toFixed(2)}`;
+      return `<div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">${fuelLabel[fu]}</span><b class="${active ? 'freq-ok' : ''}">${status}</b></div>`;
+    }).join('');
+    panel.appendChild(fuelInfo);
+    const fuelBtns = document.createElement('div');
+    fuelBtns.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px';
+    mkBtn(fuelBtns, '锁定煤 15天', d.money > 0, () => o.onFuelContract('coal', 15));
+    mkBtn(fuelBtns, '锁定气 15天', d.money > 0, () => o.onFuelContract('gas', 15));
+    mkBtn(fuelBtns, '锁定铀 15天', d.money > 0, () => o.onFuelContract('uranium', 15));
+    panel.appendChild(fuelBtns);
+
+    // 套期保值
+    panel.insertAdjacentHTML('beforeend', section(`套期保值（远期报价 ¥${d.avgSpot.toFixed(0)}/MWh · 锁价以平抑现货波动）`));
 
     // 活跃套保合约列表
     const hedgeList = document.createElement('div');

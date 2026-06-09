@@ -9,7 +9,7 @@ import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
 import {
   PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
-  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, type FuelType,
+  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE, LOAN_RISK_SPREAD,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
@@ -40,6 +40,12 @@ export interface Hedge {
   endClock: number; // 到期时刻（累计仿真小时）
 }
 
+/** 一份燃料长约（锁定某燃料的价格指数一段时间） */
+export interface FuelContract {
+  index: number; // 锁定的价格指数
+  endClock: number; // 到期时刻（累计仿真小时）
+}
+
 /** 存档状态（可 JSON 序列化） */
 export interface SimSaveState {
   money: number;
@@ -59,6 +65,7 @@ export interface SimSaveState {
   events: { active: EventSystem['active']; nextAt: number };
   tech: { unlocked: TechId[]; points: number };
   fuelPrice: Record<FuelType, number>;
+  fuelContracts: Partial<Record<FuelType, FuelContract>>;
   debt: number;
   avgSpot: number;
   hedges: Hedge[];
@@ -85,6 +92,7 @@ export class Simulation {
   events = new EventSystem();
   tech = new TechState();
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
+  fuelContracts: Partial<Record<FuelType, FuelContract>> = {}; // 活跃燃料长约
   forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
@@ -127,6 +135,7 @@ export class Simulation {
     this.events.schedule(0);
     this.tech = new TechState();
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
+    this.fuelContracts = {};
     this.spotPrice = TARIFF;
     this.avgSpot = TARIFF;
     this.reserveMargin = 1;
@@ -151,6 +160,7 @@ export class Simulation {
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
       fuelPrice: { ...this.fuelPrice },
+      fuelContracts: { ...this.fuelContracts },
       debt: this.debt,
       avgSpot: this.avgSpot,
       hedges: this.hedges.map((h) => ({ ...h })),
@@ -182,6 +192,7 @@ export class Simulation {
     for (const id of d.tech?.unlocked ?? []) this.tech.unlocked.add(id);
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     if (d.fuelPrice) this.fuelPrice = { ...this.fuelPrice, ...d.fuelPrice };
+    this.fuelContracts = { ...(d.fuelContracts ?? {}) };
     this.debt = d.debt ?? 0;
     this.avgSpot = d.avgSpot ?? TARIFF;
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
@@ -273,11 +284,27 @@ export class Simulation {
     if (!bus || bus.underConstruction) return true;
     return g.outageUntil != null && this.clock < g.outageUntil;
   }
-  /** 机组的有效边际成本 = 基准 × 燃料指数 × 高效科技 ×（含老化上浮） */
+  /** 某燃料的有效价格指数：有活跃长约用锁定价，否则用现货 */
+  effFuelIndex(fuel: FuelType): number {
+    const c = this.fuelContracts[fuel];
+    if (c && this.clock < c.endClock) return c.index;
+    return this.fuelPrice[fuel];
+  }
+
+  /** 机组的有效边际成本 = 基准 × 燃料指数(含长约) × 高效科技 ×（含老化上浮） */
   effMarginalCost(g: Generator): number {
     const fuel = PLANT_FUEL[g.type];
-    const idx = fuel ? this.fuelPrice[fuel] : 1;
+    const idx = fuel ? this.effFuelIndex(fuel) : 1;
     return g.marginalCost * idx * this.tech.fuelCostFactor * (1 + this.wear(g) * WEAR_COST_FACTOR);
+  }
+
+  /** 签订燃料长约：锁定该燃料当前现货指数 × 溢价，锁定 days 天 */
+  signFuelContract(fuel: FuelType, days: number): boolean {
+    if (days <= 0) return false;
+    const index = this.fuelPrice[fuel] * FUEL_CONTRACT_PREMIUM;
+    this.fuelContracts[fuel] = { index, endClock: this.clock + days * 24 };
+    this.log('info', `📑 ${FUEL_INFO[fuel].label}长约：锁定指数 ${index.toFixed(2)} × ${days}天`);
+    return true;
   }
 
   /** 退役某资产的残值（按 capex × 基准比例 ×(1−役龄折旧)） */

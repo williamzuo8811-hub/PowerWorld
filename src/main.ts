@@ -179,6 +179,7 @@ function openFinance(): void {
       money: sim.money, assetValue: sim.assetValue, debt: sim.debt, creditLimit: sim.creditLimit,
       netWorth: sim.netWorth, dailyRate: sim.loanDailyRate, finance: sim.finance,
       spotPrice: sim.spotPrice, reserveMargin: sim.reserveMargin, fuelPrice: sim.fuelPrice,
+      fuelContracts: sim.fuelContracts,
       carbon: {
         intensity: snap.co2 / Math.max(snap.totalServed, 1),
         benchmark: sim.benchmarkIntensity,
@@ -191,6 +192,7 @@ function openFinance(): void {
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
     onHedge: (vol, days) => { if (sim.addHedge(vol, days)) sound.build(); else sound.error(); openFinance(); },
+    onFuelContract: (fuel, days) => { if (sim.signFuelContract(fuel, days)) sound.build(); else sound.error(); openFinance(); },
     onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }
