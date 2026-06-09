@@ -105,6 +105,8 @@ export interface SimSnapshot {
   totalLoss: number; // 总线损 (MW)
   co2: number; // 当前碳排放强度 (吨/h)
   reliability: number; // 近期可靠性 0..1（供电率滑动平均）
+  weather: string; // 当前天气/事件标签
+  demandFactor: number; // 事件造成的需求系数（>1 表示尖峰）
   gameOver: boolean;
   win: boolean;
 }

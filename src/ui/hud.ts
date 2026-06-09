@@ -69,6 +69,7 @@ export class Hud {
     add('loss', '线损');
     add('reliab', '可靠性');
     add('co2', '碳排');
+    add('weather', '天气');
     add('goal', '目标');
 
     const spacer = document.createElement('div');
@@ -144,6 +145,7 @@ export class Hud {
     this.set('reliab', `${(s.reliability * 100).toFixed(1)}%`,
       s.reliability < WIN_RELIABILITY ? 'freq-warn' : 'freq-ok');
     this.set('co2', `${s.co2.toFixed(1)} t/h`);
+    this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
     this.set('goal', `撑到第${WIN_DAY}天·可靠性≥${(WIN_RELIABILITY * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');

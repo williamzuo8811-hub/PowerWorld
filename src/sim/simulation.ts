@@ -3,6 +3,7 @@
 import type { SimSnapshot, LogEntry } from './types';
 import { Grid } from './grid';
 import { solveDC } from './powerflow';
+import { EventSystem } from './events';
 import { demandMultiplier, renewableAvailability } from './profiles';
 import { PLANTS, VOLTAGE } from '../config/components';
 import {
@@ -29,6 +30,11 @@ export class Simulation {
   logs: LogEntry[] = [];
   gameOver = false;
   win = false;
+  events = new EventSystem();
+
+  constructor() {
+    this.events.schedule(0);
+  }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
   private lastLossFraction = 0.02; // 上一 tick 的线损占比，用于本 tick 多发一点
@@ -76,19 +82,25 @@ export class Simulation {
     const dtHours = dtSim / 3600;
     this.clock += dtHours;
 
-    // —— 天气：风况慢变随机游走 ——
+    // —— 天气：风况慢变随机游走 + 天气/危机事件 ——
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
+    this.events.update(this);
 
-    // —— 更新负荷需求（含城市发展增长 + 小幅噪声）——
+    // —— 更新负荷需求（含城市发展增长 + 小幅噪声 + 事件需求系数）——
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
-      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise;
+      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor;
     }
 
-    // —— 更新新能源可用系数 ——
+    // —— 更新新能源可用系数（叠加天气事件对风/光的压制）——
     for (const g of this.grid.gens.values()) {
-      if (!g.dispatchable) g.availability = renewableAvailability(g.type, this.hourOfDay, this.windBase);
+      if (!g.dispatchable) {
+        let a = renewableAvailability(g.type, this.hourOfDay, this.windBase);
+        if (g.type === 'wind') a *= this.events.windCap;
+        if (g.type === 'solar') a *= this.events.solarCap;
+        g.availability = clamp(a, 0, 1);
+      }
     }
 
     // 每 tick 先清零线路潮流 / 变电站通过量，再按孤岛逐个回填
@@ -345,6 +357,8 @@ export class Simulation {
       totalLoss: this.totalLoss,
       co2: this.co2Rate,
       reliability: this.reliability,
+      weather: this.events.label,
+      demandFactor: this.events.demandFactor,
       gameOver: this.gameOver,
       win: this.win,
     };
