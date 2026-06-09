@@ -198,10 +198,14 @@ export class Renderer {
       const cx = bus.x * TILE, cy = bus.y * TILE;
       const r = bus.kind === 'substation' ? 7 : 11;
       const color = busColor(this.grid, bus);
-      const alpha = bus.underConstruction ? 0.3 : 1; // 在建中半透明
+      const gen0 = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
+      const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
+      const alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : 1; // 在建/检修半透明
 
       // 建设中黄环
       if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
+      // 强迫停运检修：橙红环
+      if (inOutage) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xff7043, alpha: 0.9 });
       // 停电红环
       if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
       // 变电站变压器跳闸：橙色警示环
@@ -247,12 +251,15 @@ export class Renderer {
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
       }
+      const og = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
+      const outage = !!og && og.outageUntil != null && og.outageUntil > this.clock && !bus.underConstruction;
       t.text = bus.underConstruction
         ? `${bus.name} 🏗${Math.max(0, ((bus.commissionAt ?? 0) - this.clock) / 24).toFixed(1)}d`
-        : busLabel(this.grid, bus);
+        : outage ? `${bus.name} 🔧检修`
+          : busLabel(this.grid, bus);
       t.x = bus.x * TILE;
       t.y = bus.y * TILE + 14;
-      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : 0x9bb0c2;
+      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0x9bb0c2;
     }
     // 清理已删除的母线标签
     for (const [id, t] of [...this.labels]) {

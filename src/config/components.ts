@@ -87,6 +87,16 @@ export const FUEL_MIN = 0.45;
 export const FUEL_MAX = 2.6;
 export const FUEL_SHOCK_CHANCE_PER_DAY = 0.12; // 燃料价格跳涨概率（每天）
 
+// —— 机组老化 / 强迫停运 / 退役 ——
+export const WEAR_FULL_DAYS = 40; // 多少天磨损达到满值（1.0）
+export const WEAR_COST_FACTOR = 0.3; // 满磨损时边际成本上浮比例
+export const WEAR_OM_FACTOR = 0.6; // 满磨损时运维成本上浮比例
+export const FAIL_BASE_HAZARD = 0.02; // 强迫停运基础日概率（再乘 0.3+磨损）
+export const REPAIR_DAYS = 0.8; // 强迫停运检修时长（天）
+export const REPAIR_COST_FRACTION = 0.04; // 检修成本 = capex × 此值 ×(0.5+磨损)
+export const SALVAGE_FRACTION = 0.4; // 退役残值基准比例（占 capex）
+export const DEPREC_DAYS = 60; // 残值随役龄折旧的天数尺度
+
 // —— 贷款 / 融资 ——
 // 工期长、capex 高 → 前期现金流紧张。举债可摊平，但要付利息；信用额度随资产规模上升。
 export const LOAN_BASE_CREDIT = 250_000; // 基础信用额度

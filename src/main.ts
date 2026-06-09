@@ -315,14 +315,23 @@ function handleClick(clientX: number, clientY: number): void {
     }
     case 'bulldoze': {
       if (bus) {
+        const salvage = sim.salvageValue(bus.id); // 退役前计算残值
         sim.grid.removeBus(bus.id);
+        if (salvage > 0) sim.refund(salvage);
         invalidateN1();
         sound.build();
-        sim.log('warn', `拆除 ${bus.name}`);
+        sim.log('warn', `退役 ${bus.name}${salvage > 0 ? `（残值 ¥${salvage.toLocaleString('en-US')}）` : ''}`);
         return;
       }
       const ln = renderer.nearestLine(tile.x, tile.y);
-      if (ln) { sim.grid.removeLine(ln.id); invalidateN1(); sound.build(); sim.log('warn', '拆除线路'); }
+      if (ln) {
+        const s = sim.lineSalvage(ln);
+        sim.grid.removeLine(ln.id);
+        if (s > 0) sim.refund(s);
+        invalidateN1();
+        sound.build();
+        sim.log('warn', `拆除线路${s > 0 ? `（残值 ¥${s.toLocaleString('en-US')}）` : ''}`);
+      }
       return;
     }
     default: {
@@ -361,9 +370,11 @@ function busInspectorHtml(bus: Bus): string {
     if (gen) {
       const spec = PLANTS[gen.type];
       rows.push(row('出力', `${gen.output.toFixed(1)} / ${gen.capacity} MW`));
-      rows.push(row('边际成本', `¥${gen.marginalCost}/MWh`));
+      rows.push(row('边际成本(现)', `¥${sim.effMarginalCost(gen).toFixed(0)}/MWh`));
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
       rows.push(row('排放', `${spec.co2} t/MWh`));
+      rows.push(row('役龄 / 磨损', `${gen.age.toFixed(1)}天 / ${(sim.wear(gen) * 100).toFixed(0)}%`));
+      if (sim.genOffline(gen) && !bus.underConstruction) rows.push(row('状态', '🔧 检修中'));
     }
   } else if (bus.kind === 'load') {
     const l = sim.grid.loadsAtBus(bus.id)[0];

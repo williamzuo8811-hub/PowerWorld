@@ -10,6 +10,7 @@ describe('经济平衡（稳态盈利）', () => {
     const sim = new Simulation();
     SCENARIOS[0].setup(sim);
     sim.events.nextAt = Infinity;
+    sim.forcedOutages = false; // 关闭随机停运以求确定性
     const g = sim.grid;
     const byName = (n: string) => [...g.buses.values()].find((b) => b.name === n)!;
     const subA = byName('中心变电站'); // 起步：coal→subA→居民区

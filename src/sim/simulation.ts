@@ -11,8 +11,10 @@ import {
   PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, type FuelType,
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE, LOAN_RISK_SPREAD,
+  WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
+  REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
 } from '../config/components';
-import type { Generator } from './types';
+import type { Generator, Line } from './types';
 import {
   START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -73,6 +75,7 @@ export class Simulation {
   events = new EventSystem();
   tech = new TechState();
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
+  forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   reserveMargin = 1; // 当前备用率（可用容量/需求）
   debt = 0; // 未偿贷款本金
@@ -112,6 +115,7 @@ export class Simulation {
     this.spotPrice = TARIFF;
     this.reserveMargin = 1;
     this.debt = 0;
+    this.forcedOutages = true;
     this.finance = { revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0 };
   }
 
@@ -219,11 +223,40 @@ export class Simulation {
     return x;
   }
 
-  /** 机组的有效边际成本 = 基准 × 燃料价格指数 × 高效机组科技系数 */
+  /** 机组磨损系数 0..1（随役龄上升） */
+  wear(g: Generator): number {
+    return clamp(g.age / WEAR_FULL_DAYS, 0, 1);
+  }
+  /** 机组是否离线：在建中、或处于强迫停运检修 */
+  genOffline(g: Generator): boolean {
+    const bus = this.grid.buses.get(g.busId);
+    if (!bus || bus.underConstruction) return true;
+    return g.outageUntil != null && this.clock < g.outageUntil;
+  }
+  /** 机组的有效边际成本 = 基准 × 燃料指数 × 高效科技 ×（含老化上浮） */
   effMarginalCost(g: Generator): number {
     const fuel = PLANT_FUEL[g.type];
     const idx = fuel ? this.fuelPrice[fuel] : 1;
-    return g.marginalCost * idx * this.tech.fuelCostFactor;
+    return g.marginalCost * idx * this.tech.fuelCostFactor * (1 + this.wear(g) * WEAR_COST_FACTOR);
+  }
+
+  /** 退役某资产的残值（按 capex × 基准比例 ×(1−役龄折旧)） */
+  salvageValue(busId: number): number {
+    const bus = this.grid.buses.get(busId);
+    if (!bus) return 0;
+    if (bus.kind === 'plant') {
+      const g = this.grid.gensAtBus(busId)[0];
+      const deprec = g ? clamp(g.age / DEPREC_DAYS, 0, 0.85) : 0;
+      const capex = g ? PLANTS[g.type].capex : 0;
+      return Math.round(capex * SALVAGE_FRACTION * (1 - deprec));
+    }
+    if (bus.kind === 'storage') return Math.round(BATTERY.capex * SALVAGE_FRACTION);
+    if (bus.kind === 'substation') return Math.round(SUBSTATION_CAPEX * SALVAGE_FRACTION);
+    return 0;
+  }
+  /** 拆除线路的残值 */
+  lineSalvage(ln: Line): number {
+    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * SALVAGE_FRACTION * 0.5);
   }
 
   /** 燃料价格波动：均值回归 + 随机游走 + 偶发跳涨 */
@@ -293,6 +326,25 @@ export class Simulation {
     // —— 燃料价格波动 ——
     this.updateFuelPrices(dtHours);
 
+    // —— 机组老化 + 强迫停运 ——
+    const dtDays = dtHours / 24;
+    for (const g of this.grid.gens.values()) {
+      const bus = this.grid.buses.get(g.busId);
+      if (!bus || bus.underConstruction) continue; // 在建不计役龄
+      g.age += dtDays;
+      if (g.outageUntil != null && this.clock >= g.outageUntil) g.outageUntil = undefined; // 检修完成
+      if (this.forcedOutages && g.outageUntil == null) {
+        const hazard = FAIL_BASE_HAZARD * (0.3 + this.wear(g)) * dtDays;
+        if (Math.random() < hazard) {
+          g.outageUntil = this.clock + REPAIR_DAYS * 24;
+          g.output = 0;
+          const repair = Math.round(PLANTS[g.type].capex * REPAIR_COST_FRACTION * (0.5 + this.wear(g)));
+          this.money -= repair;
+          this.log('bad', `🔧 ${bus.name} 强迫停运检修（约 ${REPAIR_DAYS} 天，¥${repair.toLocaleString('en-US')}）`);
+        }
+      }
+    }
+
     // —— 更新负荷需求（城市增长 + 噪声 + 事件需求系数 + 需求响应科技）——
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * dtHours;
@@ -319,6 +371,7 @@ export class Simulation {
       bus.blackout = false;
       if (bus.kind === 'substation') bus.throughput = 0;
     }
+    for (const g of this.grid.gens.values()) if (this.genOffline(g)) g.output = 0; // 离线机组出力清零
 
     // —— 逐孤岛求解 ——
     const islands = this.grid.islands();
@@ -386,8 +439,7 @@ export class Simulation {
     let availCap = 0;
     let marginalUnitCost = 0;
     for (const g of this.grid.gens.values()) {
-      const bus = this.grid.buses.get(g.busId);
-      if (!bus || bus.underConstruction) continue;
+      if (this.genOffline(g)) continue;
       availCap += g.dispatchable ? g.capacity : g.capacity * g.availability;
       if (g.dispatchable && g.output > 0.5) marginalUnitCost = Math.max(marginalUnitCost, this.effMarginalCost(g));
     }
@@ -409,7 +461,7 @@ export class Simulation {
     const omDayFrac = dtHours / 24;
     let omCost = 0;
     for (const g of this.grid.gens.values()) {
-      if (!this.grid.buses.get(g.busId)?.underConstruction) omCost += PLANTS[g.type].omPerDay * omDayFrac;
+      if (!this.grid.buses.get(g.busId)?.underConstruction) omCost += PLANTS[g.type].omPerDay * (1 + this.wear(g) * WEAR_OM_FACTOR) * omDayFrac;
     }
     for (const bt of this.grid.batteries.values()) {
       if (!this.grid.buses.get(bt.busId)?.underConstruction) omCost += BATTERY.omPerDay * omDayFrac;
@@ -465,7 +517,7 @@ export class Simulation {
     const dtHours = dtSim / 3600;
     const set = new Set(busIds);
     const uc = (busId: number) => this.grid.buses.get(busId)?.underConstruction === true; // 在建中不参与运行
-    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId) && !uc(g.busId));
+    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId) && !this.genOffline(g));
     const loads = [...this.grid.loads.values()].filter((l) => set.has(l.busId));
     const demand = loads.reduce((s, l) => s + l.demand, 0);
 

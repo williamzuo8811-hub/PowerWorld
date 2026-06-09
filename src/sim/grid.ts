@@ -71,6 +71,7 @@ export class Grid {
       capacity: spec.capacity, pmin: spec.pmin, output: 0,
       rampRate: spec.rampRate, marginalCost: spec.marginalCost,
       dispatchable: spec.dispatchable, availability: spec.dispatchable ? 1 : 0,
+      age: 0,
     };
     this.gens.set(gen.id, gen);
     return { bus, gen };
