@@ -185,6 +185,7 @@ function openFinance(): void {
         benchmark: sim.benchmarkIntensity,
         price: sim.carbonPrice,
       },
+      recPrice: sim.recPrice,
       avgSpot: sim.avgSpot,
       clock: sim.clock,
       hedges: sim.hedges,

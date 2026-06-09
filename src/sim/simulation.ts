@@ -19,6 +19,7 @@ import type { Generator, Line, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
+  REC_START, REC_DECLINE_PER_DAY, REC_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
@@ -102,7 +103,7 @@ export class Simulation {
   hedges: Hedge[] = []; // 活跃套保合约
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -144,7 +145,7 @@ export class Simulation {
     this.hedges = [];
     this.forcedOutages = true;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -219,6 +220,10 @@ export class Simulation {
   /** 当前免费排放基准强度 (t/MWh)，随时间收紧 */
   get benchmarkIntensity(): number {
     return Math.max(CARBON_BENCH_MIN, CARBON_BENCH_START - CARBON_BENCH_DECLINE_PER_DAY * this.day);
+  }
+  /** 当前绿证价 ¥/MWh，随政策退坡 */
+  get recPrice(): number {
+    return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day);
   }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
@@ -556,6 +561,11 @@ export class Simulation {
     const allowanceRate = aggServed * this.benchmarkIntensity; // t/h 免费配额
     const carbonCost = (co2Rate - allowanceRate) * this.carbonPrice * dtHours;
 
+    // —— 绿证：新能源发电量按绿证价获补贴收入 ——
+    let renewMWh = 0;
+    for (const g of this.grid.gens.values()) if (!g.dispatchable && !this.genOffline(g)) renewMWh += g.output * dtHours;
+    const recIncome = renewMWh * this.recPrice;
+
     // —— 固定运维成本（仅已投运资产）——
     const omDayFrac = dtHours / 24;
     let omCost = 0;
@@ -573,8 +583,8 @@ export class Simulation {
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（扣除燃料/碳/失负荷/运维/利息，加套保差价）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost + hedgeIncome;
+    // —— 结算（扣除燃料/碳/失负荷/运维/利息，加套保差价/绿证收入）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost + hedgeIncome + recIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -587,13 +597,14 @@ export class Simulation {
     this.finance.interest = ema(this.finance.interest, interestCost * toDay);
     this.finance.penalty = ema(this.finance.penalty, penalty * toDay);
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
+    this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
       this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
-      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge;
+      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge + this.finance.rec;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

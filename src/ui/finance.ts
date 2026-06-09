@@ -7,7 +7,7 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
   spotPrice: number;
@@ -15,6 +15,7 @@ export interface FinanceData {
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
   fuelContracts: Partial<Record<'coal' | 'gas' | 'uranium', { index: number; endClock: number }>>;
   carbon: { intensity: number; benchmark: number; price: number };
+  recPrice: number;
   avgSpot: number;
   clock: number;
   hedges: { volume: number; strike: number; endClock: number }[];
@@ -72,15 +73,17 @@ export class FinancePanel {
       + row('贷款利息', `−${abs(f.interest)}/天`)
       + row('失负荷罚款', `−${abs(f.penalty)}/天`, f.penalty > 1 ? 'freq-bad' : '')
       + row('套保差价', `${f.hedge >= 0 ? '+' : '−'}${abs(f.hedge)}/天`, f.hedge < 0 ? '' : 'freq-ok')
+      + row('绿证收入', `+${abs(f.rec)}/天`, f.rec > 1 ? 'freq-ok' : '')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
       + section('市场行情')
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
       + row('备用率', `${(d.reserveMargin * 100).toFixed(0)}%`, d.reserveMargin < 1 ? 'freq-bad' : '')
       + row('燃料指数（煤/气/铀）', `${d.fuelPrice.coal.toFixed(2)} / ${d.fuelPrice.gas.toFixed(2)} / ${d.fuelPrice.uranium.toFixed(2)}`)
-      + section('碳配额市场')
+      + section('碳 / 绿色市场')
       + row('排放强度 / 基准', `${d.carbon.intensity.toFixed(2)} / ${d.carbon.benchmark.toFixed(2)} t/MWh`,
         d.carbon.intensity > d.carbon.benchmark ? 'freq-warn' : 'freq-ok')
-      + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`);
+      + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`)
+      + row('绿证价', `¥${d.recPrice.toFixed(1)}/MWh`, 'freq-ok');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');

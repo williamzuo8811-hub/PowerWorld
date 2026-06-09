@@ -163,6 +163,11 @@ export const CARBON_BENCH_START = 0.55; // 基准排放强度起点 (t/MWh)
 export const CARBON_BENCH_DECLINE_PER_DAY = 0.02; // 每天收紧
 export const CARBON_BENCH_MIN = 0.1; // 基准下限
 
+// 绿色证书（REC）：新能源发电按绿证价获补贴收入，价格随政策退坡。
+export const REC_START = 22; // 绿证起始价 ¥/MWh
+export const REC_DECLINE_PER_DAY = 0.4; // 每天退坡
+export const REC_MIN = 4; // 绿证价下限
+
 // —— 公众形象 / 口碑 ——
 export const POLLUTION_RADIUS = 5; // 火电厂污染影响半径（瓦片）
 export const REP_TARIFF_MIN = 0.85; // 口碑 0 时电价系数
