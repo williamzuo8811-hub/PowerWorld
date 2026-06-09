@@ -38,6 +38,7 @@ describe('计划检修', () => {
     g.addLine(coal.bus.id, sub.id);
     g.addLine(sub.id, load.bus.id);
     sim.forcedOutages = false;
+    sim.events.nextAt = Infinity; // 关闭随机天气，避免风暴跳闸干扰
     sim.scheduleMaintenance(coal.bus.id); // 检修 0.5 天 = 12 小时
     for (let i = 0; i < 200; i++) sim.tick(0.05, 5760); // 推进约 16 小时，超过检修时长
     expect(sim.genOffline(coal.gen)).toBe(false);
