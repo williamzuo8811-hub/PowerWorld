@@ -28,6 +28,8 @@ import {
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
+  REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
+  type CompetitorSpec,
 } from '../config/components';
 
 /** 历史走势采样点 */
@@ -116,6 +118,9 @@ export class Simulation {
   insured = false; // 是否投保设备保险
   marketEnabled = false; // 是否接入批发市场（联络线，需主动接入）
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
+  competitors: CompetitorSpec[] = COMPETITORS_INIT.map((c) => ({ ...c })); // AI 竞争对手
+  marketClearingPrice = TARIFF; // 区域出清价（批发）
+  marketShare = 0; // 本公司在区域市场的发电份额 0..1
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -170,6 +175,9 @@ export class Simulation {
     this.insured = false;
     this.marketEnabled = false;
     this.marketImportMW = 0;
+    this.competitors = COMPETITORS_INIT.map((c) => ({ ...c }));
+    this.marketClearingPrice = TARIFF;
+    this.marketShare = 0;
     this.history = [];
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
@@ -274,6 +282,34 @@ export class Simulation {
   get cycleLabel(): string {
     const s = this.cyclePhase;
     return s > 0.3 ? '繁荣' : s < -0.3 ? '衰退' : '平稳';
+  }
+  /** 区域市场总需求 (MW)：日曲线 × 景气 */
+  get regionalDemand(): number {
+    const m = (demandMultiplier(this.hourOfDay, 'residential')
+      + demandMultiplier(this.hourOfDay, 'commercial')
+      + demandMultiplier(this.hourOfDay, 'industrial')) / 3;
+    return REGIONAL_BASE_DEMAND * m * this.cycleFactor;
+  }
+  /** 区域市场出清：你与竞争对手按报价排序，对区域需求出清 */
+  private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } {
+    const demand = this.regionalDemand;
+    const blocks: { mw: number; cost: number; player: boolean }[] = [];
+    for (const c of this.competitors) blocks.push({ mw: c.capacity, cost: c.marginalCost, player: false });
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      if (g.dispatchable) blocks.push({ mw: g.capacity, cost: this.effMarginalCost(g), player: true });
+      else blocks.push({ mw: g.capacity * g.availability, cost: 0.5, player: true });
+    }
+    blocks.sort((a, b) => a.cost - b.cost);
+    let cum = 0, clearingCost = 0, playerDispatched = 0;
+    for (const b of blocks) {
+      if (cum >= demand) break;
+      const take = Math.min(b.mw, demand - cum);
+      cum += take;
+      clearingCost = b.cost;
+      if (b.player) playerDispatched += take;
+    }
+    return { clearingCost, playerDispatched, shortfall: Math.max(0, demand - cum) };
   }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
@@ -520,9 +556,10 @@ export class Simulation {
       }
     }
 
-    // —— 更新负荷需求（城市增长 + 噪声 + 事件需求系数 + 需求响应科技）——
+    // —— 更新负荷需求（城市增长 × 竞争力 + 噪声 + 事件 + 需求响应 + 景气）——
+    const compFactor = clamp(0.6 + this.marketShare * COMPETITIVENESS_K, 0.6, 1.5); // 越有竞争力获客越快
     for (const load of this.grid.loads.values()) {
-      load.baseDemand *= 1 + load.growthPerHour * dtHours;
+      load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
       load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor;
     }
@@ -611,23 +648,25 @@ export class Simulation {
       }
     }
 
-    // —— 现货电价：备用率 + 边际机组成本动态定价 ——
+    // —— 现货电价：本地备用率 × 区域竞价市场的能量成本 ——
     let availCap = 0;
-    let marginalUnitCost = 0;
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
       availCap += g.dispatchable ? g.capacity : g.capacity * g.availability;
-      if (g.dispatchable && g.output > 0.5) marginalUnitCost = Math.max(marginalUnitCost, this.effMarginalCost(g));
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (bus && !bus.underConstruction && b.soc > 1) availCap += b.powerRating * this.tech.batteryPowerFactor;
     }
     const reserveRatio = availCap / Math.max(aggDemand, 1);
-    const scarcityMult = clamp(1 + (SPOT.scarcityRef - reserveRatio) * SPOT.scarcityK, SPOT.multMin, SPOT.multMax);
-    const fuelInfluence = clamp(SPOT.fuelMin + marginalUnitCost / SPOT.fuelRef, SPOT.fuelMin, SPOT.fuelMax);
-    this.spotPrice = clamp(TARIFF * scarcityMult * fuelInfluence, SPOT.floor, SPOT.cap);
+    const localMult = clamp(1 + (SPOT.scarcityRef - reserveRatio) * SPOT.scarcityK, SPOT.multMin, SPOT.multMax);
+    // 区域市场出清：竞争对手影响能量成本水平与你的市场份额
+    const clr = this.marketClearing();
+    this.marketClearingPrice = clamp(clr.clearingCost * GEN_MARGIN_MARKUP + (clr.shortfall > 0 ? REGIONAL_SCARCITY_ADDER : 0), SPOT.floor, SPOT.cap);
+    const marketFactor = clamp(SPOT.fuelMin + clr.clearingCost / SPOT.fuelRef, SPOT.fuelMin, SPOT.fuelMax);
+    this.spotPrice = clamp(TARIFF * localMult * marketFactor, SPOT.floor, SPOT.cap);
     this.reserveMargin = reserveRatio;
+    this.marketShare = this.regionalDemand > 0 ? clr.playerDispatched / this.regionalDemand : 0;
     // 远期报价（现货均值）
     const aS = clamp(dtHours / 12, 0, 1);
     this.avgSpot = this.avgSpot * (1 - aS) + this.spotPrice * aS;
@@ -961,6 +1000,9 @@ export class Simulation {
       renewableShare: this.renewableShare,
       cycle: this.cycleLabel,
       cycleFactor: this.cycleFactor,
+      marketShare: this.marketShare,
+      marketClearingPrice: this.marketClearingPrice,
+      regionalDemand: this.regionalDemand,
       spotPrice: this.spotPrice,
       reserveMargin: this.reserveMargin,
       fuelPrice: { ...this.fuelPrice },

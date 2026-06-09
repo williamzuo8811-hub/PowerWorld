@@ -136,6 +136,20 @@ export const CYCLE_AMPLITUDE = 0.15; // 对需求的振幅（±15%）
 export const HISTORY_SAMPLE_HOURS = 2; // 采样间隔（游戏小时）
 export const HISTORY_MAX = 160; // 最多保留样本数
 
+// —— 多公司竞价市场 ——
+// 你与若干 AI 竞争对手把发电按报价排序，对区域需求出清。出清边际成本决定市场价水平，
+// 你的"市场份额"取决于是否够便宜——越有竞争力，获客增长越快。
+export interface CompetitorSpec { name: string; capacity: number; marginalCost: number; }
+export const REGIONAL_BASE_DEMAND = 520; // 区域市场基准需求 (MW)
+export const COMPETITORS_INIT: CompetitorSpec[] = [
+  { name: '绿源电力', capacity: 150, marginalCost: 6 }, // 廉价清洁基荷
+  { name: '蓝煤集团', capacity: 200, marginalCost: 24 }, // 廉价火电基荷
+  { name: '峰谷能源', capacity: 110, marginalCost: 56 }, // 昂贵调峰
+];
+export const GEN_MARGIN_MARKUP = 1.12; // 出清价相对边际成本的发电商加价
+export const REGIONAL_SCARCITY_ADDER = 90; // 区域供不应求时的价格附加
+export const COMPETITIVENESS_K = 2.0; // 市场份额对获客增长的影响系数
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。

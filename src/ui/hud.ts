@@ -90,6 +90,7 @@ export class Hud {
     add('co2', '碳排');
     add('green', '清洁占比');
     add('rep', '口碑');
+    add('share', '市占');
     add('cycle', '景气');
     add('weather', '天气');
     add('rp', '研发点');
@@ -226,6 +227,7 @@ export class Hud {
     this.set('co2', `${s.co2.toFixed(1)} t/h`);
     this.set('green', `${(s.renewableShare * 100).toFixed(0)}%`, s.renewableShare > 0.5 ? 'freq-ok' : '');
     this.set('rep', `${s.reputation.toFixed(0)}`, s.reputation < 40 ? 'freq-bad' : s.reputation < 60 ? 'freq-warn' : 'freq-ok');
+    this.set('share', `${(s.marketShare * 100).toFixed(0)}%`, s.marketShare > 0.25 ? 'freq-ok' : s.marketShare < 0.1 ? 'freq-warn' : '');
     this.set('cycle', `${s.cycle} ${(s.cycleFactor * 100 - 100 >= 0 ? '+' : '')}${(s.cycleFactor * 100 - 100).toFixed(0)}%`,
       s.cycle === '繁荣' ? 'freq-ok' : s.cycle === '衰退' ? 'freq-warn' : '');
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');

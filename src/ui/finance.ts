@@ -18,6 +18,10 @@ export interface FinanceData {
   creditScore: number;
   marketEnabled: boolean;
   marketImport: number;
+  marketShare: number;
+  clearingPrice: number;
+  regionalDemand: number;
+  competitors: { name: string; capacity: number; marginalCost: number }[];
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -97,7 +101,12 @@ export class FinancePanel {
       + row('排放强度 / 基准', `${d.carbon.intensity.toFixed(2)} / ${d.carbon.benchmark.toFixed(2)} t/MWh`,
         d.carbon.intensity > d.carbon.benchmark ? 'freq-warn' : 'freq-ok')
       + row('配额价', `¥${d.carbon.price.toFixed(1)}/吨`)
-      + row('绿证价', `¥${d.recPrice.toFixed(1)}/MWh`, 'freq-ok');
+      + row('绿证价', `¥${d.recPrice.toFixed(1)}/MWh`, 'freq-ok')
+      + section('区域市场（含竞争对手）')
+      + row('区域需求', `${d.regionalDemand.toFixed(0)} MW`)
+      + row('出清价 / 你的市占', `¥${d.clearingPrice.toFixed(0)} · ${(d.marketShare * 100).toFixed(0)}%`,
+        d.marketShare > 0.25 ? 'freq-ok' : d.marketShare < 0.1 ? 'freq-warn' : '')
+      + d.competitors.map((c) => row(`· ${c.name}`, `${c.capacity}MW @¥${c.marginalCost}/MWh`)).join('');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');

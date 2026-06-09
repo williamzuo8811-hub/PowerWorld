@@ -121,6 +121,9 @@ export interface SimSnapshot {
   renewableShare: number; // 清洁电力占比 0..1（新能源+储能）
   cycle: string; // 景气阶段（繁荣/平稳/衰退）
   cycleFactor: number; // 景气需求系数
+  marketShare: number; // 区域市场发电份额 0..1
+  marketClearingPrice: number; // 区域出清价（批发）
+  regionalDemand: number; // 区域市场总需求 MW
   spotPrice: number; // 当前现货电价 ¥/MWh
   reserveMargin: number; // 备用率（可用容量/需求）
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>; // 燃料价格指数
