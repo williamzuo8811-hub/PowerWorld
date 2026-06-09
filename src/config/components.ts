@@ -132,6 +132,10 @@ export const MARKET_FEE_PER_DAY = 1_200; // 联络线容量预留日费
 export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）
 export const CYCLE_AMPLITUDE = 0.15; // 对需求的振幅（±15%）
 
+// —— 历史走势采样 ——
+export const HISTORY_SAMPLE_HOURS = 2; // 采样间隔（游戏小时）
+export const HISTORY_MAX = 160; // 最多保留样本数
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。

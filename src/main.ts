@@ -7,6 +7,7 @@ import { ResearchPanel } from './ui/research';
 import { AchievementsPanel } from './ui/achievements';
 import { EconomicsPanel } from './ui/economics';
 import { FinancePanel } from './ui/finance';
+import { HistoryPanel } from './ui/history';
 import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
@@ -34,6 +35,7 @@ const research = new ResearchPanel();
 const achvPanel = new AchievementsPanel();
 const econPanel = new EconomicsPanel();
 const finPanel = new FinancePanel();
+const historyPanel = new HistoryPanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
@@ -73,6 +75,7 @@ function enterGame(): void {
   achvPanel.hide();
   econPanel.hide();
   finPanel.hide();
+  historyPanel.hide();
   panelOpen = false;
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
@@ -146,6 +149,13 @@ function doUnlock(id: TechId): void {
   sound.unlock();
   sim.log('good', `🔬 已研发：${t.name}`);
   openResearch(); // 刷新面板
+}
+
+/** 打开走势面板 */
+function openHistory(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  historyPanel.show({ history: sim.history, onClose: () => { historyPanel.hide(); panelOpen = false; } });
 }
 
 /** 打开成就面板 */
@@ -482,6 +492,7 @@ async function start(): Promise<void> {
   hud.onAchievements = openAchievements;
   hud.onEconomics = openEconomics;
   hud.onFinance = openFinance;
+  hud.onHistory = openHistory;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.setSoundLabel(sound.muted);
   bindInput();

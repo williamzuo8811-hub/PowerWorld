@@ -27,8 +27,16 @@ import {
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
-  CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE,
+  CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
 } from '../config/components';
+
+/** 历史走势采样点 */
+export interface HistorySample {
+  clock: number;
+  spot: number;
+  netWorth: number;
+  demand: number;
+}
 
 interface IslandResult {
   gen: number;
@@ -78,6 +86,8 @@ export interface SimSaveState {
   hedges: Hedge[];
   insured: boolean;
   marketEnabled: boolean;
+  history: HistorySample[];
+  nextSampleAt: number;
 }
 
 export class Simulation {
@@ -106,6 +116,8 @@ export class Simulation {
   insured = false; // 是否投保设备保险
   marketEnabled = false; // 是否接入批发市场（联络线，需主动接入）
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
+  history: HistorySample[] = []; // 历史走势采样
+  private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
@@ -158,6 +170,8 @@ export class Simulation {
     this.insured = false;
     this.marketEnabled = false;
     this.marketImportMW = 0;
+    this.history = [];
+    this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
       revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
@@ -183,6 +197,8 @@ export class Simulation {
       hedges: this.hedges.map((h) => ({ ...h })),
       insured: this.insured,
       marketEnabled: this.marketEnabled,
+      history: this.history.map((h) => ({ ...h })),
+      nextSampleAt: this.nextSampleAt,
     };
   }
 
@@ -217,6 +233,8 @@ export class Simulation {
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
+    this.history = (d.history ?? []).map((h) => ({ ...h }));
+    this.nextSampleAt = d.nextSampleAt ?? 0;
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -700,6 +718,13 @@ export class Simulation {
     this.reliability = this.reliability * (1 - a) + instReliab * a;
 
     this.updateReputation(aggGen, aggServed, aggDemand, co2Rate, dtHours);
+
+    // —— 历史走势采样 ——
+    if (this.clock >= this.nextSampleAt) {
+      this.history.push({ clock: this.clock, spot: this.spotPrice, netWorth: this.netWorth, demand: this.totalDemand });
+      if (this.history.length > HISTORY_MAX) this.history.shift();
+      this.nextSampleAt = this.clock + HISTORY_SAMPLE_HOURS;
+    }
 
     this.checkEndConditions();
   }
