@@ -12,6 +12,8 @@ import {
   START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
+  POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
+  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT,
 } from '../config/components';
 
 interface IslandResult {
@@ -29,6 +31,8 @@ export interface SimSaveState {
   clock: number;
   frequency: number;
   reliability: number;
+  reputation: number;
+  renewableShare: number;
   windBase: number;
   lastLossFraction: number;
   goalDay: number;
@@ -46,6 +50,8 @@ export class Simulation {
   clock = 0; // 累计仿真小时
   frequency = FREQ_NOMINAL;
   reliability = 1; // 供电率滑动平均 0..1
+  reputation = 70; // 公众形象 0..100
+  renewableShare = 1; // 清洁电力占比 0..1（EMA）
   logs: LogEntry[] = [];
   gameOver = false;
   win = false;
@@ -65,6 +71,8 @@ export class Simulation {
     this.clock = 0;
     this.frequency = FREQ_NOMINAL;
     this.reliability = 1;
+    this.reputation = 70;
+    this.renewableShare = 1;
     this.logs = [];
     this.gameOver = false;
     this.win = false;
@@ -82,7 +90,8 @@ export class Simulation {
   serialize(): SimSaveState {
     return {
       money: this.money, clock: this.clock, frequency: this.frequency,
-      reliability: this.reliability, windBase: this.windBase, lastLossFraction: this.lastLossFraction,
+      reliability: this.reliability, reputation: this.reputation, renewableShare: this.renewableShare,
+      windBase: this.windBase, lastLossFraction: this.lastLossFraction,
       goalDay: this.goalDay, goalReliability: this.goalReliability,
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
@@ -97,6 +106,8 @@ export class Simulation {
     this.clock = d.clock;
     this.frequency = d.frequency;
     this.reliability = d.reliability;
+    this.reputation = d.reputation ?? 70;
+    this.renewableShare = d.renewableShare ?? 1;
     this.windBase = d.windBase;
     this.lastLossFraction = d.lastLossFraction;
     this.goalDay = d.goalDay;
@@ -129,6 +140,10 @@ export class Simulation {
   }
   get carbonPrice(): number {
     return CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day;
+  }
+  /** 口碑越好，公众/监管越认可，等效电价越高（0.85 ~ 1.15） */
+  get reputationTariffFactor(): number {
+    return REP_TARIFF_MIN + (this.reputation / 100) * REP_TARIFF_SPAN;
   }
 
   log(level: LogEntry['level'], msg: string): void {
@@ -256,8 +271,8 @@ export class Simulation {
     // —— 碳成本 ——
     const carbonCost = co2Rate * this.carbonPrice * dtHours;
 
-    // —— 结算 ——
-    this.money += revenue - fuelCost - carbonCost - penalty;
+    // —— 结算（口碑影响等效电价）——
+    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
@@ -273,6 +288,8 @@ export class Simulation {
     const instReliab = aggDemand > 0.5 ? aggServed / aggDemand : 1;
     const a = clamp(dtHours / 6, 0, 1); // 约 6 小时时间常数
     this.reliability = this.reliability * (1 - a) + instReliab * a;
+
+    this.updateReputation(aggGen, aggServed, aggDemand, co2Rate, dtHours);
 
     this.checkEndConditions();
   }
@@ -425,6 +442,44 @@ export class Simulation {
     return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2 };
   }
 
+  /** 更新公众形象与清洁电力占比 */
+  private updateReputation(aggGen: number, aggServed: number, aggDemand: number, co2Rate: number, dtHours: number): void {
+    // 清洁电力占比 = (新能源出力 + 储能放电) / 总电源
+    let cleanGen = 0;
+    for (const g of this.grid.gens.values()) if (!g.dispatchable) cleanGen += g.output;
+    for (const b of this.grid.batteries.values()) cleanGen += Math.max(0, b.output);
+    const instClean = aggGen > 0.5 ? clamp(cleanGen / aggGen, 0, 1) : this.renewableShare;
+    const aClean = clamp(dtHours / 6, 0, 1);
+    this.renewableShare = this.renewableShare * (1 - aClean) + instClean * aClean;
+
+    // 影响口碑的三个压力：停电、碳强度、临近居民的火电污染
+    const unservedFrac = aggDemand > 0.5 ? clamp((aggDemand - aggServed) / aggDemand, 0, 1) : 0;
+    const carbonIntensity = aggServed > 0.5 ? co2Rate / aggServed : 0; // 吨/MWh
+    let dirtyNear = 0;
+    for (const g of this.grid.gens.values()) {
+      if (g.dispatchable && g.output > 0 && PLANTS[g.type].co2 > 0) {
+        const pb = this.grid.buses.get(g.busId);
+        if (pb && this.hasNearbyLoad(pb.x, pb.y)) dirtyNear += g.output;
+      }
+    }
+    const pollution = aggServed > 0.5 ? clamp(dirtyNear / aggServed, 0, 1) : 0;
+
+    const target = clamp(
+      100 - unservedFrac * REP_UNSERVED_WEIGHT - carbonIntensity * REP_CARBON_WEIGHT - pollution * REP_POLLUTION_WEIGHT,
+      0, 100,
+    );
+    const aRep = clamp(dtHours / REP_TIME_CONSTANT, 0, 1);
+    this.reputation = this.reputation * (1 - aRep) + target * aRep;
+  }
+
+  private hasNearbyLoad(x: number, y: number): boolean {
+    for (const l of this.grid.loads.values()) {
+      const lb = this.grid.buses.get(l.busId);
+      if (lb && Math.hypot(lb.x - x, lb.y - y) < POLLUTION_RADIUS) return true;
+    }
+    return false;
+  }
+
   private checkEndConditions(): void {
     if (this.gameOver) return;
     if (this.money < 0) {
@@ -458,6 +513,8 @@ export class Simulation {
       goalDay: this.goalDay,
       goalReliability: this.goalReliability,
       researchPoints: this.tech.points,
+      reputation: this.reputation,
+      renewableShare: this.renewableShare,
       gameOver: this.gameOver,
       win: this.win,
     };

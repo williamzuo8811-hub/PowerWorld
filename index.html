@@ -29,10 +29,12 @@
       /* 顶部状态栏 */
       #topbar {
         position: fixed; top: 0; left: 0; right: 0; height: 52px;
-        display: flex; align-items: center; gap: 18px; padding: 0 16px;
+        display: flex; align-items: center; gap: 14px; padding: 0 16px;
         background: var(--panel); border-bottom: 1px solid var(--panel-border);
         backdrop-filter: blur(6px); z-index: 10; font-size: 13px;
+        overflow-x: auto; white-space: nowrap;
       }
+      #topbar .stat { flex: 0 0 auto; }
       #topbar .stat { display: flex; flex-direction: column; line-height: 1.25; }
       #topbar .stat .k { color: var(--text-dim); font-size: 10px; letter-spacing: .5px; }
       #topbar .stat .v { font-size: 15px; font-weight: 600; }

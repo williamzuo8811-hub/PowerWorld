@@ -110,6 +110,8 @@ export interface SimSnapshot {
   goalDay: number; // 关卡目标：撑到第几天
   goalReliability: number; // 关卡目标：可靠性阈值
   researchPoints: number; // 当前研发点
+  reputation: number; // 公众形象 0..100
+  renewableShare: number; // 清洁电力占比 0..1（新能源+储能）
   gameOver: boolean;
   win: boolean;
 }
