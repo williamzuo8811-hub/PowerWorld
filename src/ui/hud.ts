@@ -158,7 +158,7 @@ export class Hud {
 
   /** 每帧刷新状态栏与日志 */
   update(s: SimSnapshot, logs: LogEntry[]): void {
-    this.set('money', `¥${fmt(s.money)}`, s.money < 50_000 ? 'freq-bad' : '');
+    this.set('money', `¥${fmt(s.money)}`, !s.sandbox && s.money < 50_000 ? 'freq-bad' : '');
     const hh = Math.floor(s.hourOfDay).toString().padStart(2, '0');
     const mm = Math.floor((s.hourOfDay % 1) * 60).toString().padStart(2, '0');
     this.set('time', `第${s.day + 1}天 ${hh}:${mm}`);
@@ -173,7 +173,7 @@ export class Hud {
     this.set('rep', `${s.reputation.toFixed(0)}`, s.reputation < 40 ? 'freq-bad' : s.reputation < 60 ? 'freq-warn' : 'freq-ok');
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
     this.set('rp', `${s.researchPoints.toFixed(0)}`);
-    this.set('goal', `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
+    this.set('goal', s.sandbox ? '★ 沙盒模式' : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');
     if (body) {

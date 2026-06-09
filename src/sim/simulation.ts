@@ -37,6 +37,7 @@ export interface SimSaveState {
   lastLossFraction: number;
   goalDay: number;
   goalReliability: number;
+  sandbox: boolean;
   gameOver: boolean;
   win: boolean;
   grid: GridData;
@@ -57,6 +58,7 @@ export class Simulation {
   win = false;
   goalDay = WIN_DAY; // 关卡目标：撑到第几天（可被关卡覆盖）
   goalReliability = WIN_RELIABILITY; // 且可靠性达标
+  sandbox = false; // 沙盒模式：无输赢、无破产
   events = new EventSystem();
   tech = new TechState();
 
@@ -78,6 +80,7 @@ export class Simulation {
     this.win = false;
     this.goalDay = WIN_DAY;
     this.goalReliability = WIN_RELIABILITY;
+    this.sandbox = false;
     this.windBase = 0.6;
     this.lastLossFraction = 0.02;
     this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
@@ -92,7 +95,7 @@ export class Simulation {
       money: this.money, clock: this.clock, frequency: this.frequency,
       reliability: this.reliability, reputation: this.reputation, renewableShare: this.renewableShare,
       windBase: this.windBase, lastLossFraction: this.lastLossFraction,
-      goalDay: this.goalDay, goalReliability: this.goalReliability,
+      goalDay: this.goalDay, goalReliability: this.goalReliability, sandbox: this.sandbox,
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
@@ -112,6 +115,7 @@ export class Simulation {
     this.lastLossFraction = d.lastLossFraction;
     this.goalDay = d.goalDay;
     this.goalReliability = d.goalReliability;
+    this.sandbox = d.sandbox ?? false;
     this.gameOver = d.gameOver;
     this.win = d.win;
     this.grid.deserialize(d.grid);
@@ -481,7 +485,7 @@ export class Simulation {
   }
 
   private checkEndConditions(): void {
-    if (this.gameOver) return;
+    if (this.gameOver || this.sandbox) return; // 沙盒模式没有输赢
     if (this.money < 0) {
       this.gameOver = true;
       this.win = false;
@@ -515,6 +519,7 @@ export class Simulation {
       researchPoints: this.tech.points,
       reputation: this.reputation,
       renewableShare: this.renewableShare,
+      sandbox: this.sandbox,
       gameOver: this.gameOver,
       win: this.win,
     };

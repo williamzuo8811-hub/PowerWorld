@@ -75,6 +75,28 @@ export const SCENARIOS: Scenario[] = [
   },
 ];
 
+// 沙盒：无限资金、无输赢，自由实验
+SCENARIOS.push({
+  id: 'sandbox',
+  name: '★ 沙盒',
+  brief: '无限资金、没有输赢。已放好三个城区和一座电厂，随意建造、试电源组合、研究科技、做 N-1 校核。',
+  hint: '沙盒模式：无限资金、无输赢——尽情建造与实验，点 ▶ 推进时间。',
+  setup(sim) {
+    sim.sandbox = true;
+    sim.money = 9_999_999;
+    sim.goalDay = Infinity;
+    sim.goalReliability = 1;
+    const g = sim.grid;
+    g.addLoad(14, 4, 'residential', 30, '居民区', 0.001);
+    g.addLoad(18, 11, 'commercial', 24, '商业区', 0.001);
+    g.addLoad(8, 14, 'industrial', 40, '工业区', 0.001);
+    const coal = g.addPlant('coal', 5, 6).bus;
+    const sub = g.addSubstation(11, 9, '中心变电站');
+    g.addLine(coal.id, sub.id);
+    sim.log('info', '【沙盒】无限资金、无输赢——自由建造与实验。');
+  },
+});
+
 export function scenarioById(id: string): Scenario | undefined {
   return SCENARIOS.find((s) => s.id === id);
 }

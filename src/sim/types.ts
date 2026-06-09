@@ -112,6 +112,7 @@ export interface SimSnapshot {
   researchPoints: number; // 当前研发点
   reputation: number; // 公众形象 0..100
   renewableShare: number; // 清洁电力占比 0..1（新能源+储能）
+  sandbox: boolean; // 是否沙盒模式
   gameOver: boolean;
   win: boolean;
 }
