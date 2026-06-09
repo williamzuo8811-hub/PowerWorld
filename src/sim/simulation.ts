@@ -33,6 +33,7 @@ import {
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
   AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR, FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
+  ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -151,6 +152,7 @@ export class Simulation {
   drCurtailedMW = 0; // 本 tick 需求响应削减量 (MW，显示用)
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
   marketExportMW = 0; // 本 tick 全网外送量 (MW，显示用)
+  zoneArbMW = 0; // 本 tick 跨区套利交易量 (MW，显示用)
   competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
@@ -217,6 +219,7 @@ export class Simulation {
     this.drCurtailedMW = 0;
     this.marketImportMW = 0;
     this.marketExportMW = 0;
+    this.zoneArbMW = 0;
     this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
@@ -333,6 +336,21 @@ export class Simulation {
     const s = this.cyclePhase;
     return s > 0.3 ? '繁荣' : s < -0.3 ? '衰退' : '平稳';
   }
+  /** 北区(便宜)电价 */
+  get zoneNorthPrice(): number {
+    const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24));
+    return clamp(this.marketClearingPrice + ZONE_NORTH_OFFSET + ZONE_NORTH_AMP * s, SPOT.floor, SPOT.cap);
+  }
+  /** 南区(贵)电价 */
+  get zoneSouthPrice(): number {
+    const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24) + 2);
+    return clamp(this.marketClearingPrice + ZONE_SOUTH_OFFSET + ZONE_SOUTH_AMP * s, SPOT.floor, SPOT.cap);
+  }
+  /** 跨区价差 */
+  get zoneSpread(): number {
+    return Math.abs(this.zoneSouthPrice - this.zoneNorthPrice);
+  }
+
   /** 区域市场总需求 (MW)：日曲线 × 景气 */
   get regionalDemand(): number {
     const m = (demandMultiplier(this.hourOfDay, 'residential')
@@ -896,11 +914,15 @@ export class Simulation {
     // 外送：被弃的过剩（清洁）电量按出清价卖入批发市场（受联络线容量与过网折扣限制）
     this.marketExportMW = this.marketEnabled ? Math.min(aggCurtailed, INTERCONNECTOR_CAPACITY) : 0;
     const exportIncome = this.marketExportMW * this.marketClearingPrice * EXPORT_WHEEL * dtHours;
+    // 跨区套利：买便宜区、卖昂贵区，赚价差减过网费（受交易容量限制）
+    const arbProfit = Math.max(0, this.zoneSpread - ZONE_WHEEL_FEE);
+    this.zoneArbMW = this.marketEnabled && arbProfit > 0 ? ZONE_TRADE_CAPACITY : 0;
+    const arbIncome = this.zoneArbMW * arbProfit * dtHours;
     const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -915,7 +937,7 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
-    this.finance.market = ema(this.finance.market, (exportIncome - importCost - marketFee) * toDay);
+    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome - importCost - marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, (capacityIncome + forwardCapCash) * toDay);
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);

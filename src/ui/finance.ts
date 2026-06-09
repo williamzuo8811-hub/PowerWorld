@@ -30,6 +30,9 @@ export interface FinanceData {
   capacityPrice: number;
   capacityAdequacy: number;
   capCommitMW: number;
+  zoneNorth: number;
+  zoneSouth: number;
+  zoneArbMW: number;
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -125,6 +128,8 @@ export class FinancePanel {
         d.marketShare > 0.25 ? 'freq-ok' : d.marketShare < 0.1 ? 'freq-warn' : '')
       + row('容量价 / 充裕度', `¥${d.capacityPrice.toFixed(1)}/MW·天 · ${(d.capacityAdequacy * 100).toFixed(0)}%`,
         d.capacityAdequacy < 1 ? 'freq-warn' : '')
+      + row('北区/南区价 · 跨区套利', `¥${d.zoneNorth.toFixed(0)} / ¥${d.zoneSouth.toFixed(0)} · ${d.zoneArbMW.toFixed(0)}MW`,
+        d.zoneArbMW > 0 ? 'freq-ok' : '')
       + d.competitors.map((c) => row(`· ${c.name}`, `${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh`)).join('');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {

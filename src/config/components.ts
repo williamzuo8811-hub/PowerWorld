@@ -139,6 +139,16 @@ export const MARKET_FEE_PER_DAY = 1_200; // 联络线容量预留日费
 export const EXPORT_WHEEL = 0.9; // 外送电价相对出清价的过网折扣
 export const IMPORT_CARBON_INTENSITY = 0.5; // 进口电力的假定碳强度 (t/MWh)，用于碳关税
 
+// —— 多区域市场（跨区价差套利）——
+// 相邻区域(北/南)价格各异，连接后可跨区套利：买便宜区、卖昂贵区，赚价差减过网费。
+export const ZONE_TRADE_CAPACITY = 30; // 跨区套利交易容量 (MW)
+export const ZONE_WHEEL_FEE = 12; // 跨区过网费 ¥/MWh
+export const ZONE_PERIOD_DAYS = 5; // 区域价格波动周期
+export const ZONE_NORTH_OFFSET = -15; // 北区(便宜)相对出清价的偏移
+export const ZONE_NORTH_AMP = 9;
+export const ZONE_SOUTH_OFFSET = 16; // 南区(贵)相对出清价的偏移
+export const ZONE_SOUTH_AMP = 11;
+
 // —— 经济周期（景气循环）——
 // 宏观繁荣/衰退周期性振荡，影响用电需求（进而影响电价/稀缺）。
 export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）
