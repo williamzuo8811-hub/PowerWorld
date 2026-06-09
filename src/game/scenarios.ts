@@ -16,7 +16,7 @@ export const SCENARIOS: Scenario[] = [
     brief: '经典上手关。把三个城区接入电网，撑过 12 天且可靠性≥92%。起步赠送一座燃煤与中心变电站。',
     hint: '① 选「拉线路」把商业区/工业区接入  ② 备足电源  ③ 点 ▶ 或按空格开始',
     setup(sim) {
-      sim.money = 600_000;
+      sim.money = 780_000; // 含建设工期/运维等经济摩擦的现金垫
       sim.goalDay = 12;
       sim.goalReliability = 0.92;
       const g = sim.grid;
@@ -36,7 +36,7 @@ export const SCENARIOS: Scenario[] = [
     brief: '更大的城市、更高的需求。只给一台燃气起步——多用风光与储能消纳，撑过 14 天且可靠性≥90%。',
     hint: '需求很高且会增长：善用风电/光伏 + 储能平峰，注意线损与变电站容量。',
     setup(sim) {
-      sim.money = 880_000;
+      sim.money = 1_120_000;
       sim.goalDay = 14;
       sim.goalReliability = 0.9;
       const g = sim.grid;
@@ -56,7 +56,7 @@ export const SCENARIOS: Scenario[] = [
     brief: '频繁的天气冲击与线路损毁。电网已搭好但脆弱（单一变电站=单点故障）。建冗余与储能保供电，撑过 10 天且可靠性≥88%。',
     hint: '风暴会损毁线路、热浪会拉高需求：建冗余线路/第二座变电站 + 储能，随时「重合闸」。',
     setup(sim) {
-      sim.money = 520_000;
+      sim.money = 680_000;
       sim.goalDay = 10;
       sim.goalReliability = 0.88;
       const g = sim.grid;
