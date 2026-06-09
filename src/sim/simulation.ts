@@ -29,7 +29,8 @@ import {
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
-  CAPACITY_PRICE_PER_MW_DAY, CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT,
+  CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
+  CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -138,6 +139,8 @@ export class Simulation {
   competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
+  capacityPrice = CAPACITY_PRICE_BASE; // 当前容量拍卖价 ¥/(MW·天)
+  capacityAdequacy = 1; // 区域容量充裕度
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -197,6 +200,8 @@ export class Simulation {
     this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
+    this.capacityPrice = CAPACITY_PRICE_BASE;
+    this.capacityAdequacy = 1;
     this.history = [];
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
@@ -783,7 +788,13 @@ export class Simulation {
       const bus = this.grid.buses.get(b.busId);
       if (bus && !bus.underConstruction) firmCapacity += b.powerRating * BATTERY_CAPACITY_CREDIT;
     }
-    const capacityIncome = firmCapacity * CAPACITY_PRICE_PER_MW_DAY * omDayFrac;
+    // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
+    let regionFirm = firmCapacity;
+    for (const c of this.competitors) regionFirm += c.capacity;
+    const capTarget = REGIONAL_BASE_DEMAND * (1 + RESERVE_REQUIREMENT) * this.cycleFactor;
+    this.capacityAdequacy = regionFirm / Math.max(capTarget, 1);
+    this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
+    const capacityIncome = firmCapacity * this.capacityPrice * omDayFrac;
 
     // —— 贷款利息 + 保险费 + 市场购电/联络线费 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;

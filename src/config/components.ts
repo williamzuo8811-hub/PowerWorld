@@ -158,9 +158,15 @@ export const COMPETITOR_EXPAND_MARGIN = 15; // 出清价高于成本多少才扩
 export const COMPETITOR_CAP_MIN_FRAC = 0.3; // 容量下限（占初始）
 export const COMPETITOR_CAP_MAX_FRAC = 2.5; // 容量上限（占初始）
 
-// —— 容量市场 ——
-// 除卖电外，按"可用确定性容量"获容量补偿，奖励保留备用——让调峰/备用机组得以生存。
-export const CAPACITY_PRICE_PER_MW_DAY = 4; // 容量价 ¥/(MW·天)
+// —— 容量市场（容量拍卖）——
+// 除卖电外，按"可用确定性容量"获容量补偿。容量价由拍卖出清：区域容量目标 vs 总可用容量，
+// 紧张则容量价飙升（奖励建设）、过剩则归零——自我纠偏。
+export const CAPACITY_PRICE_BASE = 4; // 容量基准价 ¥/(MW·天)
+export const RESERVE_REQUIREMENT = 0.15; // 容量目标 = 峰值 ×(1+此值)
+export const CAP_ADEQ_REF = 1.15; // 充裕度参考点（高于此则容量价折扣）
+export const CAP_K = 3; // 容量价对充裕度的敏感度
+export const CAP_PRICE_MIN_FRAC = 0.3; // 容量价下限系数
+export const CAP_PRICE_MAX_FRAC = 2.2; // 容量价上限系数
 export const CAPACITY_CREDIT: Record<PlantType, number> = {
   nuclear: 1, coal: 1, gas: 1, wind: 0.15, solar: 0.1, // 新能源容量信用低（非确定性）
 };

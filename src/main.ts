@@ -211,6 +211,8 @@ function openFinance(): void {
       clearingPrice: sim.marketClearingPrice,
       regionalDemand: sim.regionalDemand,
       competitors: sim.competitors,
+      capacityPrice: sim.capacityPrice,
+      capacityAdequacy: sim.capacityAdequacy,
     },
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
