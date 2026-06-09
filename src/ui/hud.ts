@@ -77,6 +77,7 @@ export class Hud {
       this.statVals.set(key, wrap.querySelector('.v')!);
     };
     add('money', '资金');
+    add('networth', '净资产');
     add('time', '时间');
     add('freq', '频率');
     add('balance', '发电 / 需求');
@@ -200,6 +201,8 @@ export class Hud {
   /** 每帧刷新状态栏与日志 */
   update(s: SimSnapshot, logs: LogEntry[]): void {
     this.set('money', `¥${fmt(s.money)}`, !s.sandbox && s.money < 50_000 ? 'freq-bad' : '');
+    this.set('networth', `¥${fmt(s.netWorth)}${s.debt > 0 ? ` (负债${fmt(s.debt)})` : ''}`,
+      s.netWorth < 0 ? 'freq-bad' : '');
     const hh = Math.floor(s.hourOfDay).toString().padStart(2, '0');
     const mm = Math.floor((s.hourOfDay % 1) * 60).toString().padStart(2, '0');
     this.set('time', `第${s.day + 1}天 ${hh}:${mm}`);

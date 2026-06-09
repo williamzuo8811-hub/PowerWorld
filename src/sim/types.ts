@@ -120,6 +120,10 @@ export interface SimSnapshot {
   spotPrice: number; // 当前现货电价 ¥/MWh
   reserveMargin: number; // 备用率（可用容量/需求）
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>; // 燃料价格指数
+  debt: number; // 未偿贷款
+  creditLimit: number; // 信用额度
+  netWorth: number; // 净资产
+  assetValue: number; // 资产账面价值
   sandbox: boolean; // 是否沙盒模式
   gameOver: boolean;
   win: boolean;

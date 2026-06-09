@@ -8,8 +8,9 @@ import { TechState } from './tech';
 import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
 import {
-  PLANTS, VOLTAGE, BATTERY, SUBSTATION_OM_PER_DAY,
+  PLANTS, VOLTAGE, BATTERY, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
   PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, type FuelType,
+  LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE, LOAN_RISK_SPREAD,
 } from '../config/components';
 import type { Generator } from './types';
 import {
@@ -48,6 +49,7 @@ export interface SimSaveState {
   events: { active: EventSystem['active']; nextAt: number };
   tech: { unlocked: TechId[]; points: number };
   fuelPrice: Record<FuelType, number>;
+  debt: number;
 }
 
 export class Simulation {
@@ -73,6 +75,7 @@ export class Simulation {
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   reserveMargin = 1; // 当前备用率（可用容量/需求）
+  debt = 0; // 未偿贷款本金
 
   constructor() {
     this.events.schedule(0);
@@ -106,6 +109,7 @@ export class Simulation {
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     this.spotPrice = TARIFF;
     this.reserveMargin = 1;
+    this.debt = 0;
   }
 
   /** 导出存档 */
@@ -120,6 +124,7 @@ export class Simulation {
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
       fuelPrice: { ...this.fuelPrice },
+      debt: this.debt,
     };
   }
 
@@ -148,6 +153,7 @@ export class Simulation {
     for (const id of d.tech?.unlocked ?? []) this.tech.unlocked.add(id);
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     if (d.fuelPrice) this.fuelPrice = { ...this.fuelPrice, ...d.fuelPrice };
+    this.debt = d.debt ?? 0;
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -166,6 +172,48 @@ export class Simulation {
   }
   get carbonPrice(): number {
     return CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day;
+  }
+
+  /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
+  get assetValue(): number {
+    let v = 0;
+    for (const g of this.grid.gens.values()) v += PLANTS[g.type].capex;
+    for (const b of this.grid.batteries.values()) { void b; v += BATTERY.capex; }
+    for (const bus of this.grid.buses.values()) if (bus.kind === 'substation') v += SUBSTATION_CAPEX;
+    for (const ln of this.grid.lines.values()) v += ln.length * VOLTAGE[ln.voltage].costPerTile;
+    return v;
+  }
+  /** 信用额度 = 基础额度 + 资产抵押 */
+  get creditLimit(): number {
+    return LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC;
+  }
+  get debtRatio(): number {
+    return this.creditLimit > 0 ? this.debt / this.creditLimit : 0;
+  }
+  /** 日利率：基础 + 负债率风险溢价 */
+  get loanDailyRate(): number {
+    return LOAN_BASE_DAILY_RATE + clamp(this.debtRatio, 0, 1) * LOAN_RISK_SPREAD;
+  }
+  /** 净资产 = 现金 + 资产 − 负债 */
+  get netWorth(): number {
+    return this.money + this.assetValue - this.debt;
+  }
+  /** 借款（受信用额度约束），成功返回 true */
+  borrow(amount: number): boolean {
+    if (amount <= 0 || this.debt + amount > this.creditLimit) return false;
+    this.debt += amount;
+    this.money += amount;
+    this.log('info', `🏦 借入 ¥${Math.round(amount).toLocaleString('en-US')}（负债 ¥${Math.round(this.debt).toLocaleString('en-US')}）`);
+    return true;
+  }
+  /** 还款（不超过负债与现金），返回实际还款额 */
+  repay(amount: number): number {
+    const x = Math.max(0, Math.min(amount, this.debt, this.money));
+    if (x <= 0) return 0;
+    this.debt -= x;
+    this.money -= x;
+    this.log('info', `🏦 还款 ¥${Math.round(x).toLocaleString('en-US')}（负债 ¥${Math.round(this.debt).toLocaleString('en-US')}）`);
+    return x;
   }
 
   /** 机组的有效边际成本 = 基准 × 燃料价格指数 × 高效机组科技系数 */
@@ -367,8 +415,11 @@ export class Simulation {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
 
-    // —— 结算（口碑影响等效电价；扣除燃料/碳/失负荷/运维）——
-    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty - omCost;
+    // —— 贷款利息 ——
+    const interestCost = this.debt * this.loanDailyRate * omDayFrac;
+
+    // —— 结算（口碑影响等效电价；扣除燃料/碳/失负荷/运维/利息）——
+    this.money += revenue * this.reputationTariffFactor - fuelCost - carbonCost - penalty - omCost - interestCost;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
@@ -617,6 +668,10 @@ export class Simulation {
       spotPrice: this.spotPrice,
       reserveMargin: this.reserveMargin,
       fuelPrice: { ...this.fuelPrice },
+      debt: this.debt,
+      creditLimit: this.creditLimit,
+      netWorth: this.netWorth,
+      assetValue: this.assetValue,
       sandbox: this.sandbox,
       gameOver: this.gameOver,
       win: this.win,

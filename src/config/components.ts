@@ -87,6 +87,13 @@ export const FUEL_MIN = 0.45;
 export const FUEL_MAX = 2.6;
 export const FUEL_SHOCK_CHANCE_PER_DAY = 0.12; // 燃料价格跳涨概率（每天）
 
+// —— 贷款 / 融资 ——
+// 工期长、capex 高 → 前期现金流紧张。举债可摊平，但要付利息；信用额度随资产规模上升。
+export const LOAN_BASE_CREDIT = 250_000; // 基础信用额度
+export const LOAN_CREDIT_ASSET_FRAC = 0.6; // 资产可抵押比例
+export const LOAN_BASE_DAILY_RATE = 0.004; // 基础日利率（0.4%/游戏天）
+export const LOAN_RISK_SPREAD = 0.006; // 负债率风险溢价（最高再加 0.6%/天）
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。
