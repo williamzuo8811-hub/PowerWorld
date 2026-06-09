@@ -31,6 +31,8 @@ export class Hud {
   onN1?: () => void; // N-1 校核按钮回调
   onResearch?: () => void; // 研发面板按钮回调
   onAchievements?: () => void; // 成就面板按钮回调
+  onToggleSound?: () => void; // 静音切换回调
+  private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
   private statVals = new Map<string, HTMLElement>();
@@ -104,6 +106,9 @@ export class Hud {
     achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
+    const soundBtn = document.createElement('button');
+    soundBtn.textContent = '🔊'; soundBtn.title = '音效开关'; soundBtn.onclick = () => this.onToggleSound?.();
+    this.soundBtn = soundBtn;
     const saveBtn = document.createElement('button');
     saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
@@ -111,6 +116,7 @@ export class Hud {
     sys.appendChild(researchBtn);
     sys.appendChild(achvBtn);
     sys.appendChild(n1Btn);
+    sys.appendChild(soundBtn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
     bar.appendChild(sys);
@@ -148,6 +154,10 @@ export class Hud {
   }
   private refreshSpeedButtons(): void {
     this.speedBtns.forEach((b, i) => b.classList.toggle('active', i === this.speedIndex));
+  }
+
+  setSoundLabel(muted: boolean): void {
+    if (this.soundBtn) this.soundBtn.textContent = muted ? '🔇' : '🔊';
   }
 
   setHint(text: string | null): void {

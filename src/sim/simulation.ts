@@ -56,6 +56,7 @@ export class Simulation {
   peakServed = 0; // 历史峰值供电 (MW) —— 成就用
   totalEnergyServed = 0; // 累计送达电量 (MWh) —— 成就用
   n1Secure = false; // 是否通过过 N-1 校核 —— 成就用（由 UI 置位）
+  badEventCount = 0; // 累计严重事件数（跳闸/破产等）—— UI 用来触发报警音
   logs: LogEntry[] = [];
   gameOver = false;
   win = false;
@@ -81,6 +82,7 @@ export class Simulation {
     this.peakServed = 0;
     this.totalEnergyServed = 0;
     this.n1Secure = false;
+    this.badEventCount = 0;
     this.logs = [];
     this.gameOver = false;
     this.win = false;
@@ -158,6 +160,7 @@ export class Simulation {
 
   log(level: LogEntry['level'], msg: string): void {
     this.logs.push({ time: this.clock, level, msg });
+    if (level === 'bad') this.badEventCount++;
     if (this.logs.length > 40) this.logs.shift();
   }
 

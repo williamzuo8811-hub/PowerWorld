@@ -5,6 +5,7 @@ import { Hud, type ToolId } from './ui/hud';
 import { Menu } from './ui/menu';
 import { ResearchPanel } from './ui/research';
 import { AchievementsPanel } from './ui/achievements';
+import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
@@ -27,6 +28,9 @@ const research = new ResearchPanel();
 const achvPanel = new AchievementsPanel();
 const achievements = new Achievements();
 achievements.load();
+const sound = new Sound();
+let lastBadEvents = 0; // 上一帧的严重事件计数，用于触发报警音
+let wasGameOver = false; // 用于检测输赢瞬间
 
 let menuOpen = true; // 主菜单打开时暂停仿真与建造
 let panelOpen = false; // 研发/成就面板打开时暂停仿真与建造
@@ -55,6 +59,8 @@ function enterGame(): void {
   research.hide();
   achvPanel.hide();
   panelOpen = false;
+  lastBadEvents = sim.badEventCount;
+  wasGameOver = sim.gameOver;
   hud.setSpeed(0);
   menu.hide();
   menuOpen = false;
@@ -122,6 +128,7 @@ function doUnlock(id: TechId): void {
   if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost) return;
   sim.tech.points -= t.cost;
   sim.tech.unlocked.add(id);
+  sound.unlock();
   sim.log('good', `🔬 已研发：${t.name}`);
   openResearch(); // 刷新面板
 }
@@ -149,7 +156,7 @@ function pollAchievements(): void {
     won: sim.gameOver && sim.win,
     n1Secure: sim.n1Secure,
   });
-  for (const a of achievements.drain()) hud.toast(`🏆 成就解锁：${a.name}`);
+  for (const a of achievements.drain()) { hud.toast(`🏆 成就解锁：${a.name}`); sound.unlock(); }
 }
 
 /** 电网结构变化后，清除过期的 N-1 标注 */
@@ -215,15 +222,16 @@ function handleClick(clientX: number, clientY: number): void {
         if (bus && bus.id !== pendingFrom.id) {
           const chk = sim.grid.canConnect(pendingFrom.id, bus.id);
           if (!chk.ok) {
-            flashHint(chk.reason ?? '无法连接');
+            flashHint(chk.reason ?? '无法连接'); sound.error();
           } else {
             const cost = sim.grid.lineCost(pendingFrom.id, bus.id);
             if (sim.spend(cost)) {
               sim.grid.addLine(pendingFrom.id, bus.id);
               invalidateN1();
+              sound.build();
               sim.log('info', `架设${VOLTAGE[chk.voltage!].label}线路 ¥${cost.toLocaleString('en-US')}`);
             } else {
-              flashHint('资金不足，无法架线');
+              flashHint('资金不足，无法架线'); sound.error();
             }
           }
         }
@@ -234,33 +242,36 @@ function handleClick(clientX: number, clientY: number): void {
     }
     case 'substation': {
       const p = snap(tile);
-      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
+      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       if (sim.spend(SUBSTATION_CAPEX)) {
         sim.grid.addSubstation(p.x, p.y);
         invalidateN1();
+        sound.build();
         sim.log('info', '新建变电站');
-      } else flashHint('资金不足');
+      } else { flashHint('资金不足'); sound.error(); }
       return;
     }
     case 'battery': {
       const p = snap(tile);
-      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
+      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       if (sim.spend(BATTERY.capex)) {
         sim.grid.addBattery(p.x, p.y);
         invalidateN1();
+        sound.build();
         sim.log('info', `新建储能 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（需经变电站接入）`);
-      } else flashHint('资金不足');
+      } else { flashHint('资金不足'); sound.error(); }
       return;
     }
     case 'bulldoze': {
       if (bus) {
         sim.grid.removeBus(bus.id);
         invalidateN1();
+        sound.build();
         sim.log('warn', `拆除 ${bus.name}`);
         return;
       }
       const ln = renderer.nearestLine(tile.x, tile.y);
-      if (ln) { sim.grid.removeLine(ln.id); invalidateN1(); sim.log('warn', '拆除线路'); }
+      if (ln) { sim.grid.removeLine(ln.id); invalidateN1(); sound.build(); sim.log('warn', '拆除线路'); }
       return;
     }
     default: {
@@ -268,13 +279,14 @@ function handleClick(clientX: number, clientY: number): void {
       const type = PLANT_TOOLS[tool];
       if (!type) return;
       const p = snap(tile);
-      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); return; }
+      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       const spec = PLANTS[type];
       if (sim.spend(spec.capex)) {
         sim.grid.addPlant(type, p.x, p.y);
         invalidateN1();
+        sound.build();
         sim.log('info', `新建${spec.label}电厂 (${spec.capacity}MW)`);
-      } else flashHint('资金不足');
+      } else { flashHint('资金不足'); sound.error(); }
       return;
     }
   }
@@ -325,6 +337,9 @@ function row(k: string, v: string): string {
 
 function bindInput(): void {
   const c = renderer.canvas;
+  // 首个手势解除浏览器音频自动播放限制
+  window.addEventListener('pointerdown', () => sound.resume(), { once: true });
+  window.addEventListener('keydown', () => sound.resume(), { once: true });
   c.addEventListener('pointerdown', (e) => {
     dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
   });
@@ -368,6 +383,8 @@ async function start(): Promise<void> {
   hud.onN1 = runN1;
   hud.onResearch = openResearch;
   hud.onAchievements = openAchievements;
+  hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
+  hud.setSoundLabel(sound.muted);
   bindInput();
   openMenu(); // 开局先进主菜单选关
 
@@ -377,6 +394,12 @@ async function start(): Promise<void> {
       sim.tick(dt, hud.timeScale);
       hud.update(sim.snapshot(), sim.logs);
       pollAchievements();
+      // 严重事件（跳闸/破产）触发报警音
+      if (sim.badEventCount > lastBadEvents) sound.trip();
+      lastBadEvents = sim.badEventCount;
+      // 输赢瞬间音效
+      if (sim.gameOver && !wasGameOver) (sim.win ? sound.win() : sound.lose());
+      wasGameOver = sim.gameOver;
     }
     renderer.update(dt);
     if (hintTimer > 0) {
