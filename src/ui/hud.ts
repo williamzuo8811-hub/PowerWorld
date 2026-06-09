@@ -2,8 +2,7 @@
 // 渲染与仿真无关，只读快照 + 暴露当前工具/速度给 main 使用。
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, BATTERY, VOLTAGE, TIME_SCALES,
-  FREQ_NOMINAL, WIN_DAY, WIN_RELIABILITY,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, BATTERY, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
 } from '../config/components';
 
 export type ToolId =
@@ -27,6 +26,8 @@ const TOOLS: ToolDef[] = [
 
 export class Hud {
   currentTool: ToolId = 'line';
+  onSave?: () => void; // 存档按钮回调
+  onMenu?: () => void; // 菜单按钮回调
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
   private statVals = new Map<string, HTMLElement>();
@@ -87,6 +88,18 @@ export class Hud {
       this.speedBtns.push(b);
     });
     bar.appendChild(speed);
+
+    // 存档 / 菜单
+    const sys = document.createElement('div');
+    sys.id = 'speed';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
+    const menuBtn = document.createElement('button');
+    menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
+    sys.appendChild(saveBtn);
+    sys.appendChild(menuBtn);
+    bar.appendChild(sys);
+
     this.refreshSpeedButtons();
   }
 
@@ -143,10 +156,10 @@ export class Hud {
       s.totalServed < s.totalDemand - 0.5 ? 'freq-warn' : '');
     this.set('loss', `${s.totalLoss.toFixed(1)} MW`);
     this.set('reliab', `${(s.reliability * 100).toFixed(1)}%`,
-      s.reliability < WIN_RELIABILITY ? 'freq-warn' : 'freq-ok');
+      s.reliability < s.goalReliability ? 'freq-warn' : 'freq-ok');
     this.set('co2', `${s.co2.toFixed(1)} t/h`);
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
-    this.set('goal', `撑到第${WIN_DAY}天·可靠性≥${(WIN_RELIABILITY * 100).toFixed(0)}%`);
+    this.set('goal', `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');
     if (body) {
@@ -157,7 +170,7 @@ export class Hud {
       }).join('');
     }
 
-    if (s.gameOver) this.showOverlay(s.win);
+    if (s.gameOver) this.showOverlay(s.win, s.goalDay);
   }
 
   private set(key: string, value: string, cls = ''): void {
@@ -167,13 +180,13 @@ export class Hud {
     el.className = 'v ' + cls;
   }
 
-  private showOverlay(win: boolean): void {
+  private showOverlay(win: boolean, goalDay: number): void {
     const ov = document.getElementById('overlay')!;
     if (ov.style.display === 'flex') return;
     ov.style.display = 'flex';
     document.getElementById('overlay-title')!.textContent = win ? '🏆 通关！' : '💸 破产了';
     document.getElementById('overlay-text')!.textContent = win
-      ? `你把这座小镇平稳地带过了 ${WIN_DAY} 天，电网坚强、灯火通明。下一步可以挑战更大的城市与新能源转型。`
+      ? `你把电网平稳地带过了 ${goalDay} 天，坚强可靠、灯火通明。挑战更高难度的关卡吧！`
       : '电力公司资金耗尽。停电罚款、燃料与碳成本压垮了现金流——下次更早布局电源与冗余线路。';
   }
 }

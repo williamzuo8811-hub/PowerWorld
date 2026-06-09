@@ -1,7 +1,7 @@
 // 仿真主循环：把"调度 → 潮流 → 频率 → 跳闸 → 经济"串成一个 tick。
 // 这是一个纯逻辑对象，不知道任何关于渲染的事；前端每帧调用 tick() 并读取快照。
 import type { SimSnapshot, LogEntry } from './types';
-import { Grid } from './grid';
+import { Grid, type GridData } from './grid';
 import { solveDC } from './powerflow';
 import { EventSystem } from './events';
 import { demandMultiplier, renewableAvailability } from './profiles';
@@ -21,6 +21,22 @@ interface IslandResult {
   co2: number; // 吨/h
 }
 
+/** 存档状态（可 JSON 序列化） */
+export interface SimSaveState {
+  money: number;
+  clock: number;
+  frequency: number;
+  reliability: number;
+  windBase: number;
+  lastLossFraction: number;
+  goalDay: number;
+  goalReliability: number;
+  gameOver: boolean;
+  win: boolean;
+  grid: GridData;
+  events: { active: EventSystem['active']; nextAt: number };
+}
+
 export class Simulation {
   grid = new Grid();
   money = START_MONEY;
@@ -30,10 +46,62 @@ export class Simulation {
   logs: LogEntry[] = [];
   gameOver = false;
   win = false;
+  goalDay = WIN_DAY; // 关卡目标：撑到第几天（可被关卡覆盖）
+  goalReliability = WIN_RELIABILITY; // 且可靠性达标
   events = new EventSystem();
 
   constructor() {
     this.events.schedule(0);
+  }
+
+  /** 清空回到初始状态（开新关卡前调用）。保持同一 Grid 实例，渲染器引用不失效。 */
+  reset(): void {
+    this.grid.clear();
+    this.money = START_MONEY;
+    this.clock = 0;
+    this.frequency = FREQ_NOMINAL;
+    this.reliability = 1;
+    this.logs = [];
+    this.gameOver = false;
+    this.win = false;
+    this.goalDay = WIN_DAY;
+    this.goalReliability = WIN_RELIABILITY;
+    this.windBase = 0.6;
+    this.lastLossFraction = 0.02;
+    this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
+    this.events = new EventSystem();
+    this.events.schedule(0);
+  }
+
+  /** 导出存档 */
+  serialize(): SimSaveState {
+    return {
+      money: this.money, clock: this.clock, frequency: this.frequency,
+      reliability: this.reliability, windBase: this.windBase, lastLossFraction: this.lastLossFraction,
+      goalDay: this.goalDay, goalReliability: this.goalReliability,
+      gameOver: this.gameOver, win: this.win,
+      grid: this.grid.serialize(),
+      events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
+    };
+  }
+
+  /** 读取存档（覆盖当前状态，复用同一 Grid 实例） */
+  deserialize(d: SimSaveState): void {
+    this.money = d.money;
+    this.clock = d.clock;
+    this.frequency = d.frequency;
+    this.reliability = d.reliability;
+    this.windBase = d.windBase;
+    this.lastLossFraction = d.lastLossFraction;
+    this.goalDay = d.goalDay;
+    this.goalReliability = d.goalReliability;
+    this.gameOver = d.gameOver;
+    this.win = d.win;
+    this.grid.deserialize(d.grid);
+    this.events = new EventSystem();
+    this.events.active = d.events.active.map((e) => ({ ...e }));
+    this.events.nextAt = d.events.nextAt;
+    this.events.update(this);
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -337,10 +405,10 @@ export class Simulation {
       this.log('bad', '💸 资金耗尽，电力公司破产了。');
       return;
     }
-    if (this.day >= WIN_DAY && this.reliability >= WIN_RELIABILITY) {
+    if (this.day >= this.goalDay && this.reliability >= this.goalReliability) {
       this.gameOver = true;
       this.win = true;
-      this.log('good', '🏆 撑过了考验，小镇灯火通明，你赢了！');
+      this.log('good', '🏆 达成关卡目标，灯火通明，你赢了！');
     }
   }
 
@@ -359,6 +427,8 @@ export class Simulation {
       reliability: this.reliability,
       weather: this.events.label,
       demandFactor: this.events.demandFactor,
+      goalDay: this.goalDay,
+      goalReliability: this.goalReliability,
       gameOver: this.gameOver,
       win: this.win,
     };

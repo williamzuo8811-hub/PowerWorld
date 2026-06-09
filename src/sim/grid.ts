@@ -2,6 +2,16 @@
 import type { Bus, Generator, Load, Line, Battery, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
 import { PLANTS, VOLTAGE, SUBSTATION_RATING, BATTERY, X_PER_TILE, R_PER_TILE } from '../config/components';
 
+/** 电网可序列化数据（存档用） */
+export interface GridData {
+  nextId: number;
+  buses: Bus[];
+  gens: Generator[];
+  loads: Load[];
+  lines: Line[];
+  batteries: Battery[];
+}
+
 export class Grid {
   buses = new Map<number, Bus>();
   gens = new Map<number, Generator>();
@@ -12,6 +22,38 @@ export class Grid {
 
   private id(): number {
     return this.nextId++;
+  }
+
+  /** 清空全部内容（开新关卡前） */
+  clear(): void {
+    this.buses = new Map();
+    this.gens = new Map();
+    this.loads = new Map();
+    this.lines = new Map();
+    this.batteries = new Map();
+    this.nextId = 1;
+  }
+
+  /** 导出为可 JSON 序列化的数据 */
+  serialize(): GridData {
+    return {
+      nextId: this.nextId,
+      buses: [...this.buses.values()],
+      gens: [...this.gens.values()],
+      loads: [...this.loads.values()],
+      lines: [...this.lines.values()],
+      batteries: [...this.batteries.values()],
+    };
+  }
+
+  /** 从存档数据重建（深拷贝，避免与存档对象共享引用） */
+  deserialize(d: GridData): void {
+    this.buses = new Map(d.buses.map((b) => [b.id, { ...b }]));
+    this.gens = new Map(d.gens.map((g) => [g.id, { ...g }]));
+    this.loads = new Map(d.loads.map((l) => [l.id, { ...l }]));
+    this.lines = new Map(d.lines.map((l) => [l.id, { ...l }]));
+    this.batteries = new Map((d.batteries ?? []).map((b) => [b.id, { ...b }]));
+    this.nextId = d.nextId;
   }
 
   addBus(kind: BusKind, x: number, y: number, name: string): Bus {

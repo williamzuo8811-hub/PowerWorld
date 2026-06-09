@@ -107,6 +107,8 @@ export interface SimSnapshot {
   reliability: number; // 近期可靠性 0..1（供电率滑动平均）
   weather: string; // 当前天气/事件标签
   demandFactor: number; // 事件造成的需求系数（>1 表示尖峰）
+  goalDay: number; // 关卡目标：撑到第几天
+  goalReliability: number; // 关卡目标：可靠性阈值
   gameOver: boolean;
   win: boolean;
 }

@@ -1,7 +1,10 @@
-// 入口：组装仿真 + 渲染 + HUD，搭好关卡，接好交互，跑起主循环。
+// 入口：组装仿真 + 渲染 + HUD + 菜单，接好交互，跑起主循环。
 import { Simulation } from './sim/simulation';
 import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
+import { Menu } from './ui/menu';
+import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
+import { saveGame, loadGame, hasSave } from './game/save';
 import type { Bus } from './sim/types';
 import { PLANTS, SUBSTATION_CAPEX, BATTERY, VOLTAGE } from './config/components';
 
@@ -13,23 +16,55 @@ const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'w
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
 const hud = new Hud();
+const menu = new Menu();
 
-/** 关卡：一座正在生长的小镇。起步给一座燃煤+变电站+到居民区的线路，其余城区待接入。 */
-function buildScenario(): void {
-  const g = sim.grid;
-  // 三个城区（负荷）
-  g.addLoad(14, 4, 'residential', 26, '居民区', 0.0045);
-  g.addLoad(16, 12, 'commercial', 20, '商业区', 0.005);
-  g.addLoad(6, 15, 'industrial', 34, '工业区', 0.0038);
+let menuOpen = true; // 菜单打开时暂停仿真与建造
+let currentScenarioId = SCENARIOS[0].id;
 
-  // 起步基础设施（免费赠送，便于上手）
-  const coal = g.addPlant('coal', 5, 5).bus;
-  const sub = g.addSubstation(10, 8, '中心变电站');
-  g.addLine(coal.id, sub.id);
-  const resBus = [...g.buses.values()].find((b) => b.name === '居民区')!;
-  g.addLine(sub.id, resBus.id);
+// ——————————————————— 关卡 / 存档流程 ———————————————————
+function newGame(scenario: Scenario): void {
+  sim.reset();
+  scenario.setup(sim);
+  currentScenarioId = scenario.id;
+  enterGame();
+  hud.setHint(scenario.hint);
+}
 
-  sim.log('info', '欢迎来到电力世界！把商业区、工业区接入电网，备足电源后点 ▶ 开始。');
+function continueGame(): void {
+  const data = loadGame();
+  if (!data) return;
+  sim.deserialize(data.save);
+  currentScenarioId = data.scenarioId;
+  enterGame();
+}
+
+function enterGame(): void {
+  setPending(null);
+  hud.setSpeed(0);
+  menu.hide();
+  menuOpen = false;
+  const ov = document.getElementById('overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function openMenu(): void {
+  menuOpen = true;
+  hud.setSpeed(0);
+  const data = loadGame();
+  const label = data
+    ? `${scenarioById(data.scenarioId)?.name ?? '关卡'} · 第${Math.floor((data.save.clock ?? 0) / 24) + 1}天`
+    : undefined;
+  menu.show({
+    scenarios: SCENARIOS,
+    hasSave: hasSave(),
+    saveLabel: label,
+    onStart: (s) => newGame(s),
+    onContinue: () => continueGame(),
+  });
+}
+
+function doSave(): void {
+  flashHint(saveGame(sim, currentScenarioId) ? '已存档 💾' : '存档失败');
 }
 
 // ——————————————————— 交互 ———————————————————
@@ -48,7 +83,7 @@ function snap(t: { x: number; y: number }): { x: number; y: number } {
 }
 
 function handleClick(clientX: number, clientY: number): void {
-  if (sim.gameOver) return;
+  if (menuOpen || sim.gameOver) return;
   const tile = renderer.screenToTile(clientX, clientY);
   const tool = hud.currentTool;
   const bus = renderer.nearestBus(tile.x, tile.y);
@@ -218,6 +253,7 @@ function bindInput(): void {
   }, { passive: false });
 
   window.addEventListener('keydown', (e) => {
+    if (menuOpen) return;
     if (e.code === 'Space') { e.preventDefault(); hud.togglePause(); return; }
     if (e.code === 'Escape') { setPending(null); hud.setHint(null); return; }
     const n = parseInt(e.key, 10);
@@ -227,17 +263,20 @@ function bindInput(): void {
 
 // ——————————————————— 启动 ———————————————————
 async function start(): Promise<void> {
-  buildScenario();
   await renderer.init(document.getElementById('app')!);
   hud.build();
-  hud.setHint('① 选「拉线路」把商业区/工业区接入  ② 备足电源  ③ 点 ▶ 或按空格开始');
+  hud.onSave = doSave;
+  hud.onMenu = openMenu;
   bindInput();
+  openMenu(); // 开局先进主菜单选关
 
   renderer.app.ticker.add(() => {
     const dt = Math.min(0.05, renderer.app.ticker.deltaMS / 1000);
-    sim.tick(dt, hud.timeScale);
+    if (!menuOpen) {
+      sim.tick(dt, hud.timeScale);
+      hud.update(sim.snapshot(), sim.logs);
+    }
     renderer.update(dt);
-    hud.update(sim.snapshot(), sim.logs);
     if (hintTimer > 0) {
       hintTimer -= dt;
       if (hintTimer <= 0 && !pendingFrom) hud.setHint(null);
