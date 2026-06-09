@@ -26,7 +26,7 @@ import {
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
-  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL,
+  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
@@ -794,8 +794,10 @@ export class Simulation {
       + classServed.industrial * TARIFF_CLASS.industrial) * this.spotPrice * dtHours;
 
     // —— 碳配额交易：免费配额 = 送达电量 × 基准强度；超出买入、富余卖出（可为负=获利）——
-    const allowanceRate = aggServed * this.benchmarkIntensity; // t/h 免费配额
-    const carbonCost = (co2Rate - allowanceRate) * this.carbonPrice * dtHours;
+    const allowanceRate = Math.max(0, aggServed - aggMarketImport) * this.benchmarkIntensity; // 免费配额仅按自有发电（不含进口）
+    // 进口电力的碳关税（碳边境调节）：进口越多、碳价越高，成本越大
+    const carbonBorderTax = aggMarketImport * IMPORT_CARBON_INTENSITY * this.carbonPrice * dtHours;
+    const carbonCost = (co2Rate - allowanceRate) * this.carbonPrice * dtHours + carbonBorderTax;
 
     // —— 绿证：新能源发电量按绿证价获补贴收入 ——
     let renewMWh = 0;

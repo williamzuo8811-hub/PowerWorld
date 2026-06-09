@@ -137,6 +137,7 @@ export const INTERCONNECTOR_CAPACITY = 40; // 联络线容量 (MW)
 export const IMPORT_MARKUP = 1.15; // 购电相对市场均价的加价
 export const MARKET_FEE_PER_DAY = 1_200; // 联络线容量预留日费
 export const EXPORT_WHEEL = 0.9; // 外送电价相对出清价的过网折扣
+export const IMPORT_CARBON_INTENSITY = 0.5; // 进口电力的假定碳强度 (t/MWh)，用于碳关税
 
 // —— 经济周期（景气循环）——
 // 宏观繁荣/衰退周期性振荡，影响用电需求（进而影响电价/稀缺）。
