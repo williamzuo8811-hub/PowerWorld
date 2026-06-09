@@ -14,6 +14,7 @@ import {
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
   MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS,
+  INSURANCE_RATE_PER_DAY, INSURANCE_COVERAGE,
 } from '../config/components';
 import type { Generator, Line, LoadProfile } from './types';
 import {
@@ -71,6 +72,7 @@ export interface SimSaveState {
   debt: number;
   avgSpot: number;
   hedges: Hedge[];
+  insured: boolean;
 }
 
 export class Simulation {
@@ -96,6 +98,8 @@ export class Simulation {
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
   fuelContracts: Partial<Record<FuelType, FuelContract>> = {}; // 活跃燃料长约
   forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
+  insured = false; // 是否投保设备保险
+  private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
   reserveMargin = 1; // 当前备用率（可用容量/需求）
@@ -103,7 +107,7 @@ export class Simulation {
   hedges: Hedge[] = []; // 活跃套保合约
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -144,8 +148,10 @@ export class Simulation {
     this.debt = 0;
     this.hedges = [];
     this.forcedOutages = true;
+    this.insured = false;
+    this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -166,6 +172,7 @@ export class Simulation {
       debt: this.debt,
       avgSpot: this.avgSpot,
       hedges: this.hedges.map((h) => ({ ...h })),
+      insured: this.insured,
     };
   }
 
@@ -198,6 +205,7 @@ export class Simulation {
     this.debt = d.debt ?? 0;
     this.avgSpot = d.avgSpot ?? TARIFF;
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
+    this.insured = d.insured ?? false;
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -249,6 +257,18 @@ export class Simulation {
   /** 净资产 = 现金 + 资产 − 负债 */
   get netWorth(): number {
     return this.money + this.assetValue - this.debt;
+  }
+  /** 当前日保费（已投保时） */
+  get insurancePremiumPerDay(): number {
+    return this.insured ? this.assetValue * INSURANCE_RATE_PER_DAY : 0;
+  }
+  /** 发生一次意外损失：已投保则保险覆盖大部分，玩家只付自付额 */
+  incurDamage(gross: number, label: string): void {
+    const covered = this.insured ? gross * INSURANCE_COVERAGE : 0;
+    const net = gross - covered;
+    this.money -= net;
+    this.claimCoveredTick += covered;
+    this.log('bad', `💥 ${label} ¥${Math.round(gross).toLocaleString('en-US')}${covered > 0 ? `（保险赔付 ¥${Math.round(covered).toLocaleString('en-US')}，自付 ¥${Math.round(net).toLocaleString('en-US')}）` : ''}`);
   }
   /** 签订一笔远期套保合约：锁定 volume MW × days 天，锁价 = 当前远期报价(avgSpot)；收手续费 */
   addHedge(volume: number, days: number): boolean {
@@ -396,6 +416,7 @@ export class Simulation {
     const dtSim = dtReal * timeScale; // 本 tick 的仿真秒
     const dtHours = dtSim / 3600;
     this.clock += dtHours;
+    this.claimCoveredTick = 0; // 重置本 tick 保险理赔累计
 
     // —— 天气：风况慢变随机游走 + 天气/危机事件 ——
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
@@ -428,8 +449,7 @@ export class Simulation {
           g.outageUntil = this.clock + REPAIR_DAYS * 24;
           g.output = 0;
           const repair = Math.round(PLANTS[g.type].capex * REPAIR_COST_FRACTION * (0.5 + this.wear(g)));
-          this.money -= repair;
-          this.log('bad', `🔧 ${bus.name} 强迫停运检修（约 ${REPAIR_DAYS} 天，¥${repair.toLocaleString('en-US')}）`);
+          this.incurDamage(repair, `${bus.name} 强迫停运检修（约 ${REPAIR_DAYS}天）`);
         }
       }
     }
@@ -579,12 +599,13 @@ export class Simulation {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
 
-    // —— 贷款利息 ——
+    // —— 贷款利息 + 保险费 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
+    const premiumCost = this.insurancePremiumPerDay * omDayFrac;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（扣除燃料/碳/失负荷/运维/利息，加套保差价/绿证收入）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost + hedgeIncome + recIncome;
+    // —— 结算（扣除燃料/碳/失负荷/运维/利息/保费，加套保差价/绿证收入）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost + hedgeIncome + recIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -598,13 +619,14 @@ export class Simulation {
     this.finance.penalty = ema(this.finance.penalty, penalty * toDay);
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
+    this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
       this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
-      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge + this.finance.rec;
+      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge + this.finance.rec + this.finance.insurance;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

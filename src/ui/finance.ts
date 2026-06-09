@@ -7,9 +7,11 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
+  insured: boolean;
+  premiumPerDay: number;
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -27,6 +29,7 @@ export interface FinancePanelOptions {
   onRepay: (amount: number) => void;
   onHedge: (volume: number, days: number) => void;
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
+  onToggleInsurance: () => void;
   onClose: () => void;
 }
 
@@ -74,6 +77,7 @@ export class FinancePanel {
       + row('失负荷罚款', `−${abs(f.penalty)}/天`, f.penalty > 1 ? 'freq-bad' : '')
       + row('套保差价', `${f.hedge >= 0 ? '+' : '−'}${abs(f.hedge)}/天`, f.hedge < 0 ? '' : 'freq-ok')
       + row('绿证收入', `+${abs(f.rec)}/天`, f.rec > 1 ? 'freq-ok' : '')
+      + row('保险(净)', `${f.insurance >= 0 ? '+' : '−'}${abs(f.insurance)}/天`, f.insurance < 0 ? '' : 'freq-ok')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
       + section('市场行情')
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
@@ -139,6 +143,13 @@ export class FinancePanel {
     mkBtn(hedgeBtns, '锁定 20MW×5天', d.money > 0, () => o.onHedge(20, 5));
     mkBtn(hedgeBtns, '锁定 50MW×10天', d.money > 0, () => o.onHedge(50, 10));
     panel.appendChild(hedgeBtns);
+
+    // 设备保险
+    panel.insertAdjacentHTML('beforeend', section(`设备保险（${d.insured ? '已投保' : '未投保'} · 日保费 ¥${fmt(d.premiumPerDay)} · 赔付 80%）`));
+    const insBtns = document.createElement('div');
+    insBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(insBtns, d.insured ? '退保' : '投保', true, () => o.onToggleInsurance());
+    panel.appendChild(insBtns);
 
     panel.insertAdjacentHTML('beforeend', section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`));
 

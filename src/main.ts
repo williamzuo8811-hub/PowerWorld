@@ -189,11 +189,14 @@ function openFinance(): void {
       avgSpot: sim.avgSpot,
       clock: sim.clock,
       hedges: sim.hedges,
+      insured: sim.insured,
+      premiumPerDay: sim.insurancePremiumPerDay,
     },
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
     onHedge: (vol, days) => { if (sim.addHedge(vol, days)) sound.build(); else sound.error(); openFinance(); },
     onFuelContract: (fuel, days) => { if (sim.signFuelContract(fuel, days)) sound.build(); else sound.error(); openFinance(); },
+    onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }

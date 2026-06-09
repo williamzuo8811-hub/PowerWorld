@@ -1,6 +1,7 @@
 // 天气与危机事件系统：给电网注入外部冲击，让储能/冗余/调峰的投资有了意义。
 // 事件改变全局需求系数、风/光出力上限，或直接损毁线路。
 import type { Simulation } from './simulation';
+import { STORM_DAMAGE } from '../config/components';
 
 export type WeatherKind = 'clear' | 'heatwave' | 'coldsnap' | 'calm' | 'overcast' | 'storm';
 
@@ -101,7 +102,8 @@ export class EventSystem {
           const l = choice(lines);
           l.tripped = true;
           l.overloadTimer = 0;
-          sim.log('bad', '🌪 风暴损毁了一条线路！用「检查/重合闸」恢复送电。');
+          sim.incurDamage(STORM_DAMAGE, '风暴损毁线路'); // 维修成本（保险可赔）
+          sim.log('warn', '🌪 用「检查/重合闸」恢复送电。');
         } else {
           sim.log('warn', '🌪 风暴过境。');
         }
