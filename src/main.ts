@@ -5,6 +5,7 @@ import { Hud, type ToolId } from './ui/hud';
 import { Menu } from './ui/menu';
 import { ResearchPanel } from './ui/research';
 import { AchievementsPanel } from './ui/achievements';
+import { EconomicsPanel } from './ui/economics';
 import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
@@ -15,7 +16,7 @@ import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TARIFF,
   LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE,
 } from './config/components';
 
@@ -30,6 +31,7 @@ const hud = new Hud();
 const menu = new Menu();
 const research = new ResearchPanel();
 const achvPanel = new AchievementsPanel();
+const econPanel = new EconomicsPanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
@@ -67,6 +69,7 @@ function enterGame(): void {
   invalidateN1();
   research.hide();
   achvPanel.hide();
+  econPanel.hide();
   panelOpen = false;
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
@@ -149,6 +152,16 @@ function openAchievements(): void {
   achvPanel.show({
     unlocked: achievements.unlocked,
     onClose: () => { achvPanel.hide(); panelOpen = false; },
+  });
+}
+
+/** 打开投资对比面板 */
+function openEconomics(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  econPanel.show({
+    tariff: TARIFF,
+    onClose: () => { econPanel.hide(); panelOpen = false; },
   });
 }
 
@@ -406,6 +419,7 @@ async function start(): Promise<void> {
   hud.onN1 = runN1;
   hud.onResearch = openResearch;
   hud.onAchievements = openAchievements;
+  hud.onEconomics = openEconomics;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.setSoundLabel(sound.muted);
   bindInput();

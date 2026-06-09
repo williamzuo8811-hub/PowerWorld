@@ -2,7 +2,7 @@
 // 渲染与仿真无关，只读快照 + 暴露当前工具/速度给 main 使用。
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, BATTERY, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
 } from '../config/components';
 
 export type ToolId =
@@ -14,13 +14,13 @@ interface ToolDef { id: ToolId; label: string; sub: string; }
 const TOOLS: ToolDef[] = [
   { id: 'inspect', label: '🔍 检查 / 重合闸', sub: '查看·恢复跳闸线路/变压器' },
   { id: 'line', label: '➖ 拉线路', sub: `HV¥${fmt(VOLTAGE.HV.costPerTile)} · MV¥${fmt(VOLTAGE.MV.costPerTile)} /格` },
-  { id: 'substation', label: '◆ 变电站', sub: `¥${fmt(SUBSTATION_CAPEX)}·容量${SUBSTATION_RATING}MW` },
-  { id: 'coal', label: '■ 燃煤 60MW', sub: `¥${fmt(PLANTS.coal.capex)}·慢·脏` },
-  { id: 'gas', label: '■ 燃气 40MW', sub: `¥${fmt(PLANTS.gas.capex)}·快·贵` },
-  { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·看风` },
-  { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·白天` },
-  { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·基荷` },
-  { id: 'battery', label: `▰ 储能 ${BATTERY.powerRating}MW`, sub: `¥${fmt(BATTERY.capex)}·${BATTERY.energyCapacity}MWh` },
+  { id: 'substation', label: '◆ 变电站', sub: `¥${fmt(SUBSTATION_CAPEX)}·工期${SUBSTATION_BUILD_DAYS}天` },
+  { id: 'coal', label: '■ 燃煤 60MW', sub: `¥${fmt(PLANTS.coal.capex)}·工期${PLANTS.coal.buildDays}天·脏` },
+  { id: 'gas', label: '■ 燃气 40MW', sub: `¥${fmt(PLANTS.gas.capex)}·工期${PLANTS.gas.buildDays}天·贵` },
+  { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·工期${PLANTS.wind.buildDays}天·看风` },
+  { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·工期${PLANTS.solar.buildDays}天·白天` },
+  { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·工期${PLANTS.nuclear.buildDays}天·基荷` },
+  { id: 'battery', label: `▰ 储能 ${BATTERY.powerRating}MW`, sub: `¥${fmt(BATTERY.capex)}·工期${BATTERY.buildDays}天` },
   { id: 'bulldoze', label: '✕ 拆除', sub: '移除设备 / 线路' },
 ];
 
@@ -31,6 +31,7 @@ export class Hud {
   onN1?: () => void; // N-1 校核按钮回调
   onResearch?: () => void; // 研发面板按钮回调
   onAchievements?: () => void; // 成就面板按钮回调
+  onEconomics?: () => void; // 投资对比面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
@@ -111,6 +112,8 @@ export class Hud {
     researchBtn.textContent = '🔬'; researchBtn.title = '研发 / 科技树'; researchBtn.onclick = () => this.onResearch?.();
     const achvBtn = document.createElement('button');
     achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
+    const econBtn = document.createElement('button');
+    econBtn.textContent = '💹'; econBtn.title = '投资对比（工期/度电成本/回本）'; econBtn.onclick = () => this.onEconomics?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
@@ -122,6 +125,7 @@ export class Hud {
     menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
     sys.appendChild(researchBtn);
     sys.appendChild(achvBtn);
+    sys.appendChild(econBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
     sys.appendChild(saveBtn);

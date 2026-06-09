@@ -112,6 +112,10 @@
       }
       .menu-card:disabled { opacity: 0.45; cursor: default; }
       .menu-card:disabled:hover { border-color: var(--panel-border); background: #141d28; }
+      .econ-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .econ-table th, .econ-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--panel-border); white-space: nowrap; }
+      .econ-table th:first-child, .econ-table td:first-child { text-align: left; }
+      .econ-table th { color: var(--text-dim); font-weight: 600; }
       .menu-panel {
         width: min(760px, 92vw); max-height: 90vh; overflow: auto;
         background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; padding: 26px 28px;
