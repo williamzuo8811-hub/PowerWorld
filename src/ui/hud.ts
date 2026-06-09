@@ -7,7 +7,7 @@ import {
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'maintenance' | 'bulldoze';
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'maintenance' | 'ccs' | 'bulldoze';
 
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
@@ -22,6 +22,7 @@ const TOOLS: ToolDef[] = [
   { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·工期${PLANTS.nuclear.buildDays}天·基荷` },
   { id: 'battery', label: `▰ 储能 ${BATTERY.powerRating}MW`, sub: `¥${fmt(BATTERY.capex)}·工期${BATTERY.buildDays}天` },
   { id: 'maintenance', label: '🛠 计划检修', sub: '点电厂大修·降役龄/故障率' },
+  { id: 'ccs', label: '🌫 碳捕集', sub: '点火电改造·捕碳但成本升' },
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },
 ];
 

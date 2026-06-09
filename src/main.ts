@@ -25,7 +25,7 @@ import {
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'maintenance', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'maintenance', 'ccs', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -359,6 +359,12 @@ function handleClick(clientX: number, clientY: number): void {
       else { flashHint('无法检修（已离线/在建/资金不足）'); sound.error(); }
       return;
     }
+    case 'ccs': {
+      if (!bus || bus.kind !== 'plant') { flashHint('请点击一座火电厂改造'); return; }
+      if (sim.retrofitCCS(bus.id)) sound.build();
+      else { flashHint('无法改造（非火电/已改造/资金不足）'); sound.error(); }
+      return;
+    }
     case 'bulldoze': {
       if (bus) {
         const salvage = sim.salvageValue(bus.id); // 退役前计算残值
@@ -418,7 +424,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('出力', `${gen.output.toFixed(1)} / ${gen.capacity} MW`));
       rows.push(row('边际成本(现)', `¥${sim.effMarginalCost(gen).toFixed(0)}/MWh`));
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
-      rows.push(row('排放', `${spec.co2} t/MWh`));
+      rows.push(row('排放', `${sim.effCo2(gen).toFixed(2)} t/MWh${gen.ccs ? ' 🌫CCS' : ''}`));
       rows.push(row('役龄 / 磨损', `${gen.age.toFixed(1)}天 / ${(sim.wear(gen) * 100).toFixed(0)}%`));
       if (sim.genOffline(gen) && !bus.underConstruction) rows.push(row('状态', '🔧 检修中'));
     }

@@ -49,6 +49,7 @@ export interface Generator {
   availability: number; // 0..1，本 tick 可用出力系数（新能源由天气决定）
   age: number; // 役龄（游戏天，投运后累计）—— 老化用
   outageUntil?: number; // 强迫停运结束时刻（累计仿真小时），其间离线
+  ccs?: boolean; // 是否加装碳捕集（捕碳但边际成本上升）
 }
 
 /** 储能电池（双向：放电=电源，充电=负荷） */

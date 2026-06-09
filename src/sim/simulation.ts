@@ -30,7 +30,7 @@ import {
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
-  CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT,
+  CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -485,11 +485,28 @@ export class Simulation {
     return this.fuelPrice[fuel];
   }
 
-  /** 机组的有效边际成本 = 基准 × 燃料指数(含长约) × 高效科技 ×（含老化上浮） */
+  /** 机组的有效边际成本 = 基准 × 燃料指数 × 高效科技 ×（含老化上浮）×（CCS 能耗惩罚） */
   effMarginalCost(g: Generator): number {
     const fuel = PLANT_FUEL[g.type];
     const idx = fuel ? this.effFuelIndex(fuel) : 1;
-    return g.marginalCost * idx * this.tech.fuelCostFactor * (1 + this.wear(g) * WEAR_COST_FACTOR);
+    return g.marginalCost * idx * this.tech.fuelCostFactor * (1 + this.wear(g) * WEAR_COST_FACTOR) * (g.ccs ? CCS_COST_FACTOR : 1);
+  }
+  /** 机组有效碳排放强度 (t/MWh)：CCS 捕集后大幅下降 */
+  effCo2(g: Generator): number {
+    return PLANTS[g.type].co2 * this.tech.co2Factor * (g.ccs ? 1 - CCS_CAPTURE_RATE : 1);
+  }
+  /** 给火电加装碳捕集改造（付改造费） */
+  retrofitCCS(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'plant' || bus.underConstruction) return false;
+    const g = this.grid.gensAtBus(busId)[0];
+    if (!g || g.ccs || PLANTS[g.type].co2 <= 0) return false; // 仅火电、未改造
+    const cost = Math.round(g.capacity * CCS_CAPEX_PER_MW);
+    if (this.money < cost) return false;
+    this.money -= cost;
+    g.ccs = true;
+    this.log('good', `🌫 ${bus.name} 加装碳捕集（¥${cost.toLocaleString('en-US')}）：捕碳 ${(CCS_CAPTURE_RATE * 100).toFixed(0)}%，成本上浮`);
+    return true;
   }
 
   /** 签订燃料长约：锁定该燃料当前现货指数 × 溢价，锁定 days 天 */
@@ -1011,7 +1028,7 @@ export class Simulation {
     let fuelCost = 0, co2 = 0;
     for (const g of gens) {
       fuelCost += g.output * this.effMarginalCost(g) * dtHours;
-      co2 += g.output * PLANTS[g.type].co2 * this.tech.co2Factor;
+      co2 += g.output * this.effCo2(g);
     }
 
     return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport };

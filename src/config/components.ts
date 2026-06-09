@@ -172,6 +172,12 @@ export const CAPACITY_CREDIT: Record<PlantType, number> = {
 };
 export const BATTERY_CAPACITY_CREDIT = 0.5; // 储能容量信用（受时长限制）
 
+// —— 碳捕集（CCS）改造 ——
+// 给火电加装碳捕集：捕集大部分 CO2，但边际成本上升（能耗惩罚），并需改造投资。
+export const CCS_CAPTURE_RATE = 0.9; // 捕集比例
+export const CCS_COST_FACTOR = 1.4; // 边际成本上浮系数
+export const CCS_CAPEX_PER_MW = 4_500; // 改造成本 ¥/MW
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。
