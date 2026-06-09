@@ -178,6 +178,11 @@ export const CCS_CAPTURE_RATE = 0.9; // 捕集比例
 export const CCS_COST_FACTOR = 1.4; // 边际成本上浮系数
 export const CCS_CAPEX_PER_MW = 4_500; // 改造成本 ¥/MW
 
+// —— 输电阻塞（节点价差）——
+// 线路接近热极限即产生阻塞成本（再调度/节点价差），奖励就近发电与扩建输电。
+export const CONGESTION_THRESHOLD = 0.7; // 超过此负载率开始计阻塞
+export const CONGESTION_PRICE = 8; // 阻塞费 ¥/(MW·MWh 超额)
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。

@@ -31,6 +31,7 @@ import {
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
+  CONGESTION_THRESHOLD, CONGESTION_PRICE,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -152,7 +153,7 @@ export class Simulation {
   options: PriceOption[] = []; // 活跃电力期权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -206,7 +207,7 @@ export class Simulation {
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -813,6 +814,14 @@ export class Simulation {
     this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
     const capacityIncome = firmCapacity * this.capacityPrice * omDayFrac;
 
+    // —— 输电阻塞成本：线路超过阈值负载率即计费 ——
+    let congestionCost = 0;
+    for (const ln of this.grid.lines.values()) {
+      if (!this.grid.lineActive(ln)) continue;
+      const over = Math.abs(ln.flow) - ln.capacity * CONGESTION_THRESHOLD;
+      if (over > 0) congestionCost += over * CONGESTION_PRICE * dtHours;
+    }
+
     // —— 贷款利息 + 保险费 + 市场购电/联络线费 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
@@ -822,7 +831,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee + hedgeIncome + recIncome + capacityIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost + hedgeIncome + recIncome + capacityIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -839,6 +848,7 @@ export class Simulation {
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
     this.finance.market = ema(this.finance.market, -(importCost + marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
+    this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
@@ -846,7 +856,7 @@ export class Simulation {
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty
-      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity;
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

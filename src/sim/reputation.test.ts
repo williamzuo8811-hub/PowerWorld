@@ -26,6 +26,7 @@ describe('公众形象 / 减碳', () => {
 
   it('纯火电网清洁占比趋近 0', () => {
     const sim = new Simulation();
+    sim.events.nextAt = Infinity; // 关闭随机天气，避免风暴跳闸冻结 EMA
     const g = sim.grid;
     const coal = g.addPlant('coal', 0, 0).bus;
     const sub = g.addSubstation(2, 0);
