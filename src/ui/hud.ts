@@ -80,6 +80,7 @@ export class Hud {
     add('time', '时间');
     add('freq', '频率');
     add('balance', '发电 / 需求');
+    add('price', '现货电价');
     add('loss', '线损');
     add('reliab', '可靠性');
     add('co2', '碳排');
@@ -205,6 +206,7 @@ export class Hud {
     this.set('freq', `${s.frequency.toFixed(2)} Hz`, freqClass(s.frequency));
     this.set('balance', `${s.totalGen.toFixed(0)} / ${s.totalDemand.toFixed(0)} MW`,
       s.totalServed < s.totalDemand - 0.5 ? 'freq-warn' : '');
+    this.set('price', `¥${s.spotPrice.toFixed(0)}`, s.spotPrice > 120 ? 'freq-bad' : s.spotPrice > 90 ? 'freq-warn' : 'freq-ok');
     this.set('loss', `${s.totalLoss.toFixed(1)} MW`);
     this.set('reliab', `${(s.reliability * 100).toFixed(1)}%`,
       s.reliability < s.goalReliability ? 'freq-warn' : 'freq-ok');

@@ -17,7 +17,7 @@ import {
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
-  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT,
+  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT,
 } from '../config/components';
 
 interface IslandResult {
@@ -71,6 +71,8 @@ export class Simulation {
   events = new EventSystem();
   tech = new TechState();
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
+  spotPrice = TARIFF; // 当前现货电价 ¥/MWh
+  reserveMargin = 1; // 当前备用率（可用容量/需求）
 
   constructor() {
     this.events.schedule(0);
@@ -102,6 +104,8 @@ export class Simulation {
     this.events.schedule(0);
     this.tech = new TechState();
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
+    this.spotPrice = TARIFF;
+    this.reserveMargin = 1;
   }
 
   /** 导出存档 */
@@ -276,7 +280,6 @@ export class Simulation {
       const r = this.solveIsland(busIds, dtSim);
       aggGen += r.gen; aggDemand += r.demand; aggServed += r.served; aggLoss += r.loss;
       fuelCost += r.fuelCost; co2Rate += r.co2;
-      revenue += r.served * TARIFF * dtHours;
       penalty += Math.max(0, r.demand - r.served) * UNSERVED_PENALTY * dtHours;
       // 把"需求最大的岛"视为主电网，用其频率做仪表显示
       if (r.demand > mainDemand) {
@@ -327,6 +330,26 @@ export class Simulation {
         bus.transformerTimer = Math.max(0, (bus.transformerTimer ?? 0) - dtSim * 1.5);
       }
     }
+
+    // —— 现货电价：备用率 + 边际机组成本动态定价 ——
+    let availCap = 0;
+    let marginalUnitCost = 0;
+    for (const g of this.grid.gens.values()) {
+      const bus = this.grid.buses.get(g.busId);
+      if (!bus || bus.underConstruction) continue;
+      availCap += g.dispatchable ? g.capacity : g.capacity * g.availability;
+      if (g.dispatchable && g.output > 0.5) marginalUnitCost = Math.max(marginalUnitCost, this.effMarginalCost(g));
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction && b.soc > 1) availCap += b.powerRating * this.tech.batteryPowerFactor;
+    }
+    const reserveRatio = availCap / Math.max(aggDemand, 1);
+    const scarcityMult = clamp(1 + (SPOT.scarcityRef - reserveRatio) * SPOT.scarcityK, SPOT.multMin, SPOT.multMax);
+    const fuelInfluence = clamp(SPOT.fuelMin + marginalUnitCost / SPOT.fuelRef, SPOT.fuelMin, SPOT.fuelMax);
+    this.spotPrice = clamp(TARIFF * scarcityMult * fuelInfluence, SPOT.floor, SPOT.cap);
+    this.reserveMargin = reserveRatio;
+    revenue = aggServed * this.spotPrice * dtHours;
 
     // —— 碳成本 ——
     const carbonCost = co2Rate * this.carbonPrice * dtHours;
@@ -591,6 +614,9 @@ export class Simulation {
       researchPoints: this.tech.points,
       reputation: this.reputation,
       renewableShare: this.renewableShare,
+      spotPrice: this.spotPrice,
+      reserveMargin: this.reserveMargin,
+      fuelPrice: { ...this.fuelPrice },
       sandbox: this.sandbox,
       gameOver: this.gameOver,
       win: this.win,

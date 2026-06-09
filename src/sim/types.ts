@@ -117,6 +117,9 @@ export interface SimSnapshot {
   researchPoints: number; // 当前研发点
   reputation: number; // 公众形象 0..100
   renewableShare: number; // 清洁电力占比 0..1（新能源+储能）
+  spotPrice: number; // 当前现货电价 ¥/MWh
+  reserveMargin: number; // 备用率（可用容量/需求）
+  fuelPrice: Record<'coal' | 'gas' | 'uranium', number>; // 燃料价格指数
   sandbox: boolean; // 是否沙盒模式
   gameOver: boolean;
   win: boolean;
