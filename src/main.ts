@@ -4,7 +4,10 @@ import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
 import { Menu } from './ui/menu';
 import { ResearchPanel } from './ui/research';
+import { AchievementsPanel } from './ui/achievements';
 import { analyzeN1 } from './sim/contingency';
+import { Achievements } from './sim/achievements';
+import { ALL_TECH_COUNT } from './config/achievements';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
@@ -21,9 +24,12 @@ const renderer = new Renderer(sim.grid);
 const hud = new Hud();
 const menu = new Menu();
 const research = new ResearchPanel();
+const achvPanel = new AchievementsPanel();
+const achievements = new Achievements();
+achievements.load();
 
 let menuOpen = true; // 主菜单打开时暂停仿真与建造
-let panelOpen = false; // 研发面板打开时暂停仿真与建造
+let panelOpen = false; // 研发/成就面板打开时暂停仿真与建造
 let currentScenarioId = SCENARIOS[0].id;
 
 // ——————————————————— 关卡 / 存档流程 ———————————————————
@@ -47,6 +53,7 @@ function enterGame(): void {
   setPending(null);
   invalidateN1();
   research.hide();
+  achvPanel.hide();
   panelOpen = false;
   hud.setSpeed(0);
   menu.hide();
@@ -82,6 +89,7 @@ function runN1(): void {
   renderer.n1Subs = rep.vulnerableSubIds;
   if (rep.checked === 0) { flashHint('先建好电网再做 N-1 校核'); return; }
   if (rep.secure) {
+    sim.n1Secure = true; // 解锁「坚强电网」成就
     sim.log('good', `✅ N-1 校核通过：任一元件单独失效都不会停电（已校核 ${rep.checked} 个）`);
     flashHint('N-1 安全 ✅');
     return;
@@ -116,6 +124,32 @@ function doUnlock(id: TechId): void {
   sim.tech.unlocked.add(id);
   sim.log('good', `🔬 已研发：${t.name}`);
   openResearch(); // 刷新面板
+}
+
+/** 打开成就面板 */
+function openAchievements(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  achvPanel.show({
+    unlocked: achievements.unlocked,
+    onClose: () => { achvPanel.hide(); panelOpen = false; },
+  });
+}
+
+/** 评估成就并弹出新解锁的提示 */
+function pollAchievements(): void {
+  const techCount = sim.tech.unlocked.size;
+  achievements.evaluate({
+    peakServed: sim.peakServed,
+    totalEnergyServed: sim.totalEnergyServed,
+    renewableShare: sim.renewableShare,
+    reputation: sim.reputation,
+    techCount,
+    allTech: techCount >= ALL_TECH_COUNT,
+    won: sim.gameOver && sim.win,
+    n1Secure: sim.n1Secure,
+  });
+  for (const a of achievements.drain()) hud.toast(`🏆 成就解锁：${a.name}`);
 }
 
 /** 电网结构变化后，清除过期的 N-1 标注 */
@@ -333,6 +367,7 @@ async function start(): Promise<void> {
   hud.onMenu = openMenu;
   hud.onN1 = runN1;
   hud.onResearch = openResearch;
+  hud.onAchievements = openAchievements;
   bindInput();
   openMenu(); // 开局先进主菜单选关
 
@@ -341,6 +376,7 @@ async function start(): Promise<void> {
     if (!menuOpen && !panelOpen) {
       sim.tick(dt, hud.timeScale);
       hud.update(sim.snapshot(), sim.logs);
+      pollAchievements();
     }
     renderer.update(dt);
     if (hintTimer > 0) {

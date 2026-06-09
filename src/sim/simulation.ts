@@ -53,6 +53,9 @@ export class Simulation {
   reliability = 1; // 供电率滑动平均 0..1
   reputation = 70; // 公众形象 0..100
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
+  peakServed = 0; // 历史峰值供电 (MW) —— 成就用
+  totalEnergyServed = 0; // 累计送达电量 (MWh) —— 成就用
+  n1Secure = false; // 是否通过过 N-1 校核 —— 成就用（由 UI 置位）
   logs: LogEntry[] = [];
   gameOver = false;
   win = false;
@@ -75,6 +78,9 @@ export class Simulation {
     this.reliability = 1;
     this.reputation = 70;
     this.renewableShare = 1;
+    this.peakServed = 0;
+    this.totalEnergyServed = 0;
+    this.n1Secure = false;
     this.logs = [];
     this.gameOver = false;
     this.win = false;
@@ -287,6 +293,8 @@ export class Simulation {
 
     // 研发点：随送达电量积累（电网越大、运行越好，研发越快）
     this.tech.points += aggServed * dtHours * RP_PER_MWH;
+    this.peakServed = Math.max(this.peakServed, aggServed);
+    this.totalEnergyServed += aggServed * dtHours;
 
     // 可靠性滑动平均（EMA）
     const instReliab = aggDemand > 0.5 ? aggServed / aggDemand : 1;

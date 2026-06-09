@@ -30,6 +30,7 @@ export class Hud {
   onMenu?: () => void; // 菜单按钮回调
   onN1?: () => void; // N-1 校核按钮回调
   onResearch?: () => void; // 研发面板按钮回调
+  onAchievements?: () => void; // 成就面板按钮回调
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
   private statVals = new Map<string, HTMLElement>();
@@ -99,6 +100,8 @@ export class Hud {
     sys.id = 'speed';
     const researchBtn = document.createElement('button');
     researchBtn.textContent = '🔬'; researchBtn.title = '研发 / 科技树'; researchBtn.onclick = () => this.onResearch?.();
+    const achvBtn = document.createElement('button');
+    achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const saveBtn = document.createElement('button');
@@ -106,6 +109,7 @@ export class Hud {
     const menuBtn = document.createElement('button');
     menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
     sys.appendChild(researchBtn);
+    sys.appendChild(achvBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
@@ -154,6 +158,21 @@ export class Hud {
   setInspector(html: string | null): void {
     this.inspectorEl.style.display = html ? 'block' : 'none';
     if (html) this.inspectorEl.innerHTML = html;
+  }
+
+  /** 弹出一条短暂的提示气泡（成就解锁等） */
+  toast(msg: string): void {
+    const root = document.getElementById('toast');
+    if (!root) return;
+    const el = document.createElement('div');
+    el.className = 'toast-item';
+    el.textContent = msg;
+    root.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = 'opacity .4s';
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 400);
+    }, 3000);
   }
 
   /** 每帧刷新状态栏与日志 */
