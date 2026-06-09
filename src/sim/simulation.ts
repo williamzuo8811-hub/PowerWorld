@@ -13,6 +13,7 @@ import {
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE, LOAN_RISK_SPREAD,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
+  MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS,
 } from '../config/components';
 import type { Generator, Line, LoadProfile } from './types';
 import {
@@ -304,6 +305,22 @@ export class Simulation {
     const index = this.fuelPrice[fuel] * FUEL_CONTRACT_PREMIUM;
     this.fuelContracts[fuel] = { index, endClock: this.clock + days * 24 };
     this.log('info', `📑 ${FUEL_INFO[fuel].label}长约：锁定指数 ${index.toFixed(2)} × ${days}天`);
+    return true;
+  }
+
+  /** 安排某电厂计划检修：短暂离线 + 检修费，换取役龄下降（更低成本与故障率） */
+  scheduleMaintenance(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'plant' || bus.underConstruction) return false;
+    const g = this.grid.gensAtBus(busId)[0];
+    if (!g || this.genOffline(g)) return false; // 在建/已离线不可重复检修
+    const cost = Math.round(PLANTS[g.type].capex * MAINT_COST_FRACTION);
+    if (this.money < cost) return false;
+    this.money -= cost;
+    g.outageUntil = this.clock + MAINT_DAYS * 24;
+    g.output = 0;
+    g.age = Math.max(0, g.age - MAINT_AGE_REDUCTION_DAYS);
+    this.log('good', `🛠 ${bus.name} 计划检修（${MAINT_DAYS}天，¥${cost.toLocaleString('en-US')}）役龄 −${MAINT_AGE_REDUCTION_DAYS}天`);
     return true;
   }
 

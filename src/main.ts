@@ -24,7 +24,7 @@ import {
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'maintenance', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -323,6 +323,12 @@ function handleClick(clientX: number, clientY: number): void {
         sound.build();
         sim.log('info', `储能开工 ${BATTERY.powerRating}MW/${BATTERY.energyCapacity}MWh（工期${BATTERY.buildDays}天，需经变电站接入）`);
       } else { flashHint('资金不足'); sound.error(); }
+      return;
+    }
+    case 'maintenance': {
+      if (!bus || bus.kind !== 'plant') { flashHint('请点击一座电厂安排检修'); return; }
+      if (sim.scheduleMaintenance(bus.id)) sound.build();
+      else { flashHint('无法检修（已离线/在建/资金不足）'); sound.error(); }
       return;
     }
     case 'bulldoze': {

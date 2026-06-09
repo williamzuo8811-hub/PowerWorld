@@ -97,6 +97,9 @@ export const REPAIR_DAYS = 0.8; // 强迫停运检修时长（天）
 export const REPAIR_COST_FRACTION = 0.04; // 检修成本 = capex × 此值 ×(0.5+磨损)
 export const SALVAGE_FRACTION = 0.4; // 退役残值基准比例（占 capex）
 export const DEPREC_DAYS = 60; // 残值随役龄折旧的天数尺度
+export const MAINT_DAYS = 0.5; // 计划检修时长（天，短于强迫停运）
+export const MAINT_COST_FRACTION = 0.06; // 计划检修成本 = capex × 此值
+export const MAINT_AGE_REDUCTION_DAYS = 15; // 检修后役龄减少（大修返新）
 
 // —— 贷款 / 融资 ——
 // 工期长、capex 高 → 前期现金流紧张。举债可摊平，但要付利息；信用额度随资产规模上升。
