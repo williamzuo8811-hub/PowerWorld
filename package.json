@@ -1,0 +1,22 @@
+{
+  "name": "powerworld",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "电力世界 — 一款以电网本身为主角的硬核建造经营游戏（MVP 垂直切片）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}
