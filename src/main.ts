@@ -17,7 +17,7 @@ import { saveGame, loadGame, hasSave } from './game/save';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TARIFF,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, BATTERY, VOLTAGE, TARIFF, TARIFF_CLASS,
   LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE,
 } from './config/components';
 
@@ -379,8 +379,11 @@ function busInspectorHtml(bus: Bus): string {
   } else if (bus.kind === 'load') {
     const l = sim.grid.loadsAtBus(bus.id)[0];
     if (l) {
+      const clsName = l.profile === 'residential' ? '居民' : l.profile === 'commercial' ? '商业' : '工业';
       rows.push(row('需求', `${l.demand.toFixed(1)} MW`));
       rows.push(row('已供', `${l.served.toFixed(1)} MW`));
+      rows.push(row('电价类别', `${clsName} ×${TARIFF_CLASS[l.profile].toFixed(2)}`));
+      rows.push(row('当前电价', `¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
       rows.push(row('状态', bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }
   } else if (bus.kind === 'substation') {

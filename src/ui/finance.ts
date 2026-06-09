@@ -6,7 +6,10 @@ export interface FinanceData {
   creditLimit: number;
   netWorth: number;
   dailyRate: number;
-  finance: { revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; net: number };
+  finance: {
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; net: number;
+    byClass: { residential: number; commercial: number; industrial: number };
+  };
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -55,6 +58,7 @@ export class FinancePanel {
       + row('净资产', `¥${fmt(d.netWorth)}`, d.netWorth < 0 ? 'freq-bad' : 'freq-ok')
       + section('每日损益（按当前运行估算）')
       + row('售电收入', `${sign(f.revenue)}${abs(f.revenue)}/天`, 'freq-ok')
+      + row('· 居民 / 商业 / 工业', `${abs(f.byClass.residential)} / ${abs(f.byClass.commercial)} / ${abs(f.byClass.industrial)}`)
       + row('燃料成本', `−${abs(f.fuel)}/天`)
       + row('碳成本', `−${abs(f.carbon)}/天`)
       + row('运维成本', `−${abs(f.om)}/天`)

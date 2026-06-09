@@ -14,9 +14,9 @@ import {
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
 } from '../config/components';
-import type { Generator, Line } from './types';
+import type { Generator, Line, LoadProfile } from './types';
 import {
-  START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
+  START_MONEY, TARIFF, TARIFF_CLASS, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
@@ -80,7 +80,10 @@ export class Simulation {
   reserveMargin = 1; // 当前备用率（可用容量/需求）
   debt = 0; // 未偿贷款本金
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
-  finance = { revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0 };
+  finance = {
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0,
+    byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
+  };
 
   constructor() {
     this.events.schedule(0);
@@ -116,7 +119,10 @@ export class Simulation {
     this.reserveMargin = 1;
     this.debt = 0;
     this.forcedOutages = true;
-    this.finance = { revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0 };
+    this.finance = {
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, net: 0,
+      byClass: { residential: 0, commercial: 0, industrial: 0 },
+    };
   }
 
   /** 导出存档 */
@@ -452,7 +458,12 @@ export class Simulation {
     const fuelInfluence = clamp(SPOT.fuelMin + marginalUnitCost / SPOT.fuelRef, SPOT.fuelMin, SPOT.fuelMax);
     this.spotPrice = clamp(TARIFF * scarcityMult * fuelInfluence, SPOT.floor, SPOT.cap);
     this.reserveMargin = reserveRatio;
-    revenue = aggServed * this.spotPrice * dtHours;
+    // 分类电价：按客户类别加权计算售电收入
+    const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0 };
+    for (const l of this.grid.loads.values()) classServed[l.profile] += l.served;
+    revenue = (classServed.residential * TARIFF_CLASS.residential
+      + classServed.commercial * TARIFF_CLASS.commercial
+      + classServed.industrial * TARIFF_CLASS.industrial) * this.spotPrice * dtHours;
 
     // —— 碳成本 ——
     const carbonCost = co2Rate * this.carbonPrice * dtHours;
@@ -487,6 +498,11 @@ export class Simulation {
     this.finance.om = ema(this.finance.om, omCost * toDay);
     this.finance.interest = ema(this.finance.interest, interestCost * toDay);
     this.finance.penalty = ema(this.finance.penalty, penalty * toDay);
+    const repF = this.reputationTariffFactor;
+    for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
+      const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
+      this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
+    }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty;
     this.frequency = mainFreq;
