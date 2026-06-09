@@ -151,6 +151,12 @@ export const COMPETITORS_INIT: CompetitorSpec[] = [
 export const GEN_MARGIN_MARKUP = 1.12; // 出清价相对边际成本的发电商加价
 export const REGIONAL_SCARCITY_ADDER = 90; // 区域供不应求时的价格附加
 export const COMPETITIVENESS_K = 2.0; // 市场份额对获客增长的影响系数
+// 竞争对手动态：盈利则扩张、被挤出则退役（自平衡市场）
+export const COMPETITOR_EXPAND_RATE = 0.02; // 盈利时每日扩张比例
+export const COMPETITOR_RETIRE_RATE = 0.03; // 亏损时每日退役比例
+export const COMPETITOR_EXPAND_MARGIN = 15; // 出清价高于成本多少才扩张
+export const COMPETITOR_CAP_MIN_FRAC = 0.3; // 容量下限（占初始）
+export const COMPETITOR_CAP_MAX_FRAC = 2.5; // 容量上限（占初始）
 
 // —— 容量市场 ——
 // 除卖电外，按"可用确定性容量"获容量补偿，奖励保留备用——让调峰/备用机组得以生存。

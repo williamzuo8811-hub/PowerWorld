@@ -30,8 +30,15 @@ import {
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_PER_MW_DAY, CAPACITY_CREDIT, BATTERY_CAPACITY_CREDIT,
+  COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
+  COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
 } from '../config/components';
+
+/** 运行期竞争对手（含初始容量，用于扩张/退役的上下限） */
+interface Competitor extends CompetitorSpec {
+  base: number;
+}
 
 /** 历史走势采样点 */
 export interface HistorySample {
@@ -128,7 +135,7 @@ export class Simulation {
   insured = false; // 是否投保设备保险
   marketEnabled = false; // 是否接入批发市场（联络线，需主动接入）
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
-  competitors: CompetitorSpec[] = COMPETITORS_INIT.map((c) => ({ ...c })); // AI 竞争对手
+  competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
   history: HistorySample[] = []; // 历史走势采样
@@ -187,7 +194,7 @@ export class Simulation {
     this.insured = false;
     this.marketEnabled = false;
     this.marketImportMW = 0;
-    this.competitors = COMPETITORS_INIT.map((c) => ({ ...c }));
+    this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
     this.history = [];
@@ -324,6 +331,16 @@ export class Simulation {
       if (b.player) playerDispatched += take;
     }
     return { clearingCost, playerDispatched, shortfall: Math.max(0, demand - cum) };
+  }
+
+  /** 竞争对手演化：出清价高于其成本一定幅度则扩张，亏损则退役 */
+  private evolveCompetitors(dtDays: number): void {
+    for (const c of this.competitors) {
+      const margin = this.marketClearingPrice - c.marginalCost;
+      if (margin > COMPETITOR_EXPAND_MARGIN) c.capacity *= 1 + COMPETITOR_EXPAND_RATE * dtDays;
+      else if (margin < 0) c.capacity *= 1 - COMPETITOR_RETIRE_RATE * dtDays;
+      c.capacity = clamp(c.capacity, c.base * COMPETITOR_CAP_MIN_FRAC, c.base * COMPETITOR_CAP_MAX_FRAC);
+    }
   }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
@@ -711,6 +728,7 @@ export class Simulation {
     this.spotPrice = clamp(TARIFF * localMult * marketFactor, SPOT.floor, SPOT.cap);
     this.reserveMargin = reserveRatio;
     this.marketShare = this.regionalDemand > 0 ? clr.playerDispatched / this.regionalDemand : 0;
+    this.evolveCompetitors(dtHours / 24); // 市场自平衡：竞争对手扩张/退役
     // 远期报价（现货均值）
     const aS = clamp(dtHours / 12, 0, 1);
     this.avgSpot = this.avgSpot * (1 - aS) + this.spotPrice * aS;
