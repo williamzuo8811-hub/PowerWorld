@@ -26,6 +26,7 @@ import {
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
+  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
 } from '../config/components';
 
 interface IslandResult {
@@ -35,6 +36,7 @@ interface IslandResult {
   loss: number;
   fuelCost: number;
   co2: number; // 吨/h
+  marketImport: number; // 本岛向市场购电 (MW)
 }
 
 /** 一笔远期套保合约（差价合约） */
@@ -74,6 +76,7 @@ export interface SimSaveState {
   avgSpot: number;
   hedges: Hedge[];
   insured: boolean;
+  marketEnabled: boolean;
 }
 
 export class Simulation {
@@ -100,6 +103,8 @@ export class Simulation {
   fuelContracts: Partial<Record<FuelType, FuelContract>> = {}; // 活跃燃料长约
   forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
   insured = false; // 是否投保设备保险
+  marketEnabled = false; // 是否接入批发市场（联络线，需主动接入）
+  marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
@@ -108,7 +113,7 @@ export class Simulation {
   hedges: Hedge[] = []; // 活跃套保合约
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -150,9 +155,11 @@ export class Simulation {
     this.hedges = [];
     this.forcedOutages = true;
     this.insured = false;
+    this.marketEnabled = false;
+    this.marketImportMW = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -174,6 +181,7 @@ export class Simulation {
       avgSpot: this.avgSpot,
       hedges: this.hedges.map((h) => ({ ...h })),
       insured: this.insured,
+      marketEnabled: this.marketEnabled,
     };
   }
 
@@ -207,6 +215,7 @@ export class Simulation {
     this.avgSpot = d.avgSpot ?? TARIFF;
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
     this.insured = d.insured ?? false;
+    this.marketEnabled = d.marketEnabled ?? false;
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -510,13 +519,14 @@ export class Simulation {
     // —— 逐孤岛求解 ——
     const islands = this.grid.islands();
     let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0;
-    let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0;
+    let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
 
     for (const busIds of islands) {
       const r = this.solveIsland(busIds, dtSim);
       aggGen += r.gen; aggDemand += r.demand; aggServed += r.served; aggLoss += r.loss;
+      aggMarketImport += r.marketImport;
       fuelCost += r.fuelCost; co2Rate += r.co2;
       penalty += Math.max(0, r.demand - r.served) * UNSERVED_PENALTY * dtHours;
       // 把"需求最大的岛"视为主电网，用其频率做仪表显示
@@ -624,13 +634,16 @@ export class Simulation {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
 
-    // —— 贷款利息 + 保险费 ——
+    // —— 贷款利息 + 保险费 + 市场购电/联络线费 ——
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
+    this.marketImportMW = aggMarketImport;
+    const importCost = aggMarketImport * this.avgSpot * IMPORT_MARKUP * dtHours;
+    const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
-    // —— 结算（扣除燃料/碳/失负荷/运维/利息/保费，加套保差价/绿证收入）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost + hedgeIncome + recIncome;
+    // —— 结算（扣除各项成本，加套保差价/绿证收入）——
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee + hedgeIncome + recIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -645,13 +658,15 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
+    this.finance.market = ema(this.finance.market, -(importCost + marketFee) * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
       this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
-      - this.finance.om - this.finance.interest - this.finance.penalty + this.finance.hedge + this.finance.rec + this.finance.insurance;
+      - this.finance.om - this.finance.interest - this.finance.penalty
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
@@ -766,12 +781,18 @@ export class Simulation {
     }
 
     const totalGen = supply; // 含储能放电的总电源
-    const served = Math.min(demand, supply - chargeSum); // 扣掉充电占用后真正送到负荷的功率
+    const localServed = Math.min(demand, supply - chargeSum); // 本地电源可供
+    // 不足部分向批发市场购电补缺（受联络线容量限制）
+    let marketImport = 0;
+    if (this.marketEnabled && localServed < demand - 0.01) {
+      marketImport = Math.min(demand - localServed, INTERCONNECTOR_CAPACITY);
+    }
+    const served = localServed + marketImport;
     const ratio = demand > 0 ? served / demand : 1;
-    const islandDead = supply < 0.01 && demand > 0.01;
+    const islandDead = supply < 0.01 && marketImport < 0.01 && demand > 0.01;
 
-    // 频率：由"总供给 vs 总消费(含充电)"失衡推算，过低则甩负荷
-    const freq = freqFromBalance(supply, consumption);
+    // 频率：购电也提供功率支撑，纳入平衡
+    const freq = freqFromBalance(supply + marketImport, consumption);
     const shedding = freq < FREQ_SHED_THRESHOLD || islandDead;
 
     // 分配实际供电到各负荷，并标记停电
@@ -791,7 +812,9 @@ export class Simulation {
     for (const id of busIds) injection.set(id, 0);
     for (const g of gens) injection.set(g.busId, (injection.get(g.busId) ?? 0) + g.output);
     for (const b of batteries) injection.set(b.busId, (injection.get(b.busId) ?? 0) + b.output); // 放电+ / 充电-
-    for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served);
+    // 购电视为在负荷处就地注入，仅本地发电的部分经网络流动
+    const localFraction = served > 0 ? (served - marketImport) / served : 1;
+    for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served * localFraction);
 
     const islandLines = [...this.grid.lines.values()].filter(
       (ln) => this.grid.lineActive(ln) && set.has(ln.from) && set.has(ln.to),
@@ -821,7 +844,7 @@ export class Simulation {
       co2 += g.output * PLANTS[g.type].co2 * this.tech.co2Factor;
     }
 
-    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2 };
+    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport };
   }
 
   /** 更新公众形象与清洁电力占比 */

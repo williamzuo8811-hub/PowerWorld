@@ -1,4 +1,6 @@
 // 财务报表面板：资产负债 + 每日损益 + 市场行情 + 贷款操作（复用 #panel）。
+import { INTERCONNECTOR_CAPACITY, MARKET_FEE_PER_DAY } from '../config/components';
+
 export interface FinanceData {
   money: number;
   assetValue: number;
@@ -7,13 +9,15 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; market: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
   insured: boolean;
   premiumPerDay: number;
   creditRating: string;
   creditScore: number;
+  marketEnabled: boolean;
+  marketImport: number;
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -32,6 +36,7 @@ export interface FinancePanelOptions {
   onHedge: (volume: number, days: number) => void;
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onToggleInsurance: () => void;
+  onToggleMarket: () => void;
   onClose: () => void;
 }
 
@@ -82,6 +87,7 @@ export class FinancePanel {
       + row('套保差价', `${f.hedge >= 0 ? '+' : '−'}${abs(f.hedge)}/天`, f.hedge < 0 ? '' : 'freq-ok')
       + row('绿证收入', `+${abs(f.rec)}/天`, f.rec > 1 ? 'freq-ok' : '')
       + row('保险(净)', `${f.insurance >= 0 ? '+' : '−'}${abs(f.insurance)}/天`, f.insurance < 0 ? '' : 'freq-ok')
+      + row('市场购电', `${f.market >= 0 ? '+' : '−'}${abs(f.market)}/天`, f.market < -1 ? 'freq-warn' : '')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
       + section('市场行情')
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
@@ -154,6 +160,13 @@ export class FinancePanel {
     insBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(insBtns, d.insured ? '退保' : '投保', true, () => o.onToggleInsurance());
     panel.appendChild(insBtns);
+
+    // 批发市场互联
+    panel.insertAdjacentHTML('beforeend', section(`批发市场（${d.marketEnabled ? '已接入' : '未接入'} · 联络线 ${INTERCONNECTOR_CAPACITY}MW · 当前购电 ${d.marketImport.toFixed(0)}MW · 日费 ¥${fmt(MARKET_FEE_PER_DAY)}）`));
+    const mktBtns = document.createElement('div');
+    mktBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(mktBtns, d.marketEnabled ? '断开联络线' : '接入市场', true, () => o.onToggleMarket());
+    panel.appendChild(mktBtns);
 
     panel.insertAdjacentHTML('beforeend', section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`));
 
