@@ -38,6 +38,7 @@ export interface FinancePanelOptions {
   onBorrow: (amount: number) => void;
   onRepay: (amount: number) => void;
   onHedge: (volume: number, days: number) => void;
+  onOption: (kind: 'put' | 'call', volume: number, days: number) => void;
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
@@ -159,8 +160,10 @@ export class FinancePanel {
 
     const hedgeBtns = document.createElement('div');
     hedgeBtns.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px';
-    mkBtn(hedgeBtns, '锁定 20MW×5天', d.money > 0, () => o.onHedge(20, 5));
-    mkBtn(hedgeBtns, '锁定 50MW×10天', d.money > 0, () => o.onHedge(50, 10));
+    mkBtn(hedgeBtns, '远期 20MW×5天', d.money > 0, () => o.onHedge(20, 5));
+    mkBtn(hedgeBtns, '远期 50MW×10天', d.money > 0, () => o.onHedge(50, 10));
+    mkBtn(hedgeBtns, '看跌(保底) 30MW×7天', d.money > 0, () => o.onOption('put', 30, 7));
+    mkBtn(hedgeBtns, '看涨(封顶) 30MW×7天', d.money > 0, () => o.onOption('call', 30, 7));
     panel.appendChild(hedgeBtns);
 
     // 设备保险

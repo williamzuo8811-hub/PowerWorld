@@ -25,7 +25,7 @@ import {
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
-  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY,
+  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
@@ -63,6 +63,14 @@ export interface FuelContract {
   endClock: number; // 到期时刻（累计仿真小时）
 }
 
+/** 一份电力期权（put=价格下限保护；call=价格上限保护） */
+export interface PriceOption {
+  kind: 'put' | 'call';
+  volume: number; // 名义电量 (MW)
+  strike: number; // 行权价 ¥/MWh
+  endClock: number; // 到期时刻（累计仿真小时）
+}
+
 /** 存档状态（可 JSON 序列化） */
 export interface SimSaveState {
   money: number;
@@ -86,6 +94,7 @@ export interface SimSaveState {
   debt: number;
   avgSpot: number;
   hedges: Hedge[];
+  options: PriceOption[];
   insured: boolean;
   marketEnabled: boolean;
   history: HistorySample[];
@@ -129,6 +138,7 @@ export class Simulation {
   reserveMargin = 1; // 当前备用率（可用容量/需求）
   debt = 0; // 未偿贷款本金
   hedges: Hedge[] = []; // 活跃套保合约
+  options: PriceOption[] = []; // 活跃电力期权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
     revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, net: 0,
@@ -171,6 +181,7 @@ export class Simulation {
     this.reserveMargin = 1;
     this.debt = 0;
     this.hedges = [];
+    this.options = [];
     this.forcedOutages = true;
     this.insured = false;
     this.marketEnabled = false;
@@ -203,6 +214,7 @@ export class Simulation {
       debt: this.debt,
       avgSpot: this.avgSpot,
       hedges: this.hedges.map((h) => ({ ...h })),
+      options: this.options.map((o) => ({ ...o })),
       insured: this.insured,
       marketEnabled: this.marketEnabled,
       history: this.history.map((h) => ({ ...h })),
@@ -239,6 +251,7 @@ export class Simulation {
     this.debt = d.debt ?? 0;
     this.avgSpot = d.avgSpot ?? TARIFF;
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
+    this.options = (d.options ?? []).map((o) => ({ ...o }));
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
     this.history = (d.history ?? []).map((h) => ({ ...h }));
@@ -381,6 +394,18 @@ export class Simulation {
     const strike = Math.round(this.avgSpot);
     this.hedges.push({ volume, strike, endClock: this.clock + days * 24 });
     this.log('info', `🔒 套保 ${volume}MW × ${days}天 @ ¥${strike}/MWh（手续费 ¥${Math.round(fee).toLocaleString('en-US')}）`);
+    return true;
+  }
+
+  /** 买入电力期权：行权价=当前远期报价(avgSpot)，按量×天收权利金 */
+  addOption(kind: 'put' | 'call', volume: number, days: number): boolean {
+    if (volume <= 0 || days <= 0) return false;
+    const premium = volume * days * OPTION_PREMIUM_RATE;
+    if (this.money < premium) return false;
+    this.money -= premium;
+    const strike = Math.round(this.avgSpot);
+    this.options.push({ kind, volume, strike, endClock: this.clock + days * 24 });
+    this.log('info', `🎟 ${kind === 'put' ? '看跌(保底)' : '看涨(封顶)'}期权 ${volume}MW × ${days}天 @ ¥${strike}（权利金 ¥${Math.round(premium).toLocaleString('en-US')}）`);
     return true;
   }
 
@@ -675,6 +700,12 @@ export class Simulation {
     this.hedges = this.hedges.filter((h) => this.clock < h.endClock);
     let hedgeIncome = 0;
     for (const h of this.hedges) hedgeIncome += (h.strike - this.spotPrice) * h.volume * dtHours;
+    // 期权按行权方向单向赔付（不行权则只损失权利金）
+    this.options = this.options.filter((o) => this.clock < o.endClock);
+    for (const o of this.options) {
+      const payoff = o.kind === 'put' ? Math.max(0, o.strike - this.spotPrice) : Math.max(0, this.spotPrice - o.strike);
+      hedgeIncome += payoff * o.volume * dtHours;
+    }
 
     // 分类电价：按客户类别加权计算售电收入
     const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0 };

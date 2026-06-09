@@ -213,6 +213,7 @@ function openFinance(): void {
     onBorrow: (amt) => { if (sim.borrow(amt)) sound.build(); else sound.error(); openFinance(); },
     onRepay: (amt) => { sim.repay(amt); sound.click(); openFinance(); },
     onHedge: (vol, days) => { if (sim.addHedge(vol, days)) sound.build(); else sound.error(); openFinance(); },
+    onOption: (kind, vol, days) => { if (sim.addOption(kind, vol, days)) sound.build(); else sound.error(); openFinance(); },
     onFuelContract: (fuel, days) => { if (sim.signFuelContract(fuel, days)) sound.build(); else sound.error(); openFinance(); },
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
