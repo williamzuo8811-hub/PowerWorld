@@ -33,7 +33,7 @@ import {
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
   AS_REG_PRICE, AS_RESERVE_PRICE, AS_GAS_REG_FACTOR, FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
-  ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP,
+  ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -73,6 +73,12 @@ export interface Hedge {
 /** 一份燃料长约（锁定某燃料的价格指数一段时间） */
 export interface FuelContract {
   index: number; // 锁定的价格指数
+  endClock: number; // 到期时刻（累计仿真小时）
+}
+
+/** 一份输电权（FTR）：收取南北区实际价差 */
+export interface FTR {
+  mw: number; // 名义容量 (MW)
   endClock: number; // 到期时刻（累计仿真小时）
 }
 
@@ -116,6 +122,7 @@ export interface SimSaveState {
   hedges: Hedge[];
   options: PriceOption[];
   capCommitments: CapacityCommitment[];
+  ftrs: FTR[];
   insured: boolean;
   marketEnabled: boolean;
   demandResponse: boolean;
@@ -168,6 +175,7 @@ export class Simulation {
   hedges: Hedge[] = []; // 活跃套保合约
   options: PriceOption[] = []; // 活跃电力期权
   capCommitments: CapacityCommitment[] = []; // 活跃远期容量承诺
+  ftrs: FTR[] = []; // 活跃输电权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
     revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
@@ -212,6 +220,7 @@ export class Simulation {
     this.hedges = [];
     this.options = [];
     this.capCommitments = [];
+    this.ftrs = [];
     this.forcedOutages = true;
     this.insured = false;
     this.marketEnabled = false;
@@ -252,6 +261,7 @@ export class Simulation {
       hedges: this.hedges.map((h) => ({ ...h })),
       options: this.options.map((o) => ({ ...o })),
       capCommitments: this.capCommitments.map((c) => ({ ...c })),
+      ftrs: this.ftrs.map((f) => ({ ...f })),
       insured: this.insured,
       marketEnabled: this.marketEnabled,
       demandResponse: this.demandResponse,
@@ -291,6 +301,7 @@ export class Simulation {
     this.hedges = (d.hedges ?? []).map((h) => ({ ...h }));
     this.options = (d.options ?? []).map((o) => ({ ...o }));
     this.capCommitments = (d.capCommitments ?? []).map((c) => ({ ...c }));
+    this.ftrs = (d.ftrs ?? []).map((f) => ({ ...f }));
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
     this.demandResponse = d.demandResponse ?? false;
@@ -489,6 +500,17 @@ export class Simulation {
     const strike = Math.round(this.avgSpot);
     this.options.push({ kind, volume, strike, endClock: this.clock + days * 24 });
     this.log('info', `🎟 ${kind === 'put' ? '看跌(保底)' : '看涨(封顶)'}期权 ${volume}MW × ${days}天 @ ¥${strike}（权利金 ¥${Math.round(premium).toLocaleString('en-US')}）`);
+    return true;
+  }
+
+  /** 买入输电权(FTR)：付当前价差×溢价的权利金，期内收取实际南北价差 */
+  addFTR(mw: number, days: number): boolean {
+    if (mw <= 0 || days <= 0) return false;
+    const premium = Math.round(this.zoneSpread * mw * days * 24 * FTR_MARKUP);
+    if (this.money < premium) return false;
+    this.money -= premium;
+    this.ftrs.push({ mw, endClock: this.clock + days * 24 });
+    this.log('info', `🔗 输电权 ${mw}MW × ${days}天（权利金 ¥${premium.toLocaleString('en-US')}），收取南北价差`);
     return true;
   }
 
@@ -918,11 +940,15 @@ export class Simulation {
     const arbProfit = Math.max(0, this.zoneSpread - ZONE_WHEEL_FEE);
     this.zoneArbMW = this.marketEnabled && arbProfit > 0 ? ZONE_TRADE_CAPACITY : 0;
     const arbIncome = this.zoneArbMW * arbProfit * dtHours;
+    // 输电权：金融合约，收取实际南北价差（不依赖物理接入）
+    this.ftrs = this.ftrs.filter((f) => this.clock < f.endClock);
+    let ftrIncome = 0;
+    for (const f of this.ftrs) ftrIncome += (this.zoneSouthPrice - this.zoneNorthPrice) * f.mw * dtHours;
     const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -937,7 +963,7 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
-    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome - importCost - marketFee) * toDay);
+    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome + ftrIncome - importCost - marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, (capacityIncome + forwardCapCash) * toDay);
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);

@@ -33,6 +33,7 @@ export interface FinanceData {
   zoneNorth: number;
   zoneSouth: number;
   zoneArbMW: number;
+  ftrMW: number;
   spotPrice: number;
   reserveMargin: number;
   fuelPrice: Record<'coal' | 'gas' | 'uranium', number>;
@@ -52,6 +53,7 @@ export interface FinancePanelOptions {
   onOption: (kind: 'put' | 'call', volume: number, days: number) => void;
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onCapacityCommit: (mw: number, days: number) => void;
+  onFTR: (mw: number, days: number) => void;
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
   onToggleDR: () => void;
@@ -202,6 +204,13 @@ export class FinancePanel {
     mktBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(mktBtns, d.marketEnabled ? '断开联络线' : '接入市场', true, () => o.onToggleMarket());
     panel.appendChild(mktBtns);
+
+    // 输电权 FTR
+    panel.insertAdjacentHTML('beforeend', section(`输电权 FTR（持有 ${d.ftrMW.toFixed(0)}MW · 收南北价差 ¥${(d.zoneSouth - d.zoneNorth).toFixed(0)}）`));
+    const ftrBtns = document.createElement('div');
+    ftrBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(ftrBtns, '买 FTR 15MW×5天', d.money > 0, () => o.onFTR(15, 5));
+    panel.appendChild(ftrBtns);
 
     // 远期容量
     panel.insertAdjacentHTML('beforeend', section(`远期容量（已承诺 ${d.capCommitMW.toFixed(0)}MW · 锁定容量价对冲波动，须交付）`));

@@ -148,6 +148,8 @@ export const ZONE_NORTH_OFFSET = -15; // 北区(便宜)相对出清价的偏移
 export const ZONE_NORTH_AMP = 9;
 export const ZONE_SOUTH_OFFSET = 16; // 南区(贵)相对出清价的偏移
 export const ZONE_SOUTH_AMP = 11;
+// 输电权(FTR)：金融合约，付远期价差权利金，收实际南北价差(拥堵租金)
+export const FTR_MARKUP = 1.05; // 权利金相对当前价差的溢价
 
 // —— 经济周期（景气循环）——
 // 宏观繁荣/衰退周期性振荡，影响用电需求（进而影响电价/稀缺）。
