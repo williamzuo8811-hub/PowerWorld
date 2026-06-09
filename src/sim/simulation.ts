@@ -4,6 +4,8 @@ import type { SimSnapshot, LogEntry } from './types';
 import { Grid, type GridData } from './grid';
 import { solveDC } from './powerflow';
 import { EventSystem } from './events';
+import { TechState } from './tech';
+import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability } from './profiles';
 import { PLANTS, VOLTAGE } from '../config/components';
 import {
@@ -35,6 +37,7 @@ export interface SimSaveState {
   win: boolean;
   grid: GridData;
   events: { active: EventSystem['active']; nextAt: number };
+  tech: { unlocked: TechId[]; points: number };
 }
 
 export class Simulation {
@@ -49,6 +52,7 @@ export class Simulation {
   goalDay = WIN_DAY; // 关卡目标：撑到第几天（可被关卡覆盖）
   goalReliability = WIN_RELIABILITY; // 且可靠性达标
   events = new EventSystem();
+  tech = new TechState();
 
   constructor() {
     this.events.schedule(0);
@@ -71,6 +75,7 @@ export class Simulation {
     this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
     this.events = new EventSystem();
     this.events.schedule(0);
+    this.tech = new TechState();
   }
 
   /** 导出存档 */
@@ -82,6 +87,7 @@ export class Simulation {
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
+      tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
     };
   }
 
@@ -102,6 +108,9 @@ export class Simulation {
     this.events.active = d.events.active.map((e) => ({ ...e }));
     this.events.nextAt = d.events.nextAt;
     this.events.update(this);
+    this.tech = new TechState();
+    this.tech.points = d.tech?.points ?? 0;
+    for (const id of d.tech?.unlocked ?? []) this.tech.unlocked.add(id);
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -154,11 +163,11 @@ export class Simulation {
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
     this.events.update(this);
 
-    // —— 更新负荷需求（含城市发展增长 + 小幅噪声 + 事件需求系数）——
+    // —— 更新负荷需求（城市增长 + 噪声 + 事件需求系数 + 需求响应科技）——
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
-      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor;
+      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor;
     }
 
     // —— 更新新能源可用系数（叠加天气事件对风/光的压制）——
@@ -201,9 +210,19 @@ export class Simulation {
       }
     }
 
-    // —— 过载保护 / 连锁跳闸 ——
+    // —— 过载保护 / 连锁跳闸（含自动重合闸科技）——
     for (const ln of this.grid.lines.values()) {
-      if (ln.tripped) continue;
+      if (ln.tripped) {
+        // 电网自愈：跳闸线路冷却一段时间后自动重合闸
+        if (this.tech.autoReclose) {
+          ln.overloadTimer += dtSim;
+          if (ln.overloadTimer >= TECH_FX.autoRecloseDelay) {
+            ln.tripped = false;
+            ln.overloadTimer = 0;
+          }
+        }
+        continue;
+      }
       const over = Math.abs(ln.flow) - ln.capacity;
       if (over > 0.5) {
         ln.overloadTimer += dtSim;
@@ -220,13 +239,14 @@ export class Simulation {
     // —— 变电站变压器过载保护 ——
     for (const bus of this.grid.buses.values()) {
       if (bus.kind !== 'substation' || bus.rating == null || bus.transformerTripped) continue;
-      const over = (bus.throughput ?? 0) - bus.rating;
+      const effRating = bus.rating * this.tech.transformerRatingFactor; // 大容量变压器科技
+      const over = (bus.throughput ?? 0) - effRating;
       if (over > 0.5) {
         bus.transformerTimer = (bus.transformerTimer ?? 0) + dtSim;
         if (bus.transformerTimer >= TRIP_DELAY) {
           bus.transformerTripped = true;
           bus.transformerTimer = 0;
-          this.log('bad', `⚡ 变电站「${bus.name}」变压器过载跳闸！(${(bus.throughput ?? 0).toFixed(0)}>${bus.rating}MW) 下游配电中断`);
+          this.log('bad', `⚡ 变电站「${bus.name}」变压器过载跳闸！(${(bus.throughput ?? 0).toFixed(0)}>${effRating.toFixed(0)}MW) 下游配电中断`);
         }
       } else {
         bus.transformerTimer = Math.max(0, (bus.transformerTimer ?? 0) - dtSim * 1.5);
@@ -245,6 +265,9 @@ export class Simulation {
     this.totalLoss = aggLoss;
     this.co2Rate = co2Rate;
     this.lastLossFraction = aggDemand > 1 ? clamp(aggLoss / aggDemand, 0, MAX_LOSS_FRACTION) : 0.02;
+
+    // 研发点：随送达电量积累（电网越大、运行越好，研发越快）
+    this.tech.points += aggServed * dtHours * RP_PER_MWH;
 
     // 可靠性滑动平均（EMA）
     const instReliab = aggDemand > 0.5 ? aggServed / aggDemand : 1;
@@ -302,10 +325,12 @@ export class Simulation {
     const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId));
     for (const b of batteries) b.output = 0;
     const net = demand - genBase; // >0 缺口；<0 过剩
+    const batPowerFactor = this.tech.batteryPowerFactor; // 先进储能科技
     if (net > 0.01) {
       let need = net;
       for (const b of [...batteries].sort((x, y) => y.soc - x.soc)) {
-        const avail = Math.min(b.powerRating, b.soc / Math.max(dtHours, 1e-6));
+        const power = b.powerRating * batPowerFactor;
+        const avail = Math.min(power, b.soc / Math.max(dtHours, 1e-6));
         const give = clamp(need, 0, avail);
         b.output = give;
         b.soc = Math.max(0, b.soc - give * dtHours);
@@ -314,10 +339,12 @@ export class Simulation {
     } else if (net < -0.01) {
       let surplus = -net;
       for (const b of [...batteries].sort((x, y) => x.soc - y.soc)) {
-        const room = (b.energyCapacity - b.soc) / Math.max(dtHours * b.roundTrip, 1e-6);
-        const take = clamp(surplus, 0, Math.min(b.powerRating, room));
+        const power = b.powerRating * batPowerFactor;
+        const rt = Math.min(0.98, b.roundTrip + this.tech.batteryRoundTripBonus);
+        const room = (b.energyCapacity - b.soc) / Math.max(dtHours * rt, 1e-6);
+        const take = clamp(surplus, 0, Math.min(power, room));
         b.output = -take;
-        b.soc = Math.min(b.energyCapacity, b.soc + take * b.roundTrip * dtHours);
+        b.soc = Math.min(b.energyCapacity, b.soc + take * rt * dtHours);
         surplus -= take;
       }
     }
@@ -376,8 +403,9 @@ export class Simulation {
     for (const ln of islandLines) {
       const f = flows.get(ln.id) ?? 0;
       ln.flow = f;
-      // 线损按电压等级：HV 远小于 MV（这正是要升压输电的原因）
-      const loss = Math.min(Math.abs(f) * MAX_LOSS_FRACTION, ln.resistance * f * f * VOLTAGE[ln.voltage].lossScale);
+      // 线损按电压等级：HV 远小于 MV（这正是要升压输电的原因）；超高压科技进一步降低 HV 线损
+      const lossScale = VOLTAGE[ln.voltage].lossScale * (ln.voltage === 'HV' ? this.tech.hvLossFactor : 1);
+      const loss = Math.min(Math.abs(f) * MAX_LOSS_FRACTION, ln.resistance * f * f * lossScale);
       ln.loss = loss;
       lossSum += loss;
       // 累计变电站变压器通过量（只有 MV 配电线经过变压器降压）
@@ -387,11 +415,11 @@ export class Simulation {
       }
     }
 
-    // 经济量
+    // 经济量（高效机组科技降低燃料成本与碳排）
     let fuelCost = 0, co2 = 0;
     for (const g of gens) {
-      fuelCost += g.output * g.marginalCost * dtHours;
-      co2 += g.output * PLANTS[g.type].co2;
+      fuelCost += g.output * g.marginalCost * this.tech.fuelCostFactor * dtHours;
+      co2 += g.output * PLANTS[g.type].co2 * this.tech.co2Factor;
     }
 
     return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2 };
@@ -429,6 +457,7 @@ export class Simulation {
       demandFactor: this.events.demandFactor,
       goalDay: this.goalDay,
       goalReliability: this.goalReliability,
+      researchPoints: this.tech.points,
       gameOver: this.gameOver,
       win: this.win,
     };

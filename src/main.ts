@@ -3,9 +3,11 @@ import { Simulation } from './sim/simulation';
 import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
 import { Menu } from './ui/menu';
+import { ResearchPanel } from './ui/research';
 import { analyzeN1 } from './sim/contingency';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, hasSave } from './game/save';
+import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import { PLANTS, SUBSTATION_CAPEX, BATTERY, VOLTAGE } from './config/components';
 
@@ -18,8 +20,10 @@ const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
 const hud = new Hud();
 const menu = new Menu();
+const research = new ResearchPanel();
 
-let menuOpen = true; // 菜单打开时暂停仿真与建造
+let menuOpen = true; // 主菜单打开时暂停仿真与建造
+let panelOpen = false; // 研发面板打开时暂停仿真与建造
 let currentScenarioId = SCENARIOS[0].id;
 
 // ——————————————————— 关卡 / 存档流程 ———————————————————
@@ -42,6 +46,8 @@ function continueGame(): void {
 function enterGame(): void {
   setPending(null);
   invalidateN1();
+  research.hide();
+  panelOpen = false;
   hud.setSpeed(0);
   menu.hide();
   menuOpen = false;
@@ -90,6 +96,28 @@ function runN1(): void {
   flashHint(`N-1 发现 ${rep.contingencies.length} 个薄弱点 ⚠`);
 }
 
+/** 打开研发面板 */
+function openResearch(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  research.show({
+    techs: TECHS,
+    unlocked: sim.tech.unlocked,
+    points: sim.tech.points,
+    onUnlock: (id) => doUnlock(id),
+    onClose: () => { research.hide(); panelOpen = false; },
+  });
+}
+
+function doUnlock(id: TechId): void {
+  const t = TECHS.find((x) => x.id === id);
+  if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost) return;
+  sim.tech.points -= t.cost;
+  sim.tech.unlocked.add(id);
+  sim.log('good', `🔬 已研发：${t.name}`);
+  openResearch(); // 刷新面板
+}
+
 /** 电网结构变化后，清除过期的 N-1 标注 */
 function invalidateN1(): void {
   if (renderer.n1Lines.size || renderer.n1Subs.size) {
@@ -114,7 +142,7 @@ function snap(t: { x: number; y: number }): { x: number; y: number } {
 }
 
 function handleClick(clientX: number, clientY: number): void {
-  if (menuOpen || sim.gameOver) return;
+  if (menuOpen || panelOpen || sim.gameOver) return;
   const tile = renderer.screenToTile(clientX, clientY);
   const tool = hud.currentTool;
   const bus = renderer.nearestBus(tile.x, tile.y);
@@ -289,7 +317,7 @@ function bindInput(): void {
   }, { passive: false });
 
   window.addEventListener('keydown', (e) => {
-    if (menuOpen) return;
+    if (menuOpen || panelOpen) return;
     if (e.code === 'Space') { e.preventDefault(); hud.togglePause(); return; }
     if (e.code === 'Escape') { setPending(null); hud.setHint(null); return; }
     const n = parseInt(e.key, 10);
@@ -304,12 +332,13 @@ async function start(): Promise<void> {
   hud.onSave = doSave;
   hud.onMenu = openMenu;
   hud.onN1 = runN1;
+  hud.onResearch = openResearch;
   bindInput();
   openMenu(); // 开局先进主菜单选关
 
   renderer.app.ticker.add(() => {
     const dt = Math.min(0.05, renderer.app.ticker.deltaMS / 1000);
-    if (!menuOpen) {
+    if (!menuOpen && !panelOpen) {
       sim.tick(dt, hud.timeScale);
       hud.update(sim.snapshot(), sim.logs);
     }

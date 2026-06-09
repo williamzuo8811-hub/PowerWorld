@@ -29,6 +29,7 @@ export class Hud {
   onSave?: () => void; // 存档按钮回调
   onMenu?: () => void; // 菜单按钮回调
   onN1?: () => void; // N-1 校核按钮回调
+  onResearch?: () => void; // 研发面板按钮回调
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
   private statVals = new Map<string, HTMLElement>();
@@ -72,6 +73,7 @@ export class Hud {
     add('reliab', '可靠性');
     add('co2', '碳排');
     add('weather', '天气');
+    add('rp', '研发点');
     add('goal', '目标');
 
     const spacer = document.createElement('div');
@@ -93,12 +95,15 @@ export class Hud {
     // N-1 校核 / 存档 / 菜单
     const sys = document.createElement('div');
     sys.id = 'speed';
+    const researchBtn = document.createElement('button');
+    researchBtn.textContent = '🔬'; researchBtn.title = '研发 / 科技树'; researchBtn.onclick = () => this.onResearch?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
     const saveBtn = document.createElement('button');
     saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
     menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
+    sys.appendChild(researchBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
@@ -163,6 +168,7 @@ export class Hud {
       s.reliability < s.goalReliability ? 'freq-warn' : 'freq-ok');
     this.set('co2', `${s.co2.toFixed(1)} t/h`);
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
+    this.set('rp', `${s.researchPoints.toFixed(0)}`);
     this.set('goal', `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');

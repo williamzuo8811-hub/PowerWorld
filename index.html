@@ -95,11 +95,13 @@
         background: rgba(56, 211, 159, 0.12); border: 1px solid var(--accent); color: var(--accent);
         padding: 5px 14px; border-radius: 20px; font-size: 12px; display: none;
       }
-      /* 主菜单 / 关卡选择 */
-      #menu {
+      /* 主菜单 / 关卡选择 / 研发面板 */
+      #menu, #panel {
         position: fixed; inset: 0; z-index: 60; display: none;
         align-items: center; justify-content: center; background: rgba(5, 8, 12, 0.93);
       }
+      .menu-card:disabled { opacity: 0.45; cursor: default; }
+      .menu-card:disabled:hover { border-color: var(--panel-border); background: #141d28; }
       .menu-panel {
         width: min(760px, 92vw); max-height: 90vh; overflow: auto;
         background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; padding: 26px 28px;
@@ -140,6 +142,7 @@
     <div id="inspector"></div>
     <div id="hint"></div>
     <div id="menu"></div>
+    <div id="panel"></div>
     <div id="overlay">
       <h1 id="overlay-title"></h1>
       <p id="overlay-text"></p>

@@ -109,6 +109,7 @@ export interface SimSnapshot {
   demandFactor: number; // 事件造成的需求系数（>1 表示尖峰）
   goalDay: number; // 关卡目标：撑到第几天
   goalReliability: number; // 关卡目标：可靠性阈值
+  researchPoints: number; // 当前研发点
   gameOver: boolean;
   win: boolean;
 }
