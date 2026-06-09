@@ -1,6 +1,6 @@
 // 电网图容器：管理母线、机组、负荷、线路，并提供拓扑分析（连通分量 = 孤岛）。
-import type { Bus, Generator, Load, Line, BusKind, PlantType, LoadProfile } from './types';
-import { PLANTS, X_PER_TILE, R_PER_TILE, LINE_DEFAULT_CAPACITY, LINE_COST_PER_TILE } from '../config/components';
+import type { Bus, Generator, Load, Line, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
+import { PLANTS, VOLTAGE, SUBSTATION_RATING, X_PER_TILE, R_PER_TILE } from '../config/components';
 
 export class Grid {
   buses = new Map<number, Bus>();
@@ -34,7 +34,12 @@ export class Grid {
   }
 
   addSubstation(x: number, y: number, name = '变电站'): Bus {
-    return this.addBus('substation', x, y, name);
+    const bus = this.addBus('substation', x, y, name);
+    bus.rating = SUBSTATION_RATING;
+    bus.throughput = 0;
+    bus.transformerTripped = false;
+    bus.transformerTimer = 0;
+    return bus;
   }
 
   /** 建一个负荷点（城市区块），用于关卡初始化 */
@@ -48,15 +53,43 @@ export class Grid {
     return { bus, load };
   }
 
-  /** 连一条线路（自动按两端母线距离计算电抗/电阻/长度） */
-  addLine(fromBusId: number, toBusId: number, capacity = LINE_DEFAULT_CAPACITY): Line {
+  /** 两端母线决定电压等级：任一端是负荷 → 中压配电(MV)，否则 → 高压输电(HV) */
+  connectionVoltage(aId: number, bId: number): VoltageClass {
+    const a = this.buses.get(aId);
+    const b = this.buses.get(bId);
+    return a?.kind === 'load' || b?.kind === 'load' ? 'MV' : 'HV';
+  }
+
+  /**
+   * 校验一条连线是否合法（供交互 UI 使用）。强制电网拓扑：
+   *   电厂 →[HV]→ 变电站 →[MV]→ 负荷
+   * 即电厂/负荷都必须经变电站，不能直连——这让"变电站"成为电网的必经枢纽。
+   */
+  canConnect(aId: number, bId: number): { ok: boolean; voltage?: VoltageClass; reason?: string } {
+    if (aId === bId) return { ok: false, reason: '不能连到自己' };
+    const a = this.buses.get(aId);
+    const b = this.buses.get(bId);
+    if (!a || !b) return { ok: false, reason: '母线不存在' };
+    if (this.hasLineBetween(aId, bId)) return { ok: false, reason: '这两点之间已有线路' };
+    // 强制拓扑：电厂/负荷/储能不能直连，至少一端必须是变电站。
+    if (a.kind !== 'substation' && b.kind !== 'substation') {
+      return { ok: false, reason: '必须经变电站中转（先建一座变电站）' };
+    }
+    return { ok: true, voltage: this.connectionVoltage(aId, bId) };
+  }
+
+  /** 连一条线路（自动按两端类型定电压、按距离算电抗/电阻/容量/长度） */
+  addLine(fromBusId: number, toBusId: number, capacityOverride?: number): Line {
     const a = this.buses.get(fromBusId)!;
     const b = this.buses.get(toBusId)!;
+    const voltage = this.connectionVoltage(fromBusId, toBusId);
+    const spec = VOLTAGE[voltage];
     const length = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
     const line: Line = {
-      id: this.id(), from: fromBusId, to: toBusId,
+      id: this.id(), from: fromBusId, to: toBusId, voltage,
       reactance: X_PER_TILE * length, resistance: R_PER_TILE * length,
-      capacity, length, flow: 0, loss: 0, tripped: false, overloadTimer: 0,
+      capacity: capacityOverride ?? spec.defaultCapacity, length,
+      flow: 0, loss: 0, tripped: false, overloadTimer: 0,
     };
     this.lines.set(line.id, line);
     return line;
@@ -89,15 +122,34 @@ export class Grid {
     return false;
   }
 
+  /** 取一条线路的变电站端（MV 线用于判断变压器是否跳闸） */
+  substationOf(ln: Line): Bus | undefined {
+    const a = this.buses.get(ln.from);
+    if (a?.kind === 'substation') return a;
+    const b = this.buses.get(ln.to);
+    if (b?.kind === 'substation') return b;
+    return undefined;
+  }
+
+  /** 线路是否导通：未跳闸，且（若为 MV 配电线）其变电站变压器未跳闸 */
+  lineActive(ln: Line): boolean {
+    if (ln.tripped) return false;
+    if (ln.voltage === 'MV') {
+      const sub = this.substationOf(ln);
+      if (sub?.transformerTripped) return false;
+    }
+    return true;
+  }
+
   /**
-   * 计算连通分量（孤岛）：只沿未跳闸的线路连接。
+   * 计算连通分量（孤岛）：只沿导通的线路连接。
    * 返回若干个母线 id 数组，每个数组就是一个电气孤岛。
    */
   islands(): number[][] {
     const adj = new Map<number, number[]>();
     for (const id of this.buses.keys()) adj.set(id, []);
     for (const ln of this.lines.values()) {
-      if (ln.tripped) continue;
+      if (!this.lineActive(ln)) continue;
       adj.get(ln.from)?.push(ln.to);
       adj.get(ln.to)?.push(ln.from);
     }
@@ -123,11 +175,11 @@ export class Grid {
     return result;
   }
 
-  /** 计算建一条线路的造价（用于 UI 预览/扣款） */
+  /** 计算建一条线路的造价（按电压等级，用于 UI 预览/扣款） */
   lineCost(fromBusId: number, toBusId: number): number {
     const a = this.buses.get(fromBusId)!;
     const b = this.buses.get(toBusId)!;
     const length = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
-    return Math.round(length * LINE_COST_PER_TILE);
+    return Math.round(length * VOLTAGE[this.connectionVoltage(fromBusId, toBusId)].costPerTile);
   }
 }

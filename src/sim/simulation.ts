@@ -4,11 +4,11 @@ import type { SimSnapshot, LogEntry } from './types';
 import { Grid } from './grid';
 import { solveDC } from './powerflow';
 import { demandMultiplier, renewableAvailability } from './profiles';
-import { PLANTS } from '../config/components';
+import { PLANTS, VOLTAGE } from '../config/components';
 import {
   START_MONEY, TARIFF, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
-  LOSS_SCALE, MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
+  MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
 } from '../config/components';
 
 interface IslandResult {
@@ -91,12 +91,15 @@ export class Simulation {
       if (!g.dispatchable) g.availability = renewableAvailability(g.type, this.hourOfDay, this.windBase);
     }
 
-    // 每 tick 先清零线路潮流，再按孤岛逐个回填
+    // 每 tick 先清零线路潮流 / 变电站通过量，再按孤岛逐个回填
     for (const ln of this.grid.lines.values()) {
       ln.flow = 0;
       ln.loss = 0;
     }
-    for (const bus of this.grid.buses.values()) bus.blackout = false;
+    for (const bus of this.grid.buses.values()) {
+      bus.blackout = false;
+      if (bus.kind === 'substation') bus.throughput = 0;
+    }
 
     // —— 逐孤岛求解 ——
     const islands = this.grid.islands();
@@ -131,6 +134,22 @@ export class Simulation {
         }
       } else {
         ln.overloadTimer = Math.max(0, ln.overloadTimer - dtSim * 1.5);
+      }
+    }
+
+    // —— 变电站变压器过载保护 ——
+    for (const bus of this.grid.buses.values()) {
+      if (bus.kind !== 'substation' || bus.rating == null || bus.transformerTripped) continue;
+      const over = (bus.throughput ?? 0) - bus.rating;
+      if (over > 0.5) {
+        bus.transformerTimer = (bus.transformerTimer ?? 0) + dtSim;
+        if (bus.transformerTimer >= TRIP_DELAY) {
+          bus.transformerTripped = true;
+          bus.transformerTimer = 0;
+          this.log('bad', `⚡ 变电站「${bus.name}」变压器过载跳闸！(${(bus.throughput ?? 0).toFixed(0)}>${bus.rating}MW) 下游配电中断`);
+        }
+      } else {
+        bus.transformerTimer = Math.max(0, (bus.transformerTimer ?? 0) - dtSim * 1.5);
       }
     }
 
@@ -239,7 +258,7 @@ export class Simulation {
     for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served);
 
     const islandLines = [...this.grid.lines.values()].filter(
-      (ln) => !ln.tripped && set.has(ln.from) && set.has(ln.to),
+      (ln) => this.grid.lineActive(ln) && set.has(ln.from) && set.has(ln.to),
     );
     const { flows } = solveDC(busIds, islandLines, injection);
 
@@ -247,9 +266,15 @@ export class Simulation {
     for (const ln of islandLines) {
       const f = flows.get(ln.id) ?? 0;
       ln.flow = f;
-      const loss = Math.min(Math.abs(f) * MAX_LOSS_FRACTION, ln.resistance * f * f * LOSS_SCALE);
+      // 线损按电压等级：HV 远小于 MV（这正是要升压输电的原因）
+      const loss = Math.min(Math.abs(f) * MAX_LOSS_FRACTION, ln.resistance * f * f * VOLTAGE[ln.voltage].lossScale);
       ln.loss = loss;
       lossSum += loss;
+      // 累计变电站变压器通过量（只有 MV 配电线经过变压器降压）
+      if (ln.voltage === 'MV') {
+        const sub = this.grid.substationOf(ln);
+        if (sub) sub.throughput = (sub.throughput ?? 0) + Math.abs(f);
+      }
     }
 
     // 经济量

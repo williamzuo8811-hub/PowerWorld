@@ -3,7 +3,7 @@ import { Simulation } from './sim/simulation';
 import { Renderer } from './render/renderer';
 import { Hud, type ToolId } from './ui/hud';
 import type { Bus } from './sim/types';
-import { PLANTS, SUBSTATION_CAPEX } from './config/components';
+import { PLANTS, SUBSTATION_CAPEX, VOLTAGE } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
@@ -55,7 +55,15 @@ function handleClick(clientX: number, clientY: number): void {
 
   switch (tool) {
     case 'inspect': {
-      // 优先：点击跳闸线路 = 重合闸
+      // 优先：点击跳闸变电站 = 变压器重合闸
+      if (bus && bus.kind === 'substation' && bus.transformerTripped) {
+        bus.transformerTripped = false;
+        bus.transformerTimer = 0;
+        sim.log('good', `🔧 变电站「${bus.name}」变压器已恢复`);
+        flashHint('变压器已恢复');
+        return;
+      }
+      // 其次：点击跳闸线路 = 重合闸
       const ln = renderer.nearestLine(tile.x, tile.y);
       if (ln && ln.tripped) {
         ln.tripped = false;
@@ -77,13 +85,14 @@ function handleClick(clientX: number, clientY: number): void {
         }
       } else {
         if (bus && bus.id !== pendingFrom.id) {
-          if (sim.grid.hasLineBetween(pendingFrom.id, bus.id)) {
-            flashHint('这两点之间已有线路');
+          const chk = sim.grid.canConnect(pendingFrom.id, bus.id);
+          if (!chk.ok) {
+            flashHint(chk.reason ?? '无法连接');
           } else {
             const cost = sim.grid.lineCost(pendingFrom.id, bus.id);
             if (sim.spend(cost)) {
               sim.grid.addLine(pendingFrom.id, bus.id);
-              sim.log('info', `架设线路 ¥${cost.toLocaleString('en-US')}`);
+              sim.log('info', `架设${VOLTAGE[chk.voltage!].label}线路 ¥${cost.toLocaleString('en-US')}`);
             } else {
               flashHint('资金不足，无法架线');
             }
@@ -153,7 +162,9 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('已供', `${l.served.toFixed(1)} MW`));
       rows.push(row('状态', bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }
-  } else {
+  } else if (bus.kind === 'substation') {
+    rows.push(row('变压器', `${(bus.throughput ?? 0).toFixed(1)} / ${bus.rating ?? 0} MW`));
+    rows.push(row('状态', bus.transformerTripped ? '⚠ 跳闸(点此重合闸)' : '正常'));
     const n = [...sim.grid.lines.values()].filter((ln) => ln.from === bus.id || ln.to === bus.id).length;
     rows.push(row('接入线路', `${n} 条`));
   }

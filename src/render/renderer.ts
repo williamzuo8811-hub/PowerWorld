@@ -3,7 +3,7 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { Bus, Line } from '../sim/types';
 import { Grid } from '../sim/grid';
-import { PLANTS } from '../config/components';
+import { PLANTS, VOLTAGE } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
@@ -144,15 +144,18 @@ export class Renderer {
       if (!a || !b) continue;
       const ax = a.x * TILE, ay = a.y * TILE, bx = b.x * TILE, by = b.y * TILE;
       const load = ln.capacity > 0 ? Math.abs(ln.flow) / ln.capacity : 0;
-      const width = 2 + Math.min(6, ln.capacity / 20);
+      const isHV = ln.voltage === 'HV';
+      const width = (isHV ? 3.4 : 1.9) + Math.min(5, ln.capacity / 30);
 
-      if (ln.tripped) {
-        // 跳闸：暗红虚线
+      if (!this.grid.lineActive(ln)) {
+        // 跳闸 / 变压器断开：暗红虚线
         drawDashed(lg, ax, ay, bx, by, 0x6b2030, width * 0.7);
         continue;
       }
+      // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 });
       const color = loadColor(load);
-      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.9 });
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 });
 
       // 流动粒子（潮流方向：正=from→to）
       if (Math.abs(ln.flow) > 0.5) {
@@ -187,6 +190,8 @@ export class Renderer {
 
       // 停电红环
       if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
+      // 变电站变压器跳闸：橙色警示环
+      if (bus.kind === 'substation' && bus.transformerTripped) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2994a, alpha: 0.95 });
       // 悬停高亮 / 拉线起点高亮
       if (bus.id === this.hoverBusId || bus.id === this.pendingFromBus?.id) {
         g.circle(cx, cy, r + 3).stroke({ width: 2, color: 0x38d39f, alpha: 0.9 });
@@ -263,6 +268,10 @@ function busLabel(grid: Grid, bus: Bus): string {
   if (bus.kind === 'load') {
     const l = grid.loadsAtBus(bus.id)[0];
     return l ? `${bus.name} ${l.served.toFixed(0)}/${l.demand.toFixed(0)}MW` : bus.name;
+  }
+  if (bus.kind === 'substation') {
+    if (bus.transformerTripped) return `${bus.name} ⚠跳闸`;
+    return `${bus.name} ${(bus.throughput ?? 0).toFixed(0)}/${bus.rating ?? 0}`;
   }
   return bus.name;
 }

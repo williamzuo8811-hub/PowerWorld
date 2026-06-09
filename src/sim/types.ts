@@ -10,6 +10,9 @@ export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear';
 /** 负荷画像（决定一天内的用电曲线） */
 export type LoadProfile = 'residential' | 'commercial' | 'industrial';
 
+/** 电压等级：HV=高压输电（低损耗、大容量、贵）；MV=中压配电（高损耗、小容量、便宜） */
+export type VoltageClass = 'HV' | 'MV';
+
 /**
  * 母线 / 节点。电厂、变电站、负荷都挂在某个母线上。
  * 在直流潮流里，母线就是图的顶点。
@@ -22,6 +25,11 @@ export interface Bus {
   y: number;
   /** 本 tick 是否处于停电（所在孤岛无电源 / 被甩负荷） */
   blackout: boolean;
+  // —— 变电站专用字段（其余母线忽略）——
+  rating?: number; // 变压器额定容量 (MW)：HV→MV 降压通过能力
+  throughput?: number; // 本 tick 经变压器下送的功率 (MW)
+  transformerTripped?: boolean; // 变压器是否过载跳闸（切断 MV 侧）
+  transformerTimer?: number; // 持续过载累计时间（仿真秒）
 }
 
 /** 发电机组（挂在某条母线上） */
@@ -54,6 +62,7 @@ export interface Line {
   id: number;
   from: number; // 母线 id
   to: number; // 母线 id
+  voltage: VoltageClass; // 电压等级：由两端母线类型自动决定
   reactance: number; // 电抗 X（∝ 长度），决定潮流如何分配
   resistance: number; // 电阻 R（∝ 长度），决定线损
   capacity: number; // 热极限 (MW)

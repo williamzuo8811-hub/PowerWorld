@@ -1,5 +1,5 @@
 // 组件目录与全局经济/物理常量。所有可调平衡数值集中在这里，方便调参。
-import type { PlantType } from '../sim/types';
+import type { PlantType, VoltageClass } from '../sim/types';
 
 export interface PlantSpec {
   type: PlantType;
@@ -44,14 +44,27 @@ export const PLANTS: Record<PlantType, PlantSpec> = {
   },
 };
 
-export const SUBSTATION_CAPEX = 28_000; // 变电站造价
-export const LINE_COST_PER_TILE = 1_900; // 线路每瓦片造价
-export const LINE_DEFAULT_CAPACITY = 90; // 新建线路默认热极限 (MW)
+export const SUBSTATION_CAPEX = 32_000; // 变电站造价
+export const SUBSTATION_RATING = 90; // 变电站变压器默认容量 (MW)
+
+// —— 电压等级规格 ——
+// HV 高压输电：损耗低、容量大、造价高；MV 中压配电：损耗高、容量小、造价低。
+// 这就是"为什么要升压远距离输电、再降压配电"的玩法动机。
+export interface VoltageSpec {
+  label: string;
+  defaultCapacity: number; // 线路默认热极限 (MW)
+  lossScale: number; // 线损系数：loss ≈ R·flow²·lossScale
+  costPerTile: number; // 每瓦片造价
+  color: number; // 渲染基色
+}
+export const VOLTAGE: Record<VoltageClass, VoltageSpec> = {
+  HV: { label: '高压输电', defaultCapacity: 170, lossScale: 0.004, costPerTile: 2_600, color: 0x6fd3ff },
+  MV: { label: '中压配电', defaultCapacity: 70, lossScale: 0.02, costPerTile: 1_400, color: 0xb7c2cc },
+};
 
 // —— 电气常量 ——
 export const X_PER_TILE = 0.018; // 单位长度电抗
 export const R_PER_TILE = 0.004; // 单位长度电阻
-export const LOSS_SCALE = 0.012; // 线损系数：loss ≈ R * flow^2 * LOSS_SCALE
 export const MAX_LOSS_FRACTION = 0.12; // 线损上限（占潮流比例），防数值发散
 
 // —— 经济常量 ——

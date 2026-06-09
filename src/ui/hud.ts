@@ -2,7 +2,7 @@
 // 渲染与仿真无关，只读快照 + 暴露当前工具/速度给 main 使用。
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
-  PLANTS, SUBSTATION_CAPEX, LINE_COST_PER_TILE, TIME_SCALES,
+  PLANTS, SUBSTATION_CAPEX, SUBSTATION_RATING, VOLTAGE, TIME_SCALES,
   FREQ_NOMINAL, WIN_DAY, WIN_RELIABILITY,
 } from '../config/components';
 
@@ -13,9 +13,9 @@ export type ToolId =
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
 const TOOLS: ToolDef[] = [
-  { id: 'inspect', label: '🔍 检查 / 重合闸', sub: '查看设备·恢复跳闸线路' },
-  { id: 'line', label: '➖ 拉线路', sub: `¥${LINE_COST_PER_TILE}/格` },
-  { id: 'substation', label: '◆ 变电站', sub: `¥${fmt(SUBSTATION_CAPEX)}` },
+  { id: 'inspect', label: '🔍 检查 / 重合闸', sub: '查看·恢复跳闸线路/变压器' },
+  { id: 'line', label: '➖ 拉线路', sub: `HV¥${fmt(VOLTAGE.HV.costPerTile)} · MV¥${fmt(VOLTAGE.MV.costPerTile)} /格` },
+  { id: 'substation', label: '◆ 变电站', sub: `¥${fmt(SUBSTATION_CAPEX)}·容量${SUBSTATION_RATING}MW` },
   { id: 'coal', label: '■ 燃煤 60MW', sub: `¥${fmt(PLANTS.coal.capex)}·慢·脏` },
   { id: 'gas', label: '■ 燃气 40MW', sub: `¥${fmt(PLANTS.gas.capex)}·快·贵` },
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·看风` },
