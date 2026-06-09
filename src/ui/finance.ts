@@ -9,7 +9,7 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; market: number; capacity: number; congestion: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; market: number; capacity: number; congestion: number; dr: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
   insured: boolean;
@@ -20,6 +20,8 @@ export interface FinanceData {
   esgScore: number;
   marketEnabled: boolean;
   marketImport: number;
+  demandResponse: boolean;
+  drCurtailed: number;
   marketShare: number;
   clearingPrice: number;
   regionalDemand: number;
@@ -46,6 +48,7 @@ export interface FinancePanelOptions {
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
+  onToggleDR: () => void;
   onClose: () => void;
 }
 
@@ -99,6 +102,7 @@ export class FinancePanel {
       + row('绿证收入', `+${abs(f.rec)}/天`, f.rec > 1 ? 'freq-ok' : '')
       + row('容量补偿', `+${abs(f.capacity)}/天`, f.capacity > 1 ? 'freq-ok' : '')
       + row('输电阻塞', `−${abs(f.congestion)}/天`, f.congestion < -1 ? 'freq-warn' : '')
+      + row('需求响应', `−${abs(f.dr)}/天`, f.dr < -1 ? 'freq-warn' : '')
       + row('保险(净)', `${f.insurance >= 0 ? '+' : '−'}${abs(f.insurance)}/天`, f.insurance < 0 ? '' : 'freq-ok')
       + row('市场购电', `${f.market >= 0 ? '+' : '−'}${abs(f.market)}/天`, f.market < -1 ? 'freq-warn' : '')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
@@ -189,6 +193,13 @@ export class FinancePanel {
     mktBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(mktBtns, d.marketEnabled ? '断开联络线' : '接入市场', true, () => o.onToggleMarket());
     panel.appendChild(mktBtns);
+
+    // 需求响应
+    panel.insertAdjacentHTML('beforeend', section(`需求响应（${d.demandResponse ? '已启用' : '未启用'} · 高价时削峰 · 当前削减 ${d.drCurtailed.toFixed(0)}MW）`));
+    const drBtns = document.createElement('div');
+    drBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(drBtns, d.demandResponse ? '退出需求响应' : '启用需求响应', true, () => o.onToggleDR());
+    panel.appendChild(drBtns);
 
     panel.insertAdjacentHTML('beforeend', section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`));
 

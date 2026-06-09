@@ -31,7 +31,7 @@ import {
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
-  CONGESTION_THRESHOLD, CONGESTION_PRICE,
+  CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
   type CompetitorSpec,
@@ -107,6 +107,7 @@ export interface SimSaveState {
   options: PriceOption[];
   insured: boolean;
   marketEnabled: boolean;
+  demandResponse: boolean;
   history: HistorySample[];
   nextSampleAt: number;
 }
@@ -136,6 +137,8 @@ export class Simulation {
   forcedOutages = true; // 是否启用强迫停运（测试可关闭以求确定性）
   insured = false; // 是否投保设备保险
   marketEnabled = false; // 是否接入批发市场（联络线，需主动接入）
+  demandResponse = false; // 是否启用需求响应（可中断负荷）
+  drCurtailedMW = 0; // 本 tick 需求响应削减量 (MW，显示用)
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
   competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
   marketClearingPrice = TARIFF; // 区域出清价（批发）
@@ -153,7 +156,7 @@ export class Simulation {
   options: PriceOption[] = []; // 活跃电力期权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
 
@@ -197,6 +200,8 @@ export class Simulation {
     this.forcedOutages = true;
     this.insured = false;
     this.marketEnabled = false;
+    this.demandResponse = false;
+    this.drCurtailedMW = 0;
     this.marketImportMW = 0;
     this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
     this.marketClearingPrice = TARIFF;
@@ -207,7 +212,7 @@ export class Simulation {
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
   }
@@ -231,6 +236,7 @@ export class Simulation {
       options: this.options.map((o) => ({ ...o })),
       insured: this.insured,
       marketEnabled: this.marketEnabled,
+      demandResponse: this.demandResponse,
       history: this.history.map((h) => ({ ...h })),
       nextSampleAt: this.nextSampleAt,
     };
@@ -268,6 +274,7 @@ export class Simulation {
     this.options = (d.options ?? []).map((o) => ({ ...o }));
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
+    this.demandResponse = d.demandResponse ?? false;
     this.history = (d.history ?? []).map((h) => ({ ...h }));
     this.nextSampleAt = d.nextSampleAt ?? 0;
   }
@@ -645,10 +652,15 @@ export class Simulation {
 
     // —— 更新负荷需求（城市增长 × 竞争力 + 噪声 + 事件 + 需求响应 + 景气）——
     const compFactor = clamp(0.6 + this.marketShare * COMPETITIVENESS_K, 0.6, 1.5); // 越有竞争力获客越快
+    const drActive = this.demandResponse && this.spotPrice > DR_TRIGGER_PRICE; // 高价时段触发可中断负荷
+    const drFactor = drActive ? 1 - DR_FRACTION : 1;
+    this.drCurtailedMW = 0;
     for (const load of this.grid.loads.values()) {
       load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
-      load.demand = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor;
+      const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor;
+      load.demand = full * drFactor;
+      this.drCurtailedMW += full - load.demand;
     }
 
     // —— 更新新能源可用系数（叠加天气事件对风/光的压制）——
@@ -817,6 +829,9 @@ export class Simulation {
     this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
     const capacityIncome = firmCapacity * this.capacityPrice * omDayFrac;
 
+    // —— 需求响应激励：付费换取尖峰削减 ——
+    const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours;
+
     // —— 输电阻塞成本：线路超过阈值负载率即计费 ——
     let congestionCost = 0;
     for (const ln of this.grid.lines.values()) {
@@ -834,7 +849,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost + hedgeIncome + recIncome + capacityIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -852,6 +867,7 @@ export class Simulation {
     this.finance.market = ema(this.finance.market, -(importCost + marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
+    this.finance.dr = ema(this.finance.dr, -drCost * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
@@ -859,7 +875,7 @@ export class Simulation {
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty
-      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion;
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion + this.finance.dr;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;

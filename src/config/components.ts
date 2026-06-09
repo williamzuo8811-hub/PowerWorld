@@ -190,6 +190,12 @@ export const CCS_CAPEX_PER_MW = 4_500; // 改造成本 ¥/MW
 export const CONGESTION_THRESHOLD = 0.7; // 超过此负载率开始计阻塞
 export const CONGESTION_PRICE = 8; // 阻塞费 ¥/(MW·MWh 超额)
 
+// —— 需求响应（可中断负荷）——
+// 高价时段付激励让用户自愿削减用电，平抑尖峰、替代昂贵调峰/购电。
+export const DR_FRACTION = 0.12; // 可削减的需求比例
+export const DR_TRIGGER_PRICE = 110; // 现货价高于此触发需求响应
+export const DR_INCENTIVE = 90; // 削减激励 ¥/MWh（低于峰荷供电成本）
+
 // —— 现货电价（随稀缺与燃料动态定价）——
 // 备用率（可用容量/需求）越低、边际机组越贵 → 电价越高；峰时/缺供出现价格尖峰。
 // 这让"调峰机组"和"储能套利"有了真实收益来源。

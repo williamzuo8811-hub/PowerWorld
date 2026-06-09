@@ -207,6 +207,8 @@ function openFinance(): void {
       esgScore: sim.esgScore,
       marketEnabled: sim.marketEnabled,
       marketImport: sim.marketImportMW,
+      demandResponse: sim.demandResponse,
+      drCurtailed: sim.drCurtailedMW,
       marketShare: sim.marketShare,
       clearingPrice: sim.marketClearingPrice,
       regionalDemand: sim.regionalDemand,
@@ -221,6 +223,7 @@ function openFinance(): void {
     onFuelContract: (fuel, days) => { if (sim.signFuelContract(fuel, days)) sound.build(); else sound.error(); openFinance(); },
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
+    onToggleDR: () => { sim.demandResponse = !sim.demandResponse; sim.log('info', sim.demandResponse ? '📉 已启用需求响应' : '已退出需求响应'); sound.click(); openFinance(); },
     onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }
