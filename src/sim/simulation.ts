@@ -37,7 +37,7 @@ import {
   FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
-  COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC,
+  COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC, ACQUISITION_PRICE_PER_MW,
   type CompetitorSpec,
 } from '../config/components';
 
@@ -128,6 +128,7 @@ export interface SimSaveState {
   insured: boolean;
   marketEnabled: boolean;
   demandResponse: boolean;
+  mergedCapacity: { mw: number; marginalCost: number }[];
   history: HistorySample[];
   nextSampleAt: number;
 }
@@ -163,6 +164,7 @@ export class Simulation {
   marketExportMW = 0; // 本 tick 全网外送量 (MW，显示用)
   zoneArbMW = 0; // 本 tick 跨区套利交易量 (MW，显示用)
   competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
+  mergedCapacity: { mw: number; marginalCost: number }[] = []; // 已并购的商船队（在市场出清中作为自有）
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
   capacityPrice = CAPACITY_PRICE_BASE; // 当前容量拍卖价 ¥/(MW·天)
@@ -234,6 +236,7 @@ export class Simulation {
     this.marketExportMW = 0;
     this.zoneArbMW = 0;
     this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
+    this.mergedCapacity = [];
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
     this.capacityPrice = CAPACITY_PRICE_BASE;
@@ -271,6 +274,7 @@ export class Simulation {
       insured: this.insured,
       marketEnabled: this.marketEnabled,
       demandResponse: this.demandResponse,
+      mergedCapacity: this.mergedCapacity.map((m) => ({ ...m })),
       history: this.history.map((h) => ({ ...h })),
       nextSampleAt: this.nextSampleAt,
     };
@@ -311,6 +315,7 @@ export class Simulation {
     this.insured = d.insured ?? false;
     this.marketEnabled = d.marketEnabled ?? false;
     this.demandResponse = d.demandResponse ?? false;
+    this.mergedCapacity = (d.mergedCapacity ?? []).map((m) => ({ ...m }));
     this.history = (d.history ?? []).map((h) => ({ ...h }));
     this.nextSampleAt = d.nextSampleAt ?? 0;
   }
@@ -380,6 +385,7 @@ export class Simulation {
     const demand = this.regionalDemand;
     const blocks: { mw: number; cost: number; player: boolean }[] = [];
     for (const c of this.competitors) blocks.push({ mw: c.capacity, cost: c.marginalCost, player: false });
+    for (const m of this.mergedCapacity) blocks.push({ mw: m.mw, cost: m.marginalCost, player: true }); // 商船队=自有
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
       if (g.dispatchable) blocks.push({ mw: g.capacity, cost: this.effMarginalCost(g), player: true });
@@ -395,6 +401,19 @@ export class Simulation {
       if (b.player) playerDispatched += take;
     }
     return { clearingCost, playerDispatched, shortfall: Math.max(0, demand - cum) };
+  }
+
+  /** 并购一家竞争对手：付估值，移除其、吸收为商船队（市场出清中作自有，捕获其市场利润） */
+  acquireCompetitor(index: number): boolean {
+    const c = this.competitors[index];
+    if (!c) return false;
+    const cost = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
+    if (this.money < cost) return false;
+    this.money -= cost;
+    this.mergedCapacity.push({ mw: c.capacity, marginalCost: c.marginalCost });
+    this.competitors.splice(index, 1);
+    this.log('good', `🤝 并购「${c.name}」${c.capacity.toFixed(0)}MW（¥${cost.toLocaleString('en-US')}）：吸收为自有商船队`);
+    return true;
   }
 
   /** 竞争对手演化：出清价高于其成本一定幅度则扩张，亏损则退役 */
@@ -897,6 +916,7 @@ export class Simulation {
     // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
     let regionFirm = firmCapacity;
     for (const c of this.competitors) regionFirm += c.capacity;
+    for (const m of this.mergedCapacity) regionFirm += m.mw;
     const capTarget = REGIONAL_BASE_DEMAND * (1 + RESERVE_REQUIREMENT) * this.cycleFactor;
     this.capacityAdequacy = regionFirm / Math.max(capTarget, 1);
     this.capacityPrice = CAPACITY_PRICE_BASE * clamp(1 + (CAP_ADEQ_REF - this.capacityAdequacy) * CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC);
@@ -958,11 +978,16 @@ export class Simulation {
     this.ftrs = this.ftrs.filter((f) => this.clock < f.endClock);
     let ftrIncome = 0;
     for (const f of this.ftrs) ftrIncome += (this.zoneSouthPrice - this.zoneNorthPrice) * f.mw * dtHours;
+    // 并购商船队在批发市场获取价差利润（成本低于出清价的部分）
+    let merchantCash = 0;
+    for (const m of this.mergedCapacity) {
+      if (m.marginalCost < this.marketClearingPrice) merchantCash += m.mw * (this.marketClearingPrice - m.marginalCost) * dtHours;
+    }
     const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome + merchantCash;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -977,7 +1002,7 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
-    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome + ftrIncome - importCost - marketFee) * toDay);
+    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome + ftrIncome + merchantCash - importCost - marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, (capacityIncome + forwardCapCash) * toDay);
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);

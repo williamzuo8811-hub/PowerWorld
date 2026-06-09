@@ -231,6 +231,7 @@ function openFinance(): void {
     onFuelContract: (fuel, days) => { if (sim.signFuelContract(fuel, days)) sound.build(); else sound.error(); openFinance(); },
     onCapacityCommit: (mw, days) => { if (sim.addCapacityCommitment(mw, days)) sound.build(); else sound.error(); openFinance(); },
     onFTR: (mw, days) => { if (sim.addFTR(mw, days)) sound.build(); else sound.error(); openFinance(); },
+    onAcquire: (index) => { if (sim.acquireCompetitor(index)) sound.build(); else sound.error(); openFinance(); },
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
     onToggleDR: () => { sim.demandResponse = !sim.demandResponse; sim.log('info', sim.demandResponse ? '📉 已启用需求响应' : '已退出需求响应'); sound.click(); openFinance(); },

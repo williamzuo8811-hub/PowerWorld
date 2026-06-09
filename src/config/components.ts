@@ -179,6 +179,7 @@ export const COMPETITOR_RETIRE_RATE = 0.03; // 亏损时每日退役比例
 export const COMPETITOR_EXPAND_MARGIN = 15; // 出清价高于成本多少才扩张
 export const COMPETITOR_CAP_MIN_FRAC = 0.3; // 容量下限（占初始）
 export const COMPETITOR_CAP_MAX_FRAC = 2.5; // 容量上限（占初始）
+export const ACQUISITION_PRICE_PER_MW = 4_000; // 并购竞争对手的每 MW 估值
 
 // —— 容量市场（容量拍卖）——
 // 除卖电外，按"可用确定性容量"获容量补偿。容量价由拍卖出清：区域容量目标 vs 总可用容量，

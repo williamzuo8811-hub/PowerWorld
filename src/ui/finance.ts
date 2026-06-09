@@ -1,5 +1,5 @@
 // 财务报表面板：资产负债 + 每日损益 + 市场行情 + 贷款操作（复用 #panel）。
-import { INTERCONNECTOR_CAPACITY, MARKET_FEE_PER_DAY } from '../config/components';
+import { INTERCONNECTOR_CAPACITY, MARKET_FEE_PER_DAY, ACQUISITION_PRICE_PER_MW } from '../config/components';
 
 export interface FinanceData {
   money: number;
@@ -56,6 +56,7 @@ export interface FinancePanelOptions {
   onFuelContract: (fuel: 'coal' | 'gas' | 'uranium', days: number) => void;
   onCapacityCommit: (mw: number, days: number) => void;
   onFTR: (mw: number, days: number) => void;
+  onAcquire: (index: number) => void;
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
   onToggleDR: () => void;
@@ -134,8 +135,7 @@ export class FinancePanel {
         d.capacityAdequacy < 1 ? 'freq-warn' : '')
       + row('北区/南区价 · 跨区套利', `¥${d.zoneNorth.toFixed(0)} / ¥${d.zoneSouth.toFixed(0)} · ${d.zoneArbMW.toFixed(0)}MW`,
         d.zoneArbMW > 0 ? 'freq-ok' : '')
-      + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`)
-      + d.competitors.map((c) => row(`· ${c.name}`, `${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh`)).join('');
+      + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`);
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');
@@ -146,6 +146,29 @@ export class FinancePanel {
       else b.onclick = fn;
       parent.appendChild(b);
     };
+
+    // 竞争对手并购（吸收为自有商船队，捕获其市场价差利润）
+    const compBlock = document.createElement('div');
+    compBlock.style.cssText = 'margin:2px 0 6px';
+    if (d.competitors.length === 0) {
+      compBlock.innerHTML = `<span style="color:var(--text-dim);font-size:12px">区域内已无独立竞争对手</span>`;
+    }
+    d.competitors.forEach((c, i) => {
+      const cost = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
+      const rowEl = document.createElement('div');
+      rowEl.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 0;gap:8px';
+      rowEl.innerHTML = `<span style="color:var(--text-dim);font-size:12px">· ${c.name} · ${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh</span>`;
+      const can = d.money >= cost;
+      const b = document.createElement('button');
+      b.textContent = `并购 ¥${fmt(cost)}`;
+      b.disabled = !can;
+      b.style.cssText = 'background:#182431;color:var(--text);border:1px solid var(--panel-border);border-radius:6px;padding:4px 9px;cursor:pointer;font-family:inherit;font-size:11px;white-space:nowrap';
+      if (!can) b.style.opacity = '0.45';
+      else b.onclick = () => o.onAcquire(i);
+      rowEl.appendChild(b);
+      compBlock.appendChild(rowEl);
+    });
+    panel.appendChild(compBlock);
 
     // 燃料长约
     panel.insertAdjacentHTML('beforeend', section('燃料长约（锁定燃料价格指数，对冲涨价）'));
