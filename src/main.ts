@@ -207,6 +207,7 @@ function openFinance(): void {
       esgScore: sim.esgScore,
       marketEnabled: sim.marketEnabled,
       marketImport: sim.marketImportMW,
+      marketExport: sim.marketExportMW,
       demandResponse: sim.demandResponse,
       drCurtailed: sim.drCurtailedMW,
       marketShare: sim.marketShare,

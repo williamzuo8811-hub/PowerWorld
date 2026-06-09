@@ -26,7 +26,7 @@ import {
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
-  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY,
+  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
@@ -58,6 +58,7 @@ interface IslandResult {
   fuelCost: number;
   co2: number; // 吨/h
   marketImport: number; // 本岛向市场购电 (MW)
+  curtailed: number; // 本岛弃风弃光 (MW，可外送)
 }
 
 /** 一笔远期套保合约（差价合约） */
@@ -140,6 +141,7 @@ export class Simulation {
   demandResponse = false; // 是否启用需求响应（可中断负荷）
   drCurtailedMW = 0; // 本 tick 需求响应削减量 (MW，显示用)
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
+  marketExportMW = 0; // 本 tick 全网外送量 (MW，显示用)
   competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
@@ -203,6 +205,7 @@ export class Simulation {
     this.demandResponse = false;
     this.drCurtailedMW = 0;
     this.marketImportMW = 0;
+    this.marketExportMW = 0;
     this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
@@ -687,7 +690,7 @@ export class Simulation {
     // —— 逐孤岛求解 ——
     const islands = this.grid.islands();
     let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0;
-    let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0;
+    let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
 
@@ -695,6 +698,7 @@ export class Simulation {
       const r = this.solveIsland(busIds, dtSim);
       aggGen += r.gen; aggDemand += r.demand; aggServed += r.served; aggLoss += r.loss;
       aggMarketImport += r.marketImport;
+      aggCurtailed += r.curtailed;
       fuelCost += r.fuelCost; co2Rate += r.co2;
       penalty += Math.max(0, r.demand - r.served) * UNSERVED_PENALTY * dtHours;
       // 把"需求最大的岛"视为主电网，用其频率做仪表显示
@@ -845,11 +849,14 @@ export class Simulation {
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
     this.marketImportMW = aggMarketImport;
     const importCost = aggMarketImport * this.avgSpot * IMPORT_MARKUP * dtHours;
+    // 外送：被弃的过剩（清洁）电量按出清价卖入批发市场（受联络线容量与过网折扣限制）
+    this.marketExportMW = this.marketEnabled ? Math.min(aggCurtailed, INTERCONNECTOR_CAPACITY) : 0;
+    const exportIncome = this.marketExportMW * this.marketClearingPrice * EXPORT_WHEEL * dtHours;
     const marketFee = this.marketEnabled ? MARKET_FEE_PER_DAY * omDayFrac : 0;
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -864,7 +871,7 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
-    this.finance.market = ema(this.finance.market, -(importCost + marketFee) * toDay);
+    this.finance.market = ema(this.finance.market, (exportIncome - importCost - marketFee) * toDay);
     this.finance.capacity = ema(this.finance.capacity, capacityIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
     this.finance.dr = ema(this.finance.dr, -drCost * toDay);
@@ -981,9 +988,10 @@ export class Simulation {
     const dischargeSum = batteries.reduce((s, b) => s + Math.max(0, b.output), 0);
     const chargeSum = batteries.reduce((s, b) => s + Math.max(0, -b.output), 0);
 
-    // 仍有过剩（充电也吸收不完）则弃风弃光，保持系统平衡
+    // 仍有过剩（充电也吸收不完）则弃风弃光，保持系统平衡（被弃的可外送市场）
     let supply = genBase + dischargeSum;
     const consumption = demand + chargeSum;
+    let curtailed = 0;
     if (supply > consumption + 0.01) {
       const excess = supply - consumption;
       const renew = gens.filter((g) => !g.dispatchable && g.output > 0);
@@ -991,6 +999,7 @@ export class Simulation {
       if (renewTotal > 0) {
         const scale = Math.max(0, (renewTotal - excess) / renewTotal);
         for (const g of renew) g.output *= scale;
+        curtailed = renewTotal - renew.reduce((s, g) => s + g.output, 0);
       }
       genBase = gens.reduce((s, g) => s + g.output, 0);
       supply = genBase + dischargeSum;
@@ -1060,7 +1069,7 @@ export class Simulation {
       co2 += g.output * this.effCo2(g);
     }
 
-    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport };
+    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport, curtailed };
   }
 
   /** 更新公众形象与清洁电力占比 */

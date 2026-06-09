@@ -20,6 +20,7 @@ export interface FinanceData {
   esgScore: number;
   marketEnabled: boolean;
   marketImport: number;
+  marketExport: number;
   demandResponse: boolean;
   drCurtailed: number;
   marketShare: number;
@@ -104,7 +105,7 @@ export class FinancePanel {
       + row('输电阻塞', `−${abs(f.congestion)}/天`, f.congestion < -1 ? 'freq-warn' : '')
       + row('需求响应', `−${abs(f.dr)}/天`, f.dr < -1 ? 'freq-warn' : '')
       + row('保险(净)', `${f.insurance >= 0 ? '+' : '−'}${abs(f.insurance)}/天`, f.insurance < 0 ? '' : 'freq-ok')
-      + row('市场购电', `${f.market >= 0 ? '+' : '−'}${abs(f.market)}/天`, f.market < -1 ? 'freq-warn' : '')
+      + row('市场购/售电', `${f.market >= 0 ? '+' : '−'}${abs(f.market)}/天`, f.market < -1 ? 'freq-warn' : f.market > 1 ? 'freq-ok' : '')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')
       + section('市场行情')
       + row('现货电价', `¥${d.spotPrice.toFixed(0)}/MWh`, d.spotPrice > 120 ? 'freq-bad' : '')
@@ -188,7 +189,7 @@ export class FinancePanel {
     panel.appendChild(insBtns);
 
     // 批发市场互联
-    panel.insertAdjacentHTML('beforeend', section(`批发市场（${d.marketEnabled ? '已接入' : '未接入'} · 联络线 ${INTERCONNECTOR_CAPACITY}MW · 当前购电 ${d.marketImport.toFixed(0)}MW · 日费 ¥${fmt(MARKET_FEE_PER_DAY)}）`));
+    panel.insertAdjacentHTML('beforeend', section(`批发市场（${d.marketEnabled ? '已接入' : '未接入'} · 联络线 ${INTERCONNECTOR_CAPACITY}MW · 购电 ${d.marketImport.toFixed(0)} / 外送 ${d.marketExport.toFixed(0)}MW · 日费 ¥${fmt(MARKET_FEE_PER_DAY)}）`));
     const mktBtns = document.createElement('div');
     mktBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(mktBtns, d.marketEnabled ? '断开联络线' : '接入市场', true, () => o.onToggleMarket());
