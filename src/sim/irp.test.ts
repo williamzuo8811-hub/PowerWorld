@@ -87,6 +87,32 @@ describe('长期规划压力测试（IRP）', () => {
     expect(adv.option!.units * adv.option!.firmPerUnit).toBeGreaterThanOrEqual(adv.gapMW);
   });
 
+  it('多年轨迹：正增长下备用率逐年下降并最终出现缺口', () => {
+    const sim = new Simulation();
+    sim.grid.addLoad(0, 0, 'residential', 100, '城区', 0.003); // 正增长
+    for (let k = 0; k < 4; k++) sim.grid.addPlant('coal', k, 1); // 当前充裕
+    const traj = sim.planningTrajectory(8);
+    expect(traj.length).toBe(9); // year 0..8
+    expect(traj[0].year).toBe(0);
+    // 备用率单调不增
+    for (let i = 1; i < traj.length; i++) {
+      expect(traj[i].reserveMargin).toBeLessThanOrEqual(traj[i - 1].reserveMargin + 1e-9);
+    }
+    // 第 0 年充裕、末年出现缺口
+    expect(traj[0].verdict).not.toBe('shortfall');
+    expect(traj[traj.length - 1].verdict).toBe('shortfall');
+  });
+
+  it('多年轨迹：零增长下备用率保持不变', () => {
+    const sim = new Simulation();
+    sim.grid.addLoad(0, 0, 'residential', 100, '城区', 0); // 零增长
+    for (let k = 0; k < 4; k++) sim.grid.addPlant('coal', k, 1);
+    const traj = sim.planningTrajectory(5);
+    for (let i = 1; i < traj.length; i++) {
+      expect(traj[i].reserveMargin).toBeCloseTo(traj[0].reserveMargin, 6);
+    }
+  });
+
   it('正增长负荷给出有限赤字日，零增长则不发生', () => {
     const grow = new Simulation();
     grow.grid.addLoad(0, 0, 'residential', 100, '城区', 0.002); // 正增长

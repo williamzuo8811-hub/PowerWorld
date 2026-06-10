@@ -1,9 +1,10 @@
 // 长期规划压力测试面板（IRP）：在现有机队上跑 what-if 情景，显示充裕度与经济韧性。
-import type { StressResult, ExpansionAdvice } from '../sim/simulation';
+import type { StressResult, ExpansionAdvice, YearPlan } from '../sim/simulation';
 
 export interface IRPPanelOptions {
   results: StressResult[];
   advice: ExpansionAdvice;
+  trajectory: YearPlan[];
   onClose: () => void;
 }
 
@@ -71,10 +72,33 @@ export class IRPPanel {
         + `</div>`;
     }
 
+    // —— 多年滚动规划轨迹（不新建基线）——
+    const firstDeficit = o.trajectory.find((p) => p.verdict === 'shortfall');
+    let trajHtml = '<div style="display:flex;flex-direction:column;gap:3px;font-size:12px">';
+    for (const p of o.trajectory) {
+      const mPct = (p.reserveMargin * 100).toFixed(0);
+      const cls = p.verdict === 'shortfall' ? 'freq-bad' : p.verdict === 'tight' ? 'freq-warn' : 'freq-ok';
+      const barW = Math.max(2, Math.min(100, (p.reserveMargin + 0.5) * 100)); // -50%..+50% → 0..100
+      const barColor = p.verdict === 'shortfall' ? '#ef4444' : p.verdict === 'tight' ? '#f59e0b' : '#22c55e';
+      trajHtml += `<div style="display:flex;align-items:center;gap:6px">`
+        + `<span style="color:var(--text-dim);width:46px">第${p.year}年</span>`
+        + `<span style="width:62px">峰 ${fmt(p.peakDemand)}MW</span>`
+        + `<div style="flex:1;height:8px;background:#182431;border-radius:4px;overflow:hidden"><div style="width:${barW}%;height:100%;background:${barColor}"></div></div>`
+        + `<b class="${cls}" style="width:46px;text-align:right">${mPct}%</b>`
+        + `</div>`;
+    }
+    trajHtml += '</div>';
+    const deficitYearTxt = firstDeficit
+      ? `<b class="freq-bad">第 ${firstDeficit.year} 年首现容量缺口</b>（不新建·基准增长下）`
+      : `<b class="freq-ok">规划期内（不新建）暂无缺口</b>`;
+
     panel.innerHTML = `<h1>🧭 长期规划压力测试</h1>`
       + `<p class="sub">在当前机队上模拟 what-if 情景 · 评估夏季晚峰的容量充裕度与经济韧性</p>`
       + rows
       + `<div style="margin-top:12px;font-size:12px;line-height:1.6">${summary}</div>`
+      + `<div style="color:var(--accent);font-size:11px;letter-spacing:1px;margin:14px 0 4px">📅 多年滚动规划（不新建 · 备用率）</div>`
+      + trajHtml
+      + `<div style="margin-top:6px;font-size:12px">${deficitYearTxt}</div>`
       + `<div style="color:var(--accent);font-size:11px;letter-spacing:1px;margin:14px 0 2px">📐 扩容投资建议</div>`
       + adviceHtml
       + `<p class="sub" style="margin-top:6px">「可信容量」= 可调机组 + 储能容量信用 + 新能源极低的尖峰信用。光伏在晚峰几乎不可信，故高比例新能源系统在「新能源枯竭」情景下尤其脆弱。补强方案按"每可信 MW 造价"择优，并扣除工期前置赤字日得出开工时点。</p>`;

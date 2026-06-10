@@ -58,6 +58,15 @@ export interface HistorySample {
   demand: number;
 }
 
+/** 多年规划轨迹的逐年采样（IRP） */
+export interface YearPlan {
+  year: number; // 距今第几年（0=当前）
+  peakDemand: number; // 该年夏季晚峰需求 (MW)
+  firmSupply: number; // 当前可信容量（"不新建"基线，保持不变）
+  reserveMargin: number;
+  verdict: 'adequate' | 'tight' | 'shortfall';
+}
+
 /** 扩容投资建议（IRP） */
 export interface ExpansionAdvice {
   gapMW: number; // 约束情景下需补充的可信容量 (MW)，≤0 表示充裕
@@ -1479,6 +1488,29 @@ export class Simulation {
       };
     }
     return { gapMW: gap, bindingScenario: binding.name, deficitDay, curDay: this.day, option };
+  }
+
+  /**
+   * 多年滚动规划轨迹（IRP）：在"不新建"基线下，按基准需求增长逐年推算夏季晚峰
+   * 与备用率，直观展示充裕度如何被增长侵蚀、缺口首次出现在第几年。纯分析。
+   */
+  planningTrajectory(years = 6, scenarioId = 'base'): YearPlan[] {
+    const results = this.stressTest();
+    const sc = results.find((r) => r.id === scenarioId) ?? results[0];
+    const firm = sc.firmSupply;
+    const peak0 = sc.peakDemand;
+    let wsum = 0, gsum = 0;
+    for (const load of this.grid.loads.values()) { wsum += load.baseDemand; gsum += load.baseDemand * load.growthPerHour; }
+    const ghHour = wsum > 0 ? gsum / wsum : 0;
+    const yearFactor = Math.pow(1 + ghHour, 24 * SEASON_YEAR_DAYS); // 一年的复合增长
+    const plans: YearPlan[] = [];
+    for (let y = 0; y <= years; y++) {
+      const peak = peak0 * Math.pow(yearFactor, y);
+      const margin = peak > 0 ? firm / peak - 1 : (firm > 0 ? 1 : 0);
+      const verdict: YearPlan['verdict'] = margin < 0 ? 'shortfall' : margin < IRP_TIGHT_MARGIN ? 'tight' : 'adequate';
+      plans.push({ year: y, peakDemand: peak, firmSupply: firm, reserveMargin: margin, verdict });
+    }
+    return plans;
   }
 
   snapshot(): SimSnapshot {

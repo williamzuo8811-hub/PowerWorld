@@ -165,7 +165,7 @@ function openHistory(): void {
 function openIRP(): void {
   panelOpen = true;
   hud.setSpeed(0);
-  irpPanel.show({ results: sim.stressTest(), advice: sim.recommendExpansion(), onClose: () => { irpPanel.hide(); panelOpen = false; } });
+  irpPanel.show({ results: sim.stressTest(), advice: sim.recommendExpansion(), trajectory: sim.planningTrajectory(), onClose: () => { irpPanel.hide(); panelOpen = false; } });
 }
 
 /** 打开成就面板 */
