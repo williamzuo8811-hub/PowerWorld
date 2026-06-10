@@ -28,6 +28,7 @@ export interface PortfolioPanelOptions {
   marketContestation: number;
   lead: { icon: string; label: string; daysLeft: number; poach: boolean } | null;
   cleanHistory: number[]; // 清洁占比历史（%）
+  marketFeed: { time: number; level: string; msg: string }[]; // 近期市场动态（招商/挖角/流失），最新在前
   activeFilter: string | null;
   onFilter: (key: string | null) => void; // 点击品类→设置地图高亮筛选（再次点击同项=清除）
   onClose: () => void;
@@ -85,6 +86,16 @@ export class PortfolioPanel {
     }
 
     panel.insertAdjacentHTML('beforeend', cleanTrend(o.cleanHistory));
+
+    if (o.marketFeed.length) {
+      const lvlColor: Record<string, string> = { good: '#4ade80', warn: '#f2c94c', bad: '#ef5d60', info: 'var(--text-dim)' };
+      let feed = `<div style="color:var(--accent);font-size:11px;letter-spacing:1px;margin:12px 0 4px">📡 市场动态</div>`;
+      for (const e of o.marketFeed) {
+        const day = Math.floor(e.time / 24) + 1;
+        feed += `<div style="font-size:11px;padding:2px 0;color:${lvlColor[e.level] ?? 'var(--text-dim)'}">第${day}天 · ${e.msg}</div>`;
+      }
+      panel.insertAdjacentHTML('beforeend', feed);
+    }
 
     const hint = document.createElement('p');
     hint.className = 'sub';
