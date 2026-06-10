@@ -390,6 +390,12 @@ export interface KeyAccountSpec {
   desc: string;
 }
 export const SAT_TIME_CONSTANT = 6; // 客户满意度 EMA 时间常数（小时）
+// —— 大客户竞价招商：信誉/可靠性/满意度越好，越能以更低代价赢得大客户 ——
+export const ACQ_STANDING_MIN = 0.35; // 招商竞争力下限：低于此大客户拒绝入驻
+export const ACQ_FACTOR_BASE = 2.0; // 招商成本系数 = clamp(BASE − 竞争力×SPAN, MIN, MAX)
+export const ACQ_FACTOR_SPAN = 1.4;
+export const ACQ_FACTOR_MIN = 0.8; // 高竞争力最多打到 0.8 折
+export const ACQ_FACTOR_MAX = 1.8; // 低竞争力最高 1.8 倍溢价
 // —— 大客户流失与自备应急 ——
 export const CHURN_THRESHOLD = 0.55; // 满意度持续低于此累积流失风险
 export const CHURN_DAYS = 3; // 持续低满意达此天数 → 大客户流失（撤离）

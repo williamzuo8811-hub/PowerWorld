@@ -21,6 +21,7 @@ import type { Generator, Line, Load, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
   CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, BACKUP_FRACTION, BACKUP_CAPEX,
+  ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX,
   UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
@@ -1616,6 +1617,20 @@ export class Simulation {
       if (lb && Math.hypot(lb.x - x, lb.y - y) < POLLUTION_RADIUS) return true;
     }
     return false;
+  }
+
+  /** 公司招商竞争力 0..1：口碑 + 可靠性 + 大客户满意度的综合（决定赢得大客户的能力/代价） */
+  get companyStanding(): number {
+    return clamp(0.4 * (this.reputation / 100) + 0.35 * clamp(this.reliability, 0, 1) + 0.25 * clamp(this.customerSatisfaction, 0, 1), 0, 1);
+  }
+
+  /** 招商赢得某大客户所需的接入代价；竞争力越高越便宜；过低则被拒(返回 -1) */
+  keyAccountAcquireCost(profile: LoadProfile): number {
+    const spec = KEY_ACCOUNTS[profile];
+    if (!spec) return -1;
+    if (this.companyStanding < ACQ_STANDING_MIN) return -1; // 大客户拒绝入驻
+    const factor = clamp(ACQ_FACTOR_BASE - this.companyStanding * ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX);
+    return Math.round(spec.connectionCapex * factor);
   }
 
   /** 电网是否具备黑启动能力（有可用燃气机组或有电量的储能作种子） */

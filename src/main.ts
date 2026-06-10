@@ -179,6 +179,7 @@ function openPortfolio(): void {
   portfolioPanel.show({
     categories: sim.portfolio(),
     customerSatisfaction: sim.customerSatisfaction,
+    companyStanding: sim.companyStanding,
     activeFilter: renderer.categoryFilter,
     onFilter: (key) => {
       renderer.categoryFilter = key;
@@ -423,14 +424,17 @@ function handleClick(clientX: number, clientY: number): void {
     case 'petrochem':
     case 'mining': {
       const spec = KEY_ACCOUNTS[tool];
+      const acqCost = sim.keyAccountAcquireCost(spec.profile);
+      if (acqCost < 0) { flashHint('招商竞争力过低，大客户拒绝入驻——先改善口碑/可靠性/满意度'); sound.error(); return; }
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
-      if (sim.spend(spec.connectionCapex)) {
+      if (sim.spend(acqCost)) {
         const { bus: lbus } = sim.grid.addLoad(p.x, p.y, spec.profile, spec.baseDemand, spec.label, spec.growthPerHour);
         startBuild(lbus, spec.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `${spec.icon} ${spec.label}接入开工 ${spec.baseDemand}MW（工期${spec.buildDays}天，需经变电站接入并保供）`);
+        const factor = acqCost / spec.connectionCapex;
+        sim.log('info', `${spec.icon} ${spec.label}招商成功 ${spec.baseDemand}MW（接入 ¥${acqCost.toLocaleString('en-US')}·竞争力系数 ${factor.toFixed(2)}，工期${spec.buildDays}天）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
