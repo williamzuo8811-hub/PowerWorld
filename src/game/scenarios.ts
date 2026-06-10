@@ -6,6 +6,7 @@ export interface Scenario {
   name: string;
   brief: string;
   hint: string;
+  goals?: string; // 评分目标提示（追求高星级的方向）
   setup(sim: Simulation): void;
 }
 
@@ -71,6 +72,51 @@ export const SCENARIOS: Scenario[] = [
       g.addLine(sub.id, i1.bus.id);
       sim.events.nextAt = sim.clock + 4; // 风暴季：很快就有第一场事件
       sim.log('info', '【风暴季】频繁天气冲击！建冗余与储能保供电，撑到第 10 天。');
+    },
+  },
+  {
+    id: 'lowcarbon',
+    name: '④ 碳中和转型',
+    brief: '碳价高企（×2.5）：纯火电会被碳成本压垮。多上风光储、必要时给火电加 CCS，向清洁电力转型，撑过 14 天且可靠性≥90%。',
+    hint: '碳价很高：燃煤碳成本巨大——加快风光储并网、给火电加 CCS，提升清洁占比换取高星级。',
+    goals: '高星级 = 高可靠性 + 盈利 + 高清洁占比 + 好口碑（清洁转型尤为关键）',
+    setup(sim) {
+      sim.money = 1_350_000;
+      sim.goalDay = 14;
+      sim.goalReliability = 0.9;
+      sim.carbonPriceMult = 2.5; // 碳中和压力
+      const g = sim.grid;
+      g.addLoad(15, 5, 'residential', 30, '低碳新区', 0.0045);
+      g.addLoad(19, 12, 'commercial', 24, '商务区', 0.005);
+      g.addLoad(8, 14, 'industrial', 32, '产业园', 0.0038);
+      const coal = g.addPlant('coal', 5, 6).bus; // 起步火电，但碳成本高
+      const sub = g.addSubstation(12, 9, '枢纽变电站');
+      g.addLine(coal.id, sub.id);
+      sim.log('info', '【碳中和转型】碳价高企——加快清洁电力与 CCS，撑到第 14 天。');
+    },
+  },
+  {
+    id: 'summer',
+    name: '⑤ 迎峰度夏',
+    brief: '开局即盛夏：制冷高峰 + 频繁热浪，气价也偏高。备足可信容量与储能顶峰，撑过 12 天（跨夏入秋）且可靠性≥90%。',
+    hint: '夏季峰值高、热浪频发：用「迎峰预警」校核可信容量，备足调峰/储能/可中断负荷顶尖峰。',
+    goals: '高星级 = 顶住夏季尖峰的高可靠性 + 盈利 + 清洁占比 + 口碑',
+    setup(sim) {
+      sim.money = 1_200_000;
+      sim.clock = 6 * 24; // 第 6 天 = 盛夏相位
+      sim.goalDay = 18; // 再撑 12 天
+      sim.goalReliability = 0.9;
+      const g = sim.grid;
+      g.addLoad(15, 5, 'residential', 32, '城东居民', 0.004);
+      g.addLoad(19, 13, 'commercial', 28, '商业中心', 0.0045);
+      g.addLoad(8, 13, 'industrial', 30, '工业区', 0.0035);
+      const coal = g.addPlant('coal', 5, 6).bus;
+      const gas = g.addPlant('gas', 7, 4).bus; // 一台调峰燃气起步
+      const sub = g.addSubstation(12, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.events.nextAt = sim.clock + 5;
+      sim.log('info', '【迎峰度夏】盛夏开局，制冷高峰 + 热浪——备足可信容量与储能，撑到第 18 天。');
     },
   },
 ];

@@ -35,7 +35,8 @@ export class Menu {
     for (const s of opts.scenarios) {
       const card = document.createElement('button');
       card.className = 'menu-card';
-      card.innerHTML = `<div class="mc-name">${s.name}</div><div class="mc-brief">${s.brief}</div>`;
+      const goalsHtml = s.goals ? `<div class="mc-goals" style="margin-top:6px;font-size:11px;color:var(--accent)">🎯 ${s.goals}</div>` : '';
+      card.innerHTML = `<div class="mc-name">${s.name}</div><div class="mc-brief">${s.brief}</div>${goalsHtml}`;
       card.onclick = () => opts.onStart(s);
       grid.appendChild(card);
     }

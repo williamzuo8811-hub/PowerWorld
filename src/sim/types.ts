@@ -144,4 +144,6 @@ export interface SimSnapshot {
   sandbox: boolean; // 是否沙盒模式
   gameOver: boolean;
   win: boolean;
+  grade: string; // 综合星级 S/A/B/C/D
+  gradeScore: number; // 综合评分 0..100
 }

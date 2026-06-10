@@ -379,3 +379,10 @@ export const TIME_SCALES = [0, 1440, 2880, 5760]; // 暂停 / 1x / 2x / 4x（仿
 // —— 胜负目标（MVP 关卡：把小镇带到繁荣） ——
 export const WIN_DAY = 12; // 撑过第 12 天即获胜
 export const WIN_RELIABILITY = 0.92; // 且可靠性需达标
+
+// —— 关卡评分（通关后给出 S/A/B/C/D 星级，综合可靠性/财务/清洁/口碑） ——
+export const GRADE_NETWORTH_REF = 3_000_000; // 净资产满分参考
+export const GRADE_W_RELIABILITY = 0.40; // 可靠性权重
+export const GRADE_W_FINANCE = 0.25; // 财务权重
+export const GRADE_W_CLEAN = 0.20; // 清洁占比权重
+export const GRADE_W_REPUTATION = 0.15; // 口碑权重

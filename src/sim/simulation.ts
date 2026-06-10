@@ -24,6 +24,7 @@ import {
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
+  GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
@@ -154,6 +155,7 @@ export interface SimSaveState {
   lastLossFraction: number;
   goalDay: number;
   goalReliability: number;
+  carbonPriceMult: number;
   sandbox: boolean;
   gameOver: boolean;
   win: boolean;
@@ -195,6 +197,7 @@ export class Simulation {
   win = false;
   goalDay = WIN_DAY; // 关卡目标：撑到第几天（可被关卡覆盖）
   goalReliability = WIN_RELIABILITY; // 且可靠性达标
+  carbonPriceMult = 1; // 碳价倍率（关卡可调，如"碳中和转型"加压）
   sandbox = false; // 沙盒模式：无输赢、无破产
   events = new EventSystem();
   tech = new TechState();
@@ -266,6 +269,7 @@ export class Simulation {
     this.win = false;
     this.goalDay = WIN_DAY;
     this.goalReliability = WIN_RELIABILITY;
+    this.carbonPriceMult = 1;
     this.sandbox = false;
     this.windBase = 0.6;
     this.lastLossFraction = 0.02;
@@ -321,7 +325,7 @@ export class Simulation {
       money: this.money, clock: this.clock, frequency: this.frequency,
       reliability: this.reliability, reputation: this.reputation, renewableShare: this.renewableShare,
       windBase: this.windBase, lastLossFraction: this.lastLossFraction,
-      goalDay: this.goalDay, goalReliability: this.goalReliability, sandbox: this.sandbox,
+      goalDay: this.goalDay, goalReliability: this.goalReliability, carbonPriceMult: this.carbonPriceMult, sandbox: this.sandbox,
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
@@ -357,6 +361,7 @@ export class Simulation {
     this.lastLossFraction = d.lastLossFraction;
     this.goalDay = d.goalDay;
     this.goalReliability = d.goalReliability;
+    this.carbonPriceMult = d.carbonPriceMult ?? 1;
     this.sandbox = d.sandbox ?? false;
     this.gameOver = d.gameOver;
     this.win = d.win;
@@ -402,7 +407,7 @@ export class Simulation {
     return this.clock % 24;
   }
   get carbonPrice(): number {
-    return CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day;
+    return (CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day) * this.carbonPriceMult;
   }
   /** 当前免费排放基准强度 (t/MWh)，随时间收紧 */
   get benchmarkIntensity(): number {
@@ -1486,6 +1491,20 @@ export class Simulation {
     return false;
   }
 
+  /**
+   * 关卡综合评分（0..100）与星级（S/A/B/C/D）：可靠性 + 财务 + 清洁占比 + 口碑加权。
+   * 纯分析，可随时调用（HUD/通关界面展示）。
+   */
+  gradeScore(): { score: number; grade: string; parts: { reliability: number; finance: number; clean: number; reputation: number } } {
+    const reliability = clamp((this.reliability - 0.85) / 0.15, 0, 1); // 0.85→0, 1.0→1
+    const finance = clamp(this.netWorth / GRADE_NETWORTH_REF, 0, 1);
+    const clean = clamp(this.renewableShare, 0, 1);
+    const reputation = clamp(this.reputation / 100, 0, 1);
+    const score = (reliability * GRADE_W_RELIABILITY + finance * GRADE_W_FINANCE + clean * GRADE_W_CLEAN + reputation * GRADE_W_REPUTATION) * 100;
+    const grade = score >= 90 ? 'S' : score >= 75 ? 'A' : score >= 60 ? 'B' : score >= 45 ? 'C' : 'D';
+    return { score, grade, parts: { reliability: reliability * 100, finance: finance * 100, clean: clean * 100, reputation: reputation * 100 } };
+  }
+
   private checkEndConditions(): void {
     if (this.gameOver || this.sandbox) return; // 沙盒模式没有输赢
     if (this.money < 0) {
@@ -1676,6 +1695,7 @@ export class Simulation {
   }
 
   snapshot(): SimSnapshot {
+    const grade = this.gradeScore();
     return {
       clock: this.clock,
       day: this.day,
@@ -1715,6 +1735,8 @@ export class Simulation {
       sandbox: this.sandbox,
       gameOver: this.gameOver,
       win: this.win,
+      grade: grade.grade,
+      gradeScore: grade.score,
     };
   }
 }

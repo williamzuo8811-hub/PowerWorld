@@ -100,6 +100,7 @@ export class Hud {
     add('season', '季节');
     add('weather', '天气');
     add('rp', '研发点');
+    add('grade', '评级');
     add('goal', '目标');
 
     const spacer = document.createElement('div');
@@ -245,6 +246,8 @@ export class Hud {
       s.season === '夏' || s.season === '冬' ? 'freq-warn' : '');
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
     this.set('rp', `${s.researchPoints.toFixed(0)}`);
+    this.set('grade', `${s.grade} · ${s.gradeScore.toFixed(0)}`,
+      s.gradeScore >= 75 ? 'freq-ok' : s.gradeScore >= 45 ? 'freq-warn' : 'freq-bad');
     this.set('goal', s.sandbox ? '★ 沙盒模式' : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');
@@ -256,7 +259,7 @@ export class Hud {
       }).join('');
     }
 
-    if (s.gameOver) this.showOverlay(s.win, s.goalDay);
+    if (s.gameOver) this.showOverlay(s.win, s.goalDay, s.grade, s.gradeScore);
   }
 
   private set(key: string, value: string, cls = ''): void {
@@ -266,13 +269,19 @@ export class Hud {
     el.className = 'v ' + cls;
   }
 
-  private showOverlay(win: boolean, goalDay: number): void {
+  private showOverlay(win: boolean, goalDay: number, grade: string, gradeScore: number): void {
     const ov = document.getElementById('overlay')!;
     if (ov.style.display === 'flex') return;
     ov.style.display = 'flex';
     document.getElementById('overlay-title')!.textContent = win ? '🏆 通关！' : '💸 破产了';
+    const gradeEl = document.getElementById('overlay-grade');
+    if (gradeEl) {
+      const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };
+      gradeEl.textContent = win ? `评级 ${grade}　（${gradeScore.toFixed(0)} 分）` : '';
+      gradeEl.style.color = gradeColor[grade] ?? '#fff';
+    }
     document.getElementById('overlay-text')!.textContent = win
-      ? `你把电网平稳地带过了 ${goalDay} 天，坚强可靠、灯火通明。挑战更高难度的关卡吧！`
+      ? `你把电网平稳地带过了 ${goalDay} 天，坚强可靠、灯火通明。综合评级 ${grade}——可靠性、财务、清洁占比与口碑共同决定星级，挑战 S 级吧！`
       : '电力公司资金耗尽。停电罚款、燃料与碳成本压垮了现金流——下次更早布局电源与冗余线路。';
   }
 }

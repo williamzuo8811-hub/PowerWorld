@@ -211,6 +211,7 @@ function openFinance(): void {
       hedges: sim.hedges,
       insured: sim.insured,
       premiumPerDay: sim.insurancePremiumPerDay,
+      grade: sim.gradeScore(),
       creditRating: sim.creditRating,
       creditScore: sim.creditScore,
       esgRating: sim.esgRating,

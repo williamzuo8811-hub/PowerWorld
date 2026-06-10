@@ -14,6 +14,7 @@ export interface FinanceData {
   };
   insured: boolean;
   premiumPerDay: number;
+  grade: { grade: string; score: number; parts: { reliability: number; finance: number; clean: number; reputation: number } };
   creditRating: string;
   creditScore: number;
   esgRating: string;
@@ -108,6 +109,11 @@ export class FinancePanel {
         d.creditScore >= 70 ? 'freq-ok' : d.creditScore >= 40 ? 'freq-warn' : 'freq-bad')
       + row('ESG 评级', `${d.esgRating}（${d.esgScore.toFixed(0)}）· 绿色融资折扣`,
         d.esgScore >= 70 ? 'freq-ok' : d.esgScore >= 40 ? 'freq-warn' : 'freq-bad')
+      + section('关卡评级（追求 S 级）')
+      + row('综合评级', `${d.grade.grade} · ${d.grade.score.toFixed(0)} 分`,
+        d.grade.score >= 75 ? 'freq-ok' : d.grade.score >= 45 ? 'freq-warn' : 'freq-bad')
+      + row('· 可靠性 / 财务', `${d.grade.parts.reliability.toFixed(0)} / ${d.grade.parts.finance.toFixed(0)}`)
+      + row('· 清洁占比 / 口碑', `${d.grade.parts.clean.toFixed(0)} / ${d.grade.parts.reputation.toFixed(0)}`)
       + section('每日损益（按当前运行估算）')
       + row('售电收入', `${sign(f.revenue)}${abs(f.revenue)}/天`, 'freq-ok')
       + row('· 居民 / 商业 / 工业', `${abs(f.byClass.residential)} / ${abs(f.byClass.commercial)} / ${abs(f.byClass.industrial)}`)
