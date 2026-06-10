@@ -36,9 +36,12 @@ export class PortfolioPanel {
       rowEl.style.cssText = `display:flex;align-items:center;gap:10px;border-top:1px solid var(--panel-border);padding:8px 4px;`
         + (dim ? 'opacity:0.4;' : 'cursor:pointer;')
         + (active ? 'background:rgba(56,211,159,0.12);border-radius:6px;' : '');
+      const bar = c.share > 0.001
+        ? `<div style="height:4px;background:#182431;border-radius:2px;margin-top:3px;overflow:hidden"><div style="width:${Math.min(100, c.share * 100).toFixed(0)}%;height:100%;background:${hex}"></div></div>`
+        : '';
       rowEl.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${hex};flex:none"></span>`
         + `<span style="font-size:16px;width:22px;text-align:center">${c.icon}</span>`
-        + `<div style="flex:1;min-width:0"><div style="font-size:13px">${c.label}${active ? ' ·已高亮' : ''}</div><div style="font-size:11px;color:var(--text-dim)">${c.value}</div></div>`
+        + `<div style="flex:1;min-width:0"><div style="font-size:13px">${c.label}${active ? ' ·已高亮' : ''}</div><div style="font-size:11px;color:var(--text-dim)">${c.value}</div>${bar}</div>`
         + `<b style="font-size:18px;min-width:34px;text-align:right">${c.count}</b>`;
       if (!dim) rowEl.onclick = () => o.onFilter(active ? null : c.key);
       panel.appendChild(rowEl);

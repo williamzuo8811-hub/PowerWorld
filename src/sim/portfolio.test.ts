@@ -46,4 +46,20 @@ describe('能源品类资产组合', () => {
     expect(dc.count).toBe(1);
     expect(dc.value).toContain('满意');
   });
+
+  it('发电品类反映实时出力占比', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    const g = sim.grid;
+    const coal = g.addPlant('coal', 0, 0);
+    const sub = g.addSubstation(2, 0);
+    const load = g.addLoad(4, 0, 'industrial', 40, '厂', 0);
+    g.addLine(coal.bus.id, sub.id);
+    g.addLine(sub.id, load.bus.id);
+    for (let i = 0; i < 30; i++) sim.tick(0.05, 600); // 让火电出力
+    const thermal = sim.portfolio().find((c) => c.key === 'thermal')!;
+    expect(thermal.share).toBeGreaterThan(0.9); // 全靠火电 → 发电占比≈100%
+    const grid = sim.portfolio().find((c) => c.key === 'grid')!;
+    expect(grid.share).toBe(0); // 电网类无占比条
+  });
 });

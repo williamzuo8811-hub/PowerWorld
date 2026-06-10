@@ -72,6 +72,7 @@ export interface PortfolioCategory {
   label: string;
   count: number; // 该品类资产数量
   value: string; // 规模/明细（MW、满意度等）
+  share: number; // 占比 0..1（发电类=发电出力占比；负荷类=负荷占比；其余=0）
   color: number;
 }
 
@@ -1857,18 +1858,22 @@ export class Simulation {
     const subs = [...this.grid.buses.values()].filter((b) => b.kind === 'substation');
     const lineCount = this.grid.lines.size;
     const ci = loads.filter((l) => l.profile === 'residential' || l.profile === 'commercial' || l.profile === 'industrial');
+    const totalOut = gens.reduce((s, g) => s + g.output, 0);
+    const totalDem = loads.reduce((s, l) => s + l.demand, 0);
+    const outShare = (arr: { output: number }[]) => totalOut > 0.1 ? arr.reduce((s, g) => s + g.output, 0) / totalOut : 0;
+    const demShare = (arr: { demand: number }[]) => totalDem > 0.1 ? arr.reduce((s, l) => s + l.demand, 0) / totalDem : 0;
     const out: PortfolioCategory[] = [
-      { key: 'renewable', icon: '☀️', label: '可再生能源发电', count: renew.length, value: `${cap(renew).toFixed(0)} MW`, color: 0x4ade80 },
-      { key: 'nuclear', icon: '⚛️', label: '核电', count: nuke.length, value: `${cap(nuke).toFixed(0)} MW`, color: 0xa78bfa },
-      { key: 'thermal', icon: '🔥', label: '火电(煤/气)', count: thermal.length, value: `${cap(thermal).toFixed(0)} MW`, color: 0xf2994a },
-      { key: 'grid', icon: '⚡', label: '输变电·电网', count: subs.length + lineCount, value: `${subs.length} 变电站 · ${lineCount} 线路`, color: 0x60a5fa },
-      { key: 'storage', icon: '🔋', label: '储能', count: bats.length, value: `${bats.reduce((s, b) => s + b.powerRating, 0).toFixed(0)} MW / ${bats.reduce((s, b) => s + b.energyCapacity, 0).toFixed(0)} MWh`, color: 0x38bdf8 },
-      { key: 'ci', icon: '🏭', label: '工商业·配网大客户', count: ci.length, value: `${dem(ci).toFixed(0)} MW`, color: 0xc98b6b },
+      { key: 'renewable', icon: '☀️', label: '可再生能源发电', count: renew.length, value: `${cap(renew).toFixed(0)} MW · 发电占比 ${(outShare(renew) * 100).toFixed(0)}%`, share: outShare(renew), color: 0x4ade80 },
+      { key: 'nuclear', icon: '⚛️', label: '核电', count: nuke.length, value: `${cap(nuke).toFixed(0)} MW · 发电占比 ${(outShare(nuke) * 100).toFixed(0)}%`, share: outShare(nuke), color: 0xa78bfa },
+      { key: 'thermal', icon: '🔥', label: '火电(煤/气)', count: thermal.length, value: `${cap(thermal).toFixed(0)} MW · 发电占比 ${(outShare(thermal) * 100).toFixed(0)}%`, share: outShare(thermal), color: 0xf2994a },
+      { key: 'grid', icon: '⚡', label: '输变电·电网', count: subs.length + lineCount, value: `${subs.length} 变电站 · ${lineCount} 线路`, share: 0, color: 0x60a5fa },
+      { key: 'storage', icon: '🔋', label: '储能', count: bats.length, value: `${bats.reduce((s, b) => s + b.powerRating, 0).toFixed(0)} MW / ${bats.reduce((s, b) => s + b.energyCapacity, 0).toFixed(0)} MWh`, share: 0, color: 0x38bdf8 },
+      { key: 'ci', icon: '🏭', label: '工商业·配网大客户', count: ci.length, value: `${dem(ci).toFixed(0)} MW · 负荷占比 ${(demShare(ci) * 100).toFixed(0)}%`, share: demShare(ci), color: 0xc98b6b },
     ];
     for (const [p, icon, label] of [['datacenter', '💻', '数据中心'], ['transport', '🚄', '大交通·枢纽'], ['petrochem', '🛢', '石油化工·LNG'], ['mining', '⛏', '矿业']] as const) {
       const arr = loads.filter((l) => l.profile === p);
       const avgSat = arr.length ? arr.reduce((s, l) => s + (l.satisfaction ?? 1), 0) / arr.length : 1;
-      out.push({ key: p, icon, label, count: arr.length, value: arr.length ? `${dem(arr).toFixed(0)} MW · 满意 ${(avgSat * 100).toFixed(0)}%` : '—', color: KEY_ACCOUNTS[p].color });
+      out.push({ key: p, icon, label, count: arr.length, value: arr.length ? `${dem(arr).toFixed(0)} MW · 负荷占比 ${(demShare(arr) * 100).toFixed(0)}% · 满意 ${(avgSat * 100).toFixed(0)}%` : '—', share: demShare(arr), color: KEY_ACCOUNTS[p].color });
     }
     return out;
   }
