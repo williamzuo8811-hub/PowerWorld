@@ -456,7 +456,16 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
       rows.push(row('排放', `${sim.effCo2(gen).toFixed(2)} t/MWh${gen.ccs ? ' 🌫CCS' : ''}`));
       rows.push(row('役龄 / 磨损', `${gen.age.toFixed(1)}天 / ${(sim.wear(gen) * 100).toFixed(0)}%`));
-      if (sim.genOffline(gen) && !bus.underConstruction) rows.push(row('状态', '🔧 检修中'));
+      if (sim.genOffline(gen) && !bus.underConstruction) {
+        rows.push(row('状态', '🔧 检修中'));
+      } else {
+        const mc = sim.maintenanceCost(bus.id);
+        if (mc != null) {
+          const f = sim.seasonMaintFactor;
+          const tag = f < 0.95 ? '淡季优惠' : f > 1.05 ? '旺季加价' : '';
+          rows.push(row('检修费(本季)', `¥${mc.toLocaleString('en-US')}${tag ? ' · ' + tag : ''}`));
+        }
+      }
     }
   } else if (bus.kind === 'load') {
     const l = sim.grid.loadsAtBus(bus.id)[0];

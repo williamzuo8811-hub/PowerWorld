@@ -115,6 +115,9 @@ export const DEPREC_DAYS = 60; // 残值随役龄折旧的天数尺度
 export const MAINT_DAYS = 0.5; // 计划检修时长（天，短于强迫停运）
 export const MAINT_COST_FRACTION = 0.06; // 计划检修成本 = capex × 此值
 export const MAINT_AGE_REDUCTION_DAYS = 15; // 检修后役龄减少（大修返新）
+// 季节性检修：淡季（春/秋）替代电力便宜→优惠；旺季（夏/冬）替代电力贵且削弱尖峰→加价
+export const MAINT_SHOULDER_FACTOR = 0.75; // 换季检修成本系数（−25%）
+export const MAINT_PEAK_FACTOR = 1.4; // 旺季检修成本系数（+40%）
 
 // —— 设备保险 ——
 export const INSURANCE_RATE_PER_DAY = 0.0008; // 日保费 = 资产账面价值 × 此值

@@ -14,7 +14,7 @@ import {
   RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT, ESG_RATE_DISCOUNT,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
-  MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS,
+  MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR,
   INSURANCE_RATE_PER_DAY, INSURANCE_COVERAGE,
 } from '../config/components';
 import type { Generator, Line, LoadProfile } from './types';
@@ -416,6 +416,12 @@ export class Simulation {
     if (p < 0.625) return '秋';
     return '冬';
   }
+  /** 季节性检修成本系数：换季优惠、旺季加价（按夏/冬峰强度插值） */
+  get seasonMaintFactor(): number {
+    const s = seasonIntensity(this.yearPhase);
+    const peak = Math.max(s.summer, s.winter); // 0=换季, 1=盛夏/深冬
+    return MAINT_SHOULDER_FACTOR + (MAINT_PEAK_FACTOR - MAINT_SHOULDER_FACTOR) * peak;
+  }
   /** 北区(便宜)电价 */
   get zoneNorthPrice(): number {
     const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24));
@@ -708,19 +714,30 @@ export class Simulation {
     return true;
   }
 
+  /** 某电厂当前（季节调整后）的计划检修费用；不可检修返回 null */
+  maintenanceCost(busId: number): number | null {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'plant' || bus.underConstruction) return null;
+    const g = this.grid.gensAtBus(busId)[0];
+    if (!g) return null;
+    return Math.round(PLANTS[g.type].capex * MAINT_COST_FRACTION * this.seasonMaintFactor);
+  }
+
   /** 安排某电厂计划检修：短暂离线 + 检修费，换取役龄下降（更低成本与故障率） */
   scheduleMaintenance(busId: number): boolean {
     const bus = this.grid.buses.get(busId);
     if (!bus || bus.kind !== 'plant' || bus.underConstruction) return false;
     const g = this.grid.gensAtBus(busId)[0];
     if (!g || this.genOffline(g)) return false; // 在建/已离线不可重复检修
-    const cost = Math.round(PLANTS[g.type].capex * MAINT_COST_FRACTION);
+    const factor = this.seasonMaintFactor;
+    const cost = this.maintenanceCost(busId)!;
     if (this.money < cost) return false;
     this.money -= cost;
     g.outageUntil = this.clock + MAINT_DAYS * 24;
     g.output = 0;
     g.age = Math.max(0, g.age - MAINT_AGE_REDUCTION_DAYS);
-    this.log('good', `🛠 ${bus.name} 计划检修（${MAINT_DAYS}天，¥${cost.toLocaleString('en-US')}）役龄 −${MAINT_AGE_REDUCTION_DAYS}天`);
+    const seasonHint = factor < 0.95 ? `（${this.seasonLabel}季淡季优惠）` : factor > 1.05 ? `（${this.seasonLabel}季旺季加价·占用尖峰可用）` : '';
+    this.log('good', `🛠 ${bus.name} 计划检修（${MAINT_DAYS}天，¥${cost.toLocaleString('en-US')}）役龄 −${MAINT_AGE_REDUCTION_DAYS}天${seasonHint}`);
     return true;
   }
 
