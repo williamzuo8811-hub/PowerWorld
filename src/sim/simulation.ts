@@ -21,7 +21,7 @@ import type { Generator, Line, Load, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
   CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, BACKUP_FRACTION, BACKUP_CAPEX,
-  ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX,
+  ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
   UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
@@ -1626,13 +1626,19 @@ export class Simulation {
     return clamp(0.4 * (this.reputation / 100) + 0.35 * clamp(this.reliability, 0, 1) + 0.25 * clamp(this.customerSatisfaction, 0, 1), 0, 1);
   }
 
-  /** 招商赢得某大客户所需的接入代价；竞争力越高越便宜；过低则被拒(返回 -1) */
+  /** 市场招商激烈度 0..1：你在区域装机中份额越低，竞争对手抢客越激烈 */
+  get marketContestation(): number {
+    return clamp(1 - this.playerNameplate / Math.max(this.regionNameplate, 1), 0, 1);
+  }
+
+  /** 招商赢得某大客户所需的接入代价；竞争力越高越便宜、竞争越激烈越贵；过低则被拒(返回 -1) */
   keyAccountAcquireCost(profile: LoadProfile): number {
     const spec = KEY_ACCOUNTS[profile];
     if (!spec) return -1;
     if (this.companyStanding < ACQ_STANDING_MIN) return -1; // 大客户拒绝入驻
     const factor = clamp(ACQ_FACTOR_BASE - this.companyStanding * ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX);
-    return Math.round(spec.connectionCapex * factor);
+    const compFactor = clamp(1 + ACQ_COMP_K * this.marketContestation, 1, ACQ_COMP_MAX);
+    return Math.round(spec.connectionCapex * factor * compFactor);
   }
 
   /** 电网是否具备黑启动能力（有可用燃气机组或有电量的储能作种子） */

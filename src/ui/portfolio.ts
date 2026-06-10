@@ -9,6 +9,7 @@ export interface PortfolioPanelOptions {
   categories: PortfolioCategory[];
   customerSatisfaction: number;
   companyStanding: number;
+  marketContestation: number;
   activeFilter: string | null;
   onFilter: (key: string | null) => void; // 点击品类→设置地图高亮筛选（再次点击同项=清除）
   onClose: () => void;
@@ -33,7 +34,9 @@ export class PortfolioPanel {
       + `<div style="display:flex;justify-content:space-between;padding:4px 0">`
       + `<span style="color:var(--text-dim)">大客户加权满意度</span><b class="${satCls}">${(sat * 100).toFixed(0)}%</b></div>`
       + `<div style="display:flex;justify-content:space-between;padding:4px 0">`
-      + `<span style="color:var(--text-dim)">招商竞争力（口碑+可靠+满意）</span><b class="${o.companyStanding >= 0.6 ? 'freq-ok' : o.companyStanding >= 0.35 ? 'freq-warn' : 'freq-bad'}">${(o.companyStanding * 100).toFixed(0)}%</b></div>`;
+      + `<span style="color:var(--text-dim)">招商竞争力（口碑+可靠+满意）</span><b class="${o.companyStanding >= 0.6 ? 'freq-ok' : o.companyStanding >= 0.35 ? 'freq-warn' : 'freq-bad'}">${(o.companyStanding * 100).toFixed(0)}%</b></div>`
+      + `<div style="display:flex;justify-content:space-between;padding:4px 0">`
+      + `<span style="color:var(--text-dim)">市场招商激烈度（对手抢客）</span><b class="${o.marketContestation > 0.7 ? 'freq-warn' : ''}">${(o.marketContestation * 100).toFixed(0)}%</b></div>`;
 
     for (const c of o.categories) {
       const hex = '#' + c.color.toString(16).padStart(6, '0');

@@ -27,8 +27,10 @@ describe('大客户竞价招商', () => {
     expect(weak).toBeGreaterThan(strong); // 竞争力低 → 更贵
   });
 
-  it('高竞争力可低于基准接入费（折扣）', () => {
-    const cost = withStanding(95, 1, 1).keyAccountAcquireCost('datacenter');
+  it('高竞争力 + 市场主导可低于基准接入费（折扣）', () => {
+    const sim = withStanding(95, 1, 1);
+    for (let k = 0; k < 12; k++) sim.grid.addPlant('coal', k, 0); // 市场主导 → 竞争不激烈
+    const cost = sim.keyAccountAcquireCost('datacenter');
     expect(cost).toBeLessThan(KEY_ACCOUNTS.datacenter.connectionCapex);
   });
 
@@ -41,5 +43,19 @@ describe('大客户竞价招商', () => {
   it('非大客户品类不可招商（返回 -1）', () => {
     const sim = withStanding(80, 1, 1);
     expect(sim.keyAccountAcquireCost('residential')).toBe(-1);
+  });
+
+  it('玩家装机越多市场招商越不激烈', () => {
+    const small = withStanding(80, 1, 1); // 默认竞争对手、玩家无装机
+    const big = withStanding(80, 1, 1);
+    for (let k = 0; k < 8; k++) big.grid.addPlant('coal', k, 0); // 玩家装机多
+    expect(big.marketContestation).toBeLessThan(small.marketContestation);
+  });
+
+  it('竞争越激烈招商代价越高', () => {
+    const contested = withStanding(80, 1, 1); // 玩家弱、对手相对强 → 竞争激烈
+    const dominant = withStanding(80, 1, 1);
+    for (let k = 0; k < 8; k++) dominant.grid.addPlant('coal', k, 0); // 玩家主导市场
+    expect(contested.keyAccountAcquireCost('datacenter')).toBeGreaterThan(dominant.keyAccountAcquireCost('datacenter'));
   });
 });

@@ -180,6 +180,7 @@ function openPortfolio(): void {
     categories: sim.portfolio(),
     customerSatisfaction: sim.customerSatisfaction,
     companyStanding: sim.companyStanding,
+    marketContestation: sim.marketContestation,
     activeFilter: renderer.categoryFilter,
     onFilter: (key) => {
       renderer.categoryFilter = key;
