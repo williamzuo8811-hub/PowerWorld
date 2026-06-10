@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { Simulation } from './simulation';
 import { CHURN_DAYS, BACKUP_FRACTION } from '../config/components';
 
+/** 让一个数据中心持续欠供，运行若干小时后返回其流失计时（未流失时）。 */
+function churnTimerAfter(playerGens: number, hours: number): number {
+  const sim = new Simulation();
+  sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+  for (let k = 0; k < playerGens; k++) sim.grid.addPlant('coal', k, 9); // 玩家装机→降低竞争激烈度
+  const { load } = sim.grid.addLoad(0, 0, 'datacenter', 40, 'DC', 0); // 不接线→始终欠供
+  for (let i = 0; i < hours; i++) sim.tick(3600, 1);
+  return sim.grid.loads.has(load.id) ? (load.churnTimer ?? 0) : Infinity;
+}
+
 describe('大客户流失与自备应急', () => {
   it('长期供电不足导致大客户流失（撤离）', () => {
     const sim = new Simulation();
@@ -43,6 +53,24 @@ describe('大客户流失与自备应急', () => {
     expect(sim.addBackup(city.bus.id)).toBe(false); // 普通城区非大客户
     expect(sim.addBackup(dc.bus.id)).toBe(true);
     expect(sim.addBackup(dc.bus.id)).toBe(false); // 已加装
+  });
+
+  it('竞争越激烈挖角越快（流失计时增长更快）', () => {
+    const contested = churnTimerAfter(0, 30); // 玩家无装机→竞争激烈
+    const dominant = churnTimerAfter(12, 30); // 玩家主导市场→竞争温和
+    expect(contested).toBeGreaterThan(dominant);
+  });
+
+  it('竞争市场中流失被记为"被对手挖走"并增强对手', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    const topBefore = Math.max(...sim.competitors.map((c) => c.capacity));
+    sim.grid.addLoad(0, 0, 'datacenter', 40, '云数据中心', 0); // 欠供 → 终将被挖走
+    const hours = Math.ceil(CHURN_DAYS * 24) + 12;
+    for (let i = 0; i < hours; i++) sim.tick(3600, 1);
+    expect(sim.logs.some((l) => l.msg.includes('被竞争对手挖走'))).toBe(true);
+    const topAfter = Math.max(...sim.competitors.map((c) => c.capacity));
+    expect(topAfter).toBeGreaterThan(topBefore); // 对手因挖角增强
   });
 
   it('自备应急电源纳入存档', () => {

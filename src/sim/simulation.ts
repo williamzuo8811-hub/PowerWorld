@@ -20,7 +20,7 @@ import {
 import type { Generator, Line, Load, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
-  CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, BACKUP_FRACTION, BACKUP_CAPEX,
+  CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, BACKUP_CAPEX,
   ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
   LEAD_FIRST_DAY, LEAD_INTERVAL_DAYS, LEAD_WINDOW_DAYS, LEAD_DISCOUNT,
   UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
@@ -1135,6 +1135,7 @@ export class Simulation {
     let tariffWeighted = 0;
     let slaPenalty = 0; // 关键大客户（数据中心等）失负荷的额外 SLA 罚款
     const aSat = clamp(dtHours / SAT_TIME_CONSTANT, 0, 1);
+    const contestation = this.marketContestation; // 市场竞争激烈度（加速挖角）
     let satSum = 0, satW = 0; // 大客户加权满意度
     const churned: Load[] = [];
     for (const l of this.grid.loads.values()) {
@@ -1151,8 +1152,8 @@ export class Simulation {
       l.satisfaction = (l.satisfaction ?? 1) * (1 - aSat) + svc * aSat;
       if (KEY_ACCOUNTS[l.profile]) {
         satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand;
-        // 流失计时：长期低满意 → 大客户撤离
-        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours;
+        // 流失/挖角计时：长期低满意累积，竞争越激烈对手挖角越快
+        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours * (1 + POACH_CONTEST_K * contestation);
         else l.churnTimer = Math.max(0, (l.churnTimer ?? 0) - dtHours * CHURN_RECOVER);
         if ((l.churnTimer ?? 0) >= CHURN_DAYS * 24) churned.push(l);
       }
@@ -1160,7 +1161,14 @@ export class Simulation {
     this.customerSatisfaction = satW > 0 ? satSum / satW : 1;
     for (const l of churned) {
       const name = this.grid.buses.get(l.busId)?.name ?? '大客户';
-      this.log('bad', `📉 大客户「${name}」因长期供电不足而流失（损失 ${l.baseDemand.toFixed(0)}MW 售电）`);
+      const poached = this.competitors.length > 0 && contestation > 0.4; // 竞争市场=被挖角，否则=自然流失
+      if (poached) {
+        this.log('bad', `📉 大客户「${name}」被竞争对手挖走（长期供电不足，损失 ${l.baseDemand.toFixed(0)}MW 售电）`);
+        const top = this.competitors.reduce((a, b) => (b.capacity > a.capacity ? b : a));
+        top.capacity += l.baseDemand * POACH_COMP_GAIN; // 对手吸收部分负荷为新增容量
+      } else {
+        this.log('bad', `📉 大客户「${name}」因长期供电不足而流失（损失 ${l.baseDemand.toFixed(0)}MW 售电）`);
+      }
       this.grid.removeBus(l.busId);
       this.reputation = Math.max(0, this.reputation - CHURN_REP_HIT);
     }
