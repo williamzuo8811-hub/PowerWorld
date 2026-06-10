@@ -162,16 +162,70 @@ export class Renderer {
   private drawBackgroundGrid(): void {
     const g = this.gridLayer;
     g.clear();
-    // 地形底图：水域/山地/森林用低饱和色块（资源图层让"选址"有了地理意义）
-    const TERRAIN_COLOR: Record<string, number> = { water: 0x0d1d33, hill: 0x1a212c, forest: 0x101d15 };
-    for (let x = -2; x <= 60; x++) {
-      for (let y = -2; y <= 36; y++) {
-        const kind = this.grid.terrain.kind(x, y);
-        const c = TERRAIN_COLOR[kind];
-        if (c != null) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color: c, alpha: 0.85 });
-        g.circle(x * TILE, y * TILE, 1).fill({ color: 0x16212d, alpha: 0.8 });
+    const X0 = -2, X1 = 60, Y0 = -2, Y1 = 36;
+    const terrain = this.grid.terrain;
+    // 1) 陆地底色：整张可玩区域先铺一层，比画布背景略亮——地图有"实体"边界感
+    g.rect(X0 * TILE - TILE / 2, Y0 * TILE - TILE / 2, (X1 - X0 + 1) * TILE, (Y1 - Y0 + 1) * TILE)
+      .fill({ color: 0x101720 });
+    // 2) 半瓦片子格采样：连续海拔/湿度场 → 平滑海岸线、水深渐变、山体坡面光照、森林纹理
+    const S = 0.5, PX = TILE * S + 0.5; // +0.5 防子格间缝隙
+    for (let x = X0; x <= X1; x += S) {
+      for (let y = Y0; y <= Y1; y += S) {
+        const kind = terrain.kind(x, y);
+        if (kind === 'plain') {
+          // 平原：湿度高处罩一点草色，让大地有呼吸感（湿度低则保持底色，省绘制）
+          const m = terrain.moisture(x, y);
+          if (m > 0.52) {
+            g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX)
+              .fill({ color: 0x12201a, alpha: Math.min(0.55, (m - 0.52) * 2.2) });
+          }
+          continue;
+        }
+        const e = terrain.elevation(x, y);
+        let color: number;
+        if (kind === 'water') {
+          const depth = Math.max(0, Math.min(1, (0.34 - e) / 0.34)); // 离岸越远越深
+          color = lerpColor(0x1d4468, 0x0b1f38, depth);
+        } else if (kind === 'hill') {
+          // 坡面光照：西北受光、东南背光 → 伪立体山地
+          const slope = (e - terrain.elevation(x - 0.7, y - 0.7)) * 5;
+          color = shadeColor(0x2b3344, 1 - Math.max(-0.35, Math.min(0.35, slope)));
+        } else {
+          color = 0x152619; // 森林底色
+        }
+        g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX).fill({ color });
+        // 森林纹理：确定性散布的深色"树丛"点
+        if (kind === 'forest') {
+          const h = ((x * 2 + 31) * 73856093 ^ (y * 2 + 57) * 19349663) >>> 0;
+          if ((h % 100) < 38) {
+            const ox = ((h >> 8) % 10) / 10 * PX * 0.6;
+            const oy = ((h >> 16) % 10) / 10 * PX * 0.6;
+            g.circle(x * TILE - TILE / 2 + PX * 0.2 + ox, y * TILE - TILE / 2 + PX * 0.2 + oy, 2.2)
+              .fill({ color: 0x0d1a11, alpha: 0.9 });
+          }
+        }
       }
     }
+    // 3) 浅滩高亮：水陆交界处描一圈浅色，海岸线立刻清晰
+    for (let x = X0; x <= X1; x += S) {
+      for (let y = Y0; y <= Y1; y += S) {
+        if (terrain.kind(x, y) !== 'water') continue;
+        const landNear = terrain.kind(x + S, y) !== 'water' || terrain.kind(x - S, y) !== 'water'
+          || terrain.kind(x, y + S) !== 'water' || terrain.kind(x, y - S) !== 'water';
+        if (landNear) {
+          g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX).fill({ color: 0x3a6e96, alpha: 0.35 });
+        }
+      }
+    }
+    // 4) 网格点（建造对齐参考），叠在地形之上但更淡
+    for (let x = X0; x <= X1; x++) {
+      for (let y = Y0; y <= Y1; y++) {
+        g.circle(x * TILE, y * TILE, 1).fill({ color: 0x4a5a6a, alpha: 0.35 });
+      }
+    }
+    // 5) 地图边框：圈出可玩区域
+    g.rect(X0 * TILE - TILE / 2, Y0 * TILE - TILE / 2, (X1 - X0 + 1) * TILE, (Y1 - Y0 + 1) * TILE)
+      .stroke({ width: 2, color: 0x2a3a4d, alpha: 0.9 });
   }
 
   /** 地形种子变化后（开新局/读档）重绘底图 */
@@ -440,6 +494,22 @@ export class Renderer {
 }
 
 // —— 辅助绘制/着色 ——
+/** 两色线性插值（0=a, 1=b） */
+function lerpColor(a: number, b: number, t: number): number {
+  const k = Math.max(0, Math.min(1, t));
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  return (Math.round(ar + (br - ar) * k) << 16) | (Math.round(ag + (bg - ag) * k) << 8) | Math.round(ab + (bb - ab) * k);
+}
+
+/** 颜色明暗缩放（f<1 变暗、f>1 提亮） */
+function shadeColor(c: number, f: number): number {
+  const r = Math.max(0, Math.min(255, Math.round(((c >> 16) & 0xff) * f)));
+  const g = Math.max(0, Math.min(255, Math.round(((c >> 8) & 0xff) * f)));
+  const b = Math.max(0, Math.min(255, Math.round((c & 0xff) * f)));
+  return (r << 16) | (g << 8) | b;
+}
+
 function loadColor(load: number, colorblind = false): number {
   if (colorblind) {
     // 色盲友好：蓝(轻载)→黄(中)→橙(重)→白(过载)，避开红绿对比
