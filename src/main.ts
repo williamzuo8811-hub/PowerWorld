@@ -20,13 +20,13 @@ import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TARIFF, TARIFF_CLASS,
-  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE, BLACKSTART_TYPES, CAPACITOR_Q,
+  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE, BLACKSTART_TYPES, CAPACITOR_Q, KEY_ACCOUNTS, RELIABILITY_WEIGHT,
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'maintenance', 'ccs', 'capacitor', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -395,6 +395,22 @@ function handleClick(clientX: number, clientY: number): void {
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
+    case 'datacenter':
+    case 'transport':
+    case 'petrochem':
+    case 'mining': {
+      const spec = KEY_ACCOUNTS[tool];
+      const p = snap(tile);
+      if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
+      if (sim.spend(spec.connectionCapex)) {
+        const { bus: lbus } = sim.grid.addLoad(p.x, p.y, spec.profile, spec.baseDemand, spec.label, spec.growthPerHour);
+        startBuild(lbus, spec.buildDays);
+        invalidateN1();
+        sound.build();
+        sim.log('info', `${spec.icon} ${spec.label}接入开工 ${spec.baseDemand}MW（工期${spec.buildDays}天，需经变电站接入并保供）`);
+      } else { flashHint('资金不足'); sound.error(); }
+      return;
+    }
     case 'maintenance': {
       if (!bus || bus.kind !== 'plant') { flashHint('请点击一座电厂安排检修'); return; }
       if (sim.scheduleMaintenance(bus.id)) sound.build();
@@ -490,11 +506,14 @@ function busInspectorHtml(bus: Bus): string {
   } else if (bus.kind === 'load') {
     const l = sim.grid.loadsAtBus(bus.id)[0];
     if (l) {
-      const clsName = l.profile === 'residential' ? '居民' : l.profile === 'commercial' ? '商业' : '工业';
+      const CLASS_NAME: Record<string, string> = { residential: '居民', commercial: '商业', industrial: '工业', datacenter: '💻数据中心', transport: '🚄大交通', petrochem: '🛢石化·LNG', mining: '⛏矿业' };
+      const clsName = CLASS_NAME[l.profile] ?? l.profile;
+      rows.push(row('客户类别', clsName));
       rows.push(row('需求', `${l.demand.toFixed(1)} MW`));
       rows.push(row('已供', `${l.served.toFixed(1)} MW`));
-      rows.push(row('电价类别', `${clsName} ×${TARIFF_CLASS[l.profile].toFixed(2)}`));
-      rows.push(row('当前电价', `¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
+      rows.push(row('电价系数', `×${TARIFF_CLASS[l.profile].toFixed(2)} · ¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
+      const rw = RELIABILITY_WEIGHT[l.profile];
+      if (rw > 1) rows.push(row('保供要求', `SLA ×${rw.toFixed(1)}（停电罚款更重）`));
       const ez = bus.energized ?? 1;
       rows.push(row('状态', bus.blackout && ez > 0.05 && ez < 0.95 ? `🔌 黑启动恢复中 ${(ez * 100).toFixed(0)}%` : bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }

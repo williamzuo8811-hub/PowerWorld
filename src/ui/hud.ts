@@ -3,12 +3,14 @@
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
-  CAPACITOR_Q, CAPACITOR_CAPEX,
+  CAPACITOR_Q, CAPACITOR_CAPEX, KEY_ACCOUNTS,
 } from '../config/components';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen' | 'maintenance' | 'ccs' | 'capacitor' | 'bulldoze';
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen'
+  | 'datacenter' | 'transport' | 'petrochem' | 'mining'
+  | 'maintenance' | 'ccs' | 'capacitor' | 'bulldoze';
 
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
@@ -24,6 +26,10 @@ const TOOLS: ToolDef[] = [
   { id: 'battery', label: `▰ 电池 ${STORAGE.battery.powerRating}MW`, sub: `¥${fmt(STORAGE.battery.capex)}·4h·工期${STORAGE.battery.buildDays}天` },
   { id: 'pumped', label: `▰ 抽蓄 ${STORAGE.pumped.powerRating}MW`, sub: `¥${fmt(STORAGE.pumped.capex)}·12h·工期${STORAGE.pumped.buildDays}天` },
   { id: 'hydrogen', label: `▰ 氢储 ${STORAGE.hydrogen.powerRating}MW`, sub: `¥${fmt(STORAGE.hydrogen.capex)}·60h·工期${STORAGE.hydrogen.buildDays}天` },
+  { id: 'datacenter', label: `${KEY_ACCOUNTS.datacenter.icon} 数据中心 ${KEY_ACCOUNTS.datacenter.baseDemand}MW`, sub: `¥${fmt(KEY_ACCOUNTS.datacenter.connectionCapex)}·溢价·要可靠（SLA）` },
+  { id: 'transport', label: `${KEY_ACCOUNTS.transport.icon} 大交通枢纽 ${KEY_ACCOUNTS.transport.baseDemand}MW`, sub: `¥${fmt(KEY_ACCOUNTS.transport.connectionCapex)}·通勤双峰+牵引` },
+  { id: 'petrochem', label: `${KEY_ACCOUNTS.petrochem.icon} 石化·LNG ${KEY_ACCOUNTS.petrochem.baseDemand}MW`, sub: `¥${fmt(KEY_ACCOUNTS.petrochem.connectionCapex)}·巨型基荷·可中断` },
+  { id: 'mining', label: `${KEY_ACCOUNTS.mining.icon} 矿业 ${KEY_ACCOUNTS.mining.baseDemand}MW`, sub: `¥${fmt(KEY_ACCOUNTS.mining.connectionCapex)}·巨型平稳·常偏远` },
   { id: 'maintenance', label: '🛠 计划检修', sub: '点电厂大修·降役龄/故障率' },
   { id: 'ccs', label: '🌫 碳捕集', sub: '点火电改造·捕碳但成本升' },
   { id: 'capacitor', label: `⚡ 电容器组 ${CAPACITOR_Q}MVAr`, sub: `点变电站·¥${fmt(CAPACITOR_CAPEX)}·补无功支撑电压` },

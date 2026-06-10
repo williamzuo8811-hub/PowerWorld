@@ -19,7 +19,7 @@ import {
 } from '../config/components';
 import type { Generator, Line, LoadProfile } from './types';
 import {
-  START_MONEY, TARIFF, TARIFF_CLASS, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
+  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -248,7 +248,7 @@ export class Simulation {
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
     revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, startup: 0, net: 0,
-    byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
+    byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<'residential' | 'commercial' | 'industrial', number>,
   };
   startupsTotal = 0; // 累计机组启动次数（统计）
 
@@ -936,6 +936,7 @@ export class Simulation {
     const drFactor = drActive ? 1 - DR_FRACTION : 1;
     this.drCurtailedMW = 0;
     for (const load of this.grid.loads.values()) {
+      if (this.grid.buses.get(load.busId)?.underConstruction) { load.demand = 0; continue; } // 在建大客户尚未接入
       load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
       const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor * this.seasonDemandFactor;
@@ -1083,12 +1084,18 @@ export class Simulation {
       hedgeIncome += payoff * o.volume * dtHours;
     }
 
-    // 分类电价：按客户类别加权计算售电收入
-    const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0 };
-    for (const l of this.grid.loads.values()) classServed[l.profile] += l.served;
-    revenue = (classServed.residential * TARIFF_CLASS.residential
-      + classServed.commercial * TARIFF_CLASS.commercial
-      + classServed.industrial * TARIFF_CLASS.industrial) * this.spotPrice * dtHours;
+    // 分类电价：按客户类别（含大客户）加权计算售电收入
+    const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0, datacenter: 0, transport: 0, petrochem: 0, mining: 0 };
+    let tariffWeighted = 0;
+    let slaPenalty = 0; // 关键大客户（数据中心等）失负荷的额外 SLA 罚款
+    for (const l of this.grid.loads.values()) {
+      classServed[l.profile] += l.served;
+      tariffWeighted += l.served * TARIFF_CLASS[l.profile];
+      const w = RELIABILITY_WEIGHT[l.profile];
+      if (w > 1) slaPenalty += Math.max(0, l.demand - l.served) * (w - 1) * UNSERVED_PENALTY * dtHours;
+    }
+    revenue = tariffWeighted * this.spotPrice * dtHours;
+    penalty += slaPenalty;
 
     // —— 碳配额交易：免费配额 = 送达电量 × 基准强度；超出买入、富余卖出（可为负=获利）——
     const allowanceRate = Math.max(0, aggServed - aggMarketImport) * this.benchmarkIntensity; // 免费配额仅按自有发电（不含进口）
@@ -1250,9 +1257,13 @@ export class Simulation {
     this.finance.dr = ema(this.finance.dr, -drCost * toDay);
     this.finance.startup = ema(this.finance.startup, -startupCostAgg * toDay);
     const repF = this.reputationTariffFactor;
-    for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
-      const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
-      this.finance.byClass[cls] = ema(this.finance.byClass[cls], r * 24); // ¥/天
+    // 大客户归入最贴近的宏观桶，汇总到居民/商业/工业三栏
+    const macroRev: Record<'residential' | 'commercial' | 'industrial', number> = { residential: 0, commercial: 0, industrial: 0 };
+    for (const p of Object.keys(classServed) as LoadProfile[]) {
+      macroRev[LOAD_MACRO[p]] += classServed[p] * TARIFF_CLASS[p] * this.spotPrice * repF;
+    }
+    for (const cls of ['residential', 'commercial', 'industrial'] as const) {
+      this.finance.byClass[cls] = ema(this.finance.byClass[cls], macroRev[cls] * 24); // ¥/天
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty

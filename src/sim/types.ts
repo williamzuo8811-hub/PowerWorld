@@ -7,8 +7,8 @@ export type BusKind = 'plant' | 'substation' | 'load' | 'storage';
 /** 机组类型 */
 export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear';
 
-/** 负荷画像（决定一天内的用电曲线） */
-export type LoadProfile = 'residential' | 'commercial' | 'industrial';
+/** 负荷画像（决定一天内的用电曲线）。后四类为可招商引资的"大客户" */
+export type LoadProfile = 'residential' | 'commercial' | 'industrial' | 'datacenter' | 'transport' | 'petrochem' | 'mining';
 
 /** 电压等级：HV=高压输电（低损耗、大容量、贵）；MV=中压配电（高损耗、小容量、便宜） */
 export type VoltageClass = 'HV' | 'MV';
