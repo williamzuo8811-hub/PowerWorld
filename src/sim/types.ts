@@ -86,6 +86,7 @@ export interface Load {
   churnTimer?: number; // 低满意累积时长（仿真小时）—— 超阈值则流失
   churnWarned?: boolean; // 是否已发过挖角预警（边沿触发，恢复后重置）
   backup?: boolean; // 是否自备应急电源（UPS/柴发），兜底部分负荷、缓解停电
+  contractEndClock?: number; // 长约到期时刻（仿真小时）：合约期内不被挖角、电价折让
 }
 
 /** 线路（图的边）。可以是输电线，也可以是配电线，区别只在电压/容量/造价。 */

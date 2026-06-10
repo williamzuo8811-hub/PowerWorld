@@ -21,6 +21,7 @@ import type { Generator, Line, Load, LoadProfile } from './types';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
   CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, BACKUP_CAPEX,
+  CONTRACT_DAYS, CONTRACT_DISCOUNT,
   ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
   LEAD_FIRST_DAY, LEAD_INTERVAL_DAYS, LEAD_WINDOW_DAYS, LEAD_DISCOUNT,
   POACH_WIN_STANDING, POACH_WIN_CHANCE, POACH_WIN_MIN_COMP, POACH_WIN_FRACTION,
@@ -798,6 +799,18 @@ export class Simulation {
     return true;
   }
 
+  /** 与大客户签订长约：合约期内不被挖角，但电价折让；返回是否成功 */
+  signKeyAccountContract(busId: number, days: number = CONTRACT_DAYS): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'load' || bus.underConstruction) return false;
+    const l = this.grid.loadsAtBus(busId)[0];
+    if (!l || !KEY_ACCOUNTS[l.profile]) return false; // 仅大客户
+    if (l.contractEndClock && this.clock < l.contractEndClock) return false; // 已有有效长约
+    l.contractEndClock = this.clock + days * 24;
+    this.log('good', `📜 与「${bus.name}」签订 ${days} 天长约：锁定忠诚（不被挖角），电价折让 ${(CONTRACT_DISCOUNT * 100).toFixed(0)}%`);
+    return true;
+  }
+
   /** 给大客户加装自备应急电源（UPS/柴发）：停电时兜底部分负荷，护住满意度、防流失 */
   addBackup(busId: number): boolean {
     const bus = this.grid.buses.get(busId);
@@ -1141,8 +1154,9 @@ export class Simulation {
     let satSum = 0, satW = 0; // 大客户加权满意度
     const churned: Load[] = [];
     for (const l of this.grid.loads.values()) {
+      const contractActive = l.contractEndClock != null && this.clock < l.contractEndClock; // 长约：折让电价、锁定忠诚
       classServed[l.profile] += l.served;
-      tariffWeighted += l.served * TARIFF_CLASS[l.profile];
+      tariffWeighted += l.served * TARIFF_CLASS[l.profile] * (contractActive ? 1 - CONTRACT_DISCOUNT : 1);
       if (this.grid.buses.get(l.busId)?.underConstruction) continue;
       // 自备应急电源兜底部分负荷（仅作用于满意度与 SLA，不增加电网售电）
       const backupCover = l.backup ? l.demand * BACKUP_FRACTION : 0;
@@ -1156,7 +1170,7 @@ export class Simulation {
         satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand;
         // 流失/挖角计时：长期低满意累积，竞争越激烈对手挖角越快
         const rate = 1 + POACH_CONTEST_K * contestation;
-        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours * rate;
+        if (l.satisfaction < CHURN_THRESHOLD && !contractActive) l.churnTimer = (l.churnTimer ?? 0) + dtHours * rate; // 长约锁定忠诚，不累积挖角
         else { l.churnTimer = Math.max(0, (l.churnTimer ?? 0) - dtHours * CHURN_RECOVER); if ((l.churnTimer ?? 0) <= 0) l.churnWarned = false; }
         const timer = l.churnTimer ?? 0;
         const limit = CHURN_DAYS * 24;
