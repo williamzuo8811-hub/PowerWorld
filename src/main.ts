@@ -283,7 +283,7 @@ function openFinance(): void {
       regionalDemand: sim.regionalDemand,
       competitors: sim.competitors.map((c, i) => {
         const q = sim.acquisitionQuote(i)!;
-        return { name: c.name, capacity: c.capacity, marginalCost: c.marginalCost, acqTotal: q.total, acqRemedy: q.remedy, acqBlocked: q.blocked, postShare: q.postShare };
+        return { name: c.name, capacity: c.capacity, marginalCost: c.marginalCost, style: c.style, acqTotal: q.total, acqRemedy: q.remedy, acqBlocked: q.blocked, postShare: q.postShare };
       }),
       capacityPrice: sim.capacityPrice,
       capacityAdequacy: sim.capacityAdequacy,
@@ -292,7 +292,9 @@ function openFinance(): void {
       reserveReqMult: sim.reserveReqMult,
       flexPrice: sim.flexPrice,
       storageArbDay: sim.storageArbDay,
+      storageStrategy: sim.storageStrategy,
       startupsTotal: sim.startupsTotal,
+      policy: sim.policy.label(sim.clock),
       capCommitMW: sim.capCommitments.reduce((s, c) => s + c.mw, 0),
       zoneNorth: sim.zoneNorthPrice,
       zoneSouth: sim.zoneSouthPrice,
@@ -310,6 +312,11 @@ function openFinance(): void {
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
     onToggleDR: () => { sim.demandResponse = !sim.demandResponse; sim.log('info', sim.demandResponse ? '📉 已启用需求响应' : '已退出需求响应'); sound.click(); openFinance(); },
+    onToggleStorageStrategy: () => {
+      sim.storageStrategy = sim.storageStrategy === 'arb' ? 'reg' : 'arb';
+      sim.log('info', sim.storageStrategy === 'arb' ? '💹 储能切换为专注套利（退出调频市场）' : '📡 储能切换为投标调频（套利捕获减半）');
+      sound.click(); openFinance();
+    },
     onInterruptible: (mw, days) => {
       if (mw <= 0) { sim.interruptibleMW = 0; sim.interruptibleEndClock = 0; sim.log('info', '已解约可中断负荷'); sound.click(); }
       else if (sim.signInterruptible(mw, days)) sound.build(); else sound.error();
@@ -502,6 +509,18 @@ function handleClick(clientX: number, clientY: number): void {
     }
     case 'bulldoze': {
       if (bus) {
+        // 在建工程：取消即全额退款（反悔/撤销，无需确认）
+        const cancel = sim.cancelRefund(bus.id);
+        if (cancel != null) {
+          sim.grid.removeBus(bus.id);
+          if (cancel > 0) sim.refund(cancel);
+          invalidateN1();
+          sound.build();
+          sim.log('info', `🏗 取消在建工程 ${bus.name}，全额退款 ¥${cancel.toLocaleString('en-US')}`);
+          return;
+        }
+        // 已投运资产：双击确认，防误拆
+        if (!confirmDemolish('bus', bus.id, `再次点击确认退役「${bus.name}」（按残值返还）`)) return;
         const salvage = sim.salvageValue(bus.id); // 退役前计算残值
         sim.grid.removeBus(bus.id);
         if (salvage > 0) sim.refund(salvage);
@@ -512,6 +531,16 @@ function handleClick(clientX: number, clientY: number): void {
       }
       const ln = renderer.nearestLine(tile.x, tile.y);
       if (ln) {
+        const cancel = sim.lineCancelRefund(ln);
+        if (cancel != null) {
+          sim.grid.removeLine(ln.id);
+          if (cancel > 0) sim.refund(cancel);
+          invalidateN1();
+          sound.build();
+          sim.log('info', `🏗 取消在建线路，全额退款 ¥${cancel.toLocaleString('en-US')}`);
+          return;
+        }
+        if (!confirmDemolish('line', ln.id, '再次点击确认拆除该线路（按残值返还）')) return;
         const s = sim.lineSalvage(ln);
         sim.grid.removeLine(ln.id);
         if (s > 0) sim.refund(s);
@@ -544,6 +573,20 @@ let hintTimer = 0;
 function flashHint(text: string): void {
   hud.setHint(text);
   hintTimer = 1.6;
+}
+
+// 拆除二次确认：3 秒内再点同一目标才执行（在建工程取消除外）
+let pendingDemolish: { kind: 'bus' | 'line'; id: number; expire: number } | null = null;
+function confirmDemolish(kind: 'bus' | 'line', id: number, prompt: string): boolean {
+  const now = performance.now();
+  if (pendingDemolish && pendingDemolish.kind === kind && pendingDemolish.id === id && now < pendingDemolish.expire) {
+    pendingDemolish = null;
+    return true;
+  }
+  pendingDemolish = { kind, id, expire: now + 3000 };
+  flashHint(prompt);
+  sound.click();
+  return false;
 }
 
 function busInspectorHtml(bus: Bus): string {

@@ -55,12 +55,16 @@ import {
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC, ACQUISITION_PRICE_PER_MW,
   ANTITRUST_SOFT_SHARE, ANTITRUST_HARD_SHARE, ANTITRUST_PREMIUM_K,
+  COMP_GREEN_EXPAND_MULT, COMP_GREEN_RETIRE_MULT, COMP_PEAKER_WAR_SHARE, COMP_PEAKER_WAR_FLOOR,
+  COMP_PEAKER_ADJUST_RATE, COMP_LEAD_SNATCH_CHANCE, COMP_LEAD_SNATCH_FRACTION,
+  BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR,
   type CompetitorSpec,
 } from '../config/components';
 
-/** 运行期竞争对手（含初始容量，用于扩张/退役的上下限） */
+/** 运行期竞争对手（含初始容量与报价基准，用于扩张/退役上下限与价格战回归） */
 interface Competitor extends CompetitorSpec {
   base: number;
+  mcBase: number; // 边际成本基准（价格战后回归的锚）
 }
 
 /** 历史走势采样点 */
@@ -206,6 +210,8 @@ export interface SimSaveState {
   interruptibleEndClock: number;
   history: HistorySample[];
   nextSampleAt: number;
+  competitors?: Competitor[]; // 对手状态（容量/报价随局演化，需随档保存）
+  storageStrategy?: 'arb' | 'reg';
 }
 
 export class Simulation {
@@ -245,7 +251,7 @@ export class Simulation {
   marketImportMW = 0; // 本 tick 全网购电量 (MW，显示用)
   marketExportMW = 0; // 本 tick 全网外送量 (MW，显示用)
   zoneArbMW = 0; // 本 tick 跨区套利交易量 (MW，显示用)
-  competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity })); // AI 竞争对手
+  competitors: Competitor[] = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost })); // AI 竞争对手
   mergedCapacity: { mw: number; marginalCost: number }[] = []; // 已并购的商船队（在市场出清中作为自有）
   marketClearingPrice = TARIFF; // 区域出清价（批发）
   marketShare = 0; // 本公司在区域市场的发电份额 0..1
@@ -262,6 +268,8 @@ export class Simulation {
   netLoadAvg = 0; // 净负荷日均（套利价差信号的参考）
   interruptibleMW = 0; // 已签约的可中断负荷容量 (MW)
   interruptibleEndClock = 0; // 可中断合同到期时刻（仿真小时）
+  /** 储能商业策略：'arb'=专注套利（不投调频）；'reg'=投标调频（套利捕获减半）——同一容量不能两头吃 */
+  storageStrategy: 'arb' | 'reg' = 'arb';
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -335,7 +343,7 @@ export class Simulation {
     this.marketImportMW = 0;
     this.marketExportMW = 0;
     this.zoneArbMW = 0;
-    this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity }));
+    this.competitors = COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
     this.mergedCapacity = [];
     this.marketClearingPrice = TARIFF;
     this.marketShare = 0;
@@ -348,6 +356,7 @@ export class Simulation {
     this.netLoadAvg = 0;
     this.interruptibleMW = 0;
     this.interruptibleEndClock = 0;
+    this.storageStrategy = 'arb';
     this.lastSeason = '';
     this.history = [];
     this.nextSampleAt = 0;
@@ -393,6 +402,8 @@ export class Simulation {
       interruptibleEndClock: this.interruptibleEndClock,
       history: this.history.map((h) => ({ ...h })),
       nextSampleAt: this.nextSampleAt,
+      competitors: this.competitors.map((c) => ({ ...c })),
+      storageStrategy: this.storageStrategy,
     };
   }
 
@@ -449,6 +460,10 @@ export class Simulation {
     this.interruptibleEndClock = d.interruptibleEndClock ?? 0;
     this.history = (d.history ?? []).map((h) => ({ ...h }));
     this.nextSampleAt = d.nextSampleAt ?? 0;
+    this.competitors = d.competitors
+      ? d.competitors.map((c) => ({ ...c, mcBase: c.mcBase ?? c.marginalCost, style: c.style ?? 'coal' }))
+      : COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
+    this.storageStrategy = d.storageStrategy ?? 'arb';
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -571,7 +586,8 @@ export class Simulation {
   private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } {
     const demand = this.regionalDemand;
     const blocks: { mw: number; cost: number; player: boolean }[] = [];
-    for (const c of this.competitors) blocks.push({ mw: c.capacity, cost: c.marginalCost, player: false });
+    // 火电型对手在环保督查期间同样被限产
+    for (const c of this.competitors) blocks.push({ mw: c.capacity * (c.style === 'coal' ? this.policy.coalCap : 1), cost: c.marginalCost, player: false });
     for (const m of this.mergedCapacity) blocks.push({ mw: m.mw, cost: m.marginalCost, player: true }); // 商船队=自有
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
@@ -638,13 +654,24 @@ export class Simulation {
     return true;
   }
 
-  /** 竞争对手演化：出清价高于其成本一定幅度则扩张，亏损则退役 */
+  /** 竞争对手演化：盈利扩张/亏损退役 + 性格化行为（清洁型猛扩张、激进型打价格战） */
   private evolveCompetitors(dtDays: number): void {
     for (const c of this.competitors) {
       const margin = this.marketClearingPrice - c.marginalCost;
-      if (margin > COMPETITOR_EXPAND_MARGIN) c.capacity *= 1 + COMPETITOR_EXPAND_RATE * dtDays;
-      else if (margin < 0) c.capacity *= 1 - COMPETITOR_RETIRE_RATE * dtDays;
+      const expandMult = c.style === 'green' ? COMP_GREEN_EXPAND_MULT : 1;
+      const retireMult = c.style === 'green' ? COMP_GREEN_RETIRE_MULT : 1;
+      if (margin > COMPETITOR_EXPAND_MARGIN) c.capacity *= 1 + COMPETITOR_EXPAND_RATE * expandMult * dtDays;
+      else if (margin < 0) c.capacity *= 1 - COMPETITOR_RETIRE_RATE * retireMult * dtDays;
       c.capacity = clamp(c.capacity, c.base * COMPETITOR_CAP_MIN_FRAC, c.base * COMPETITOR_CAP_MAX_FRAC);
+      // 激进调峰型：玩家市占过高时压价抢量（价格战），威胁解除后回归基准报价
+      if (c.style === 'peaker') {
+        const target = this.marketShare > COMP_PEAKER_WAR_SHARE ? c.mcBase * COMP_PEAKER_WAR_FLOOR : c.mcBase;
+        const before = c.marginalCost;
+        c.marginalCost += (target - c.marginalCost) * clamp(COMP_PEAKER_ADJUST_RATE * dtDays, 0, 1);
+        if (before > target + 1 && c.marginalCost <= target + 1) {
+          this.log('warn', `⚔ 「${c.name}」发动价格战：报价压至 ¥${c.marginalCost.toFixed(0)}/MWh 抢夺市场份额`);
+        }
+      }
     }
   }
 
@@ -935,6 +962,31 @@ export class Simulation {
     return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * SALVAGE_FRACTION * 0.5);
   }
 
+  /** 在建资产取消的全额退款（反悔/撤销）：尚未投运的工程退还全部投资；非在建返回 null */
+  cancelRefund(busId: number): number | null {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || !bus.underConstruction) return null;
+    if (bus.kind === 'plant') {
+      const g = this.grid.gensAtBus(busId)[0];
+      return g ? PLANTS[g.type].capex : 0;
+    }
+    if (bus.kind === 'storage') {
+      const b = this.grid.batteriesAtBus(busId)[0];
+      return b ? STORAGE[b.type].capex : 0;
+    }
+    if (bus.kind === 'substation') return SUBSTATION_CAPEX;
+    if (bus.kind === 'load') {
+      const l = this.grid.loadsAtBus(busId)[0];
+      return l && KEY_ACCOUNTS[l.profile] ? KEY_ACCOUNTS[l.profile].connectionCapex : 0;
+    }
+    return 0;
+  }
+  /** 在建线路取消的全额退款；非在建返回 null */
+  lineCancelRefund(ln: Line): number | null {
+    if (!ln.underConstruction) return null;
+    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile);
+  }
+
   /** 某燃料的季节性回归基准（深冬抬升、夏季/换季回到 1.0） */
   fuelSeasonMean(fuel: FuelType): number {
     return 1 + FUEL_SEASON_WINTER_AMP[fuel] * seasonIntensity(this.yearPhase).winter;
@@ -1179,10 +1231,11 @@ export class Simulation {
     const priceDev = TARIFF * clamp((netLoad - this.netLoadAvg) / Math.max(this.netLoadAvg, 1), -1, 1);
     const seasonSpreadF = 1 + STORAGE_ARB_SEASON_K * Math.max(seasonIntensity(this.yearPhase).summer, seasonIntensity(this.yearPhase).winter);
     let storageArbCash = 0;
+    const arbCapture = STORAGE_ARB_CAPTURE * (this.storageStrategy === 'reg' ? STORAGE_REG_ARB_FACTOR : 1); // 投调频则套利打折
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (!bus || bus.underConstruction) continue;
-      storageArbCash += b.output * priceDev * STORAGE_ARB_CAPTURE * seasonSpreadF * dtHours;
+      storageArbCash += b.output * priceDev * arbCapture * seasonSpreadF * dtHours;
     }
 
     // 套保结算（差价合约）：市价低于锁价获补偿，高于则让出收益（可为负）
@@ -1206,6 +1259,11 @@ export class Simulation {
     const churned: Load[] = [];
     for (const l of this.grid.loads.values()) {
       const contractActive = l.contractEndClock != null && this.clock < l.contractEndClock; // 长约：折让电价、锁定忠诚
+      // 长约到期提醒（边沿触发）：流失保护失效，提示续签
+      if (l.contractEndClock != null && this.clock >= l.contractEndClock && this.clock - dtHours < l.contractEndClock) {
+        const cname = this.grid.buses.get(l.busId)?.name ?? '大客户';
+        this.log('warn', `📜 「${cname}」长约到期——挖角保护失效，可用「长约」工具续签`);
+      }
       classServed[l.profile] += l.served;
       tariffWeighted += l.served * TARIFF_CLASS[l.profile] * (contractActive ? 1 - CONTRACT_DISCOUNT : 1);
       if (this.grid.buses.get(l.busId)?.underConstruction) continue;
@@ -1274,6 +1332,9 @@ export class Simulation {
     for (const b of this.grid.buses.values()) {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
+    for (const l of this.grid.loads.values()) {
+      if (l.backup && !this.grid.buses.get(l.busId)?.underConstruction) omCost += BACKUP_OM_PER_DAY * omDayFrac; // 自备应急电源维护费
+    }
 
     // —— 可中断负荷合同：到期失效；作为可信容量与运行备用资源参与 ——
     if (this.clock >= this.interruptibleEndClock) this.interruptibleMW = 0;
@@ -1307,9 +1368,12 @@ export class Simulation {
       if (g.type === 'hydro') regCap += g.capacity * g.availability * AS_HYDRO_REG_FACTOR; // 水电快速可调
       if (g.dispatchable) reserveCap += Math.max(0, g.capacity * g.availability - g.output);
     }
-    for (const b of this.grid.batteries.values()) {
-      const bus = this.grid.buses.get(b.busId);
-      if (bus && !bus.underConstruction) regCap += b.powerRating * this.tech.batteryPowerFactor;
+    if (this.storageStrategy === 'reg') {
+      // 仅当储能选择"投标调频"策略时计入调频容量（与全额套利二选一）
+      for (const b of this.grid.batteries.values()) {
+        const bus = this.grid.buses.get(b.busId);
+        if (bus && !bus.underConstruction) regCap += b.powerRating * this.tech.batteryPowerFactor;
+      }
     }
     // 辅助服务竞价出清：需求∝区域需求，供给含竞争对手快速/闲置容量
     const compCap = this.competitors.reduce((s, c) => s + c.capacity, 0);
@@ -1369,7 +1433,8 @@ export class Simulation {
     const interestCost = this.debt * this.loanDailyRate * omDayFrac;
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
     this.marketImportMW = aggMarketImport;
-    const importCost = aggMarketImport * this.avgSpot * IMPORT_MARKUP * dtHours;
+    // 进口按"现货与均价孰高"加价计——稀缺时段大家都缺电，进口同样昂贵（不再是无脑兜底）
+    const importCost = aggMarketImport * Math.max(this.avgSpot, this.spotPrice) * IMPORT_MARKUP * dtHours;
     // 外送：被弃的过剩（清洁）电量按出清价卖入批发市场（受联络线容量与过网折扣限制；邻区短缺时溢价）
     this.marketExportMW = this.marketEnabled ? Math.min(aggCurtailed, INTERCONNECTOR_CAPACITY) : 0;
     const exportIncome = this.marketExportMW * this.marketClearingPrice * EXPORT_WHEEL * this.policy.exportPriceMult * dtHours;
@@ -1764,9 +1829,20 @@ export class Simulation {
     this.keyAccountLead = null; // 机会已用掉
   }
 
-  /** 限时招商机会调度：到点出现、过期清除 */
+  /** 限时招商机会调度：到点出现、过期清除（过期未签的选址客户可能被最强对手抢走） */
   private checkKeyAccountLead(): void {
-    if (this.keyAccountLead && this.clock >= this.keyAccountLead.endClock) this.keyAccountLead = null;
+    if (this.keyAccountLead && this.clock >= this.keyAccountLead.endClock) {
+      const lead = this.keyAccountLead;
+      this.keyAccountLead = null;
+      if (!lead.poach && this.competitors.length > 0 && Math.random() < COMP_LEAD_SNATCH_CHANCE) {
+        const top = this.competitors.reduce((a, b) => (b.capacity > a.capacity ? b : a));
+        const spec = KEY_ACCOUNTS[lead.profile];
+        if (spec) {
+          top.capacity = Math.min(top.base * COMPETITOR_CAP_MAX_FRAC, top.capacity + spec.baseDemand * COMP_LEAD_SNATCH_FRACTION);
+          this.log('warn', `🏷 ${spec.icon}${spec.label}选址花落对手「${top.name}」（窗口期未签约），对手容量 +${(spec.baseDemand * COMP_LEAD_SNATCH_FRACTION).toFixed(0)}MW`);
+        }
+      }
+    }
     if (this.clock >= this.nextLeadAt) {
       const profiles: LoadProfile[] = ['datacenter', 'transport', 'petrochem', 'mining'];
       const p = profiles[Math.floor(Math.random() * profiles.length)];
