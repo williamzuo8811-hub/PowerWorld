@@ -19,7 +19,7 @@ import {
 } from '../config/components';
 import type { Generator, Line, LoadProfile } from './types';
 import {
-  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
+  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -191,6 +191,7 @@ export class Simulation {
   voltage = 1; // 主电网电压（pu）
   reliability = 1; // 供电率滑动平均 0..1
   reputation = 70; // 公众形象 0..100
+  customerSatisfaction = 1; // 大客户加权满意度 0..1
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
   peakServed = 0; // 历史峰值供电 (MW) —— 成就用
   totalEnergyServed = 0; // 累计送达电量 (MWh) —— 成就用
@@ -265,6 +266,7 @@ export class Simulation {
     this.voltage = 1;
     this.reliability = 1;
     this.reputation = 70;
+    this.customerSatisfaction = 1;
     this.renewableShare = 1;
     this.peakServed = 0;
     this.totalEnergyServed = 0;
@@ -1089,12 +1091,21 @@ export class Simulation {
     const classServed: Record<LoadProfile, number> = { residential: 0, commercial: 0, industrial: 0, datacenter: 0, transport: 0, petrochem: 0, mining: 0 };
     let tariffWeighted = 0;
     let slaPenalty = 0; // 关键大客户（数据中心等）失负荷的额外 SLA 罚款
+    const aSat = clamp(dtHours / SAT_TIME_CONSTANT, 0, 1);
+    let satSum = 0, satW = 0; // 大客户加权满意度
     for (const l of this.grid.loads.values()) {
       classServed[l.profile] += l.served;
       tariffWeighted += l.served * TARIFF_CLASS[l.profile];
       const w = RELIABILITY_WEIGHT[l.profile];
       if (w > 1) slaPenalty += Math.max(0, l.demand - l.served) * (w - 1) * UNSERVED_PENALTY * dtHours;
+      // 客户满意度：供电充足率 EMA（在建客户不计）
+      if (!this.grid.buses.get(l.busId)?.underConstruction) {
+        const svc = l.demand > 0.01 ? clamp(l.served / l.demand, 0, 1) : 1;
+        l.satisfaction = (l.satisfaction ?? 1) * (1 - aSat) + svc * aSat;
+        if (KEY_ACCOUNTS[l.profile]) { satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand; }
+      }
     }
+    this.customerSatisfaction = satW > 0 ? satSum / satW : 1;
     revenue = tariffWeighted * this.spotPrice * dtHours;
     penalty += slaPenalty;
 
@@ -1840,6 +1851,7 @@ export class Simulation {
       gridEnergized: this.gridEnergized,
       outageEnergyTotal: this.outageEnergyTotal,
       voltage: this.voltage,
+      customerSatisfaction: this.customerSatisfaction,
     };
   }
 }

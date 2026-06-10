@@ -82,6 +82,7 @@ export interface Load {
   demand: number; // 本 tick 期望需求 (MW)
   served: number; // 本 tick 实际供电 (MW)
   growthPerHour: number; // 每仿真小时的复合增长率
+  satisfaction?: number; // 客户满意度 0..1（供电充足率的滑动平均）—— 大客户流失判定
 }
 
 /** 线路（图的边）。可以是输电线，也可以是配电线，区别只在电压/容量/造价。 */
@@ -156,4 +157,5 @@ export interface SimSnapshot {
   gridEnergized: number; // 全网能量化程度 0..1（<1=停电恢复中）
   outageEnergyTotal: number; // 累计失负荷电量 (MWh)
   voltage: number; // 主电网电压（pu）
+  customerSatisfaction: number; // 大客户加权满意度 0..1
 }

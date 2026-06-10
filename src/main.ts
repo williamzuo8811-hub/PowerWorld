@@ -514,6 +514,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('电价系数', `×${TARIFF_CLASS[l.profile].toFixed(2)} · ¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
       const rw = RELIABILITY_WEIGHT[l.profile];
       if (rw > 1) rows.push(row('保供要求', `SLA ×${rw.toFixed(1)}（停电罚款更重）`));
+      if (KEY_ACCOUNTS[l.profile]) rows.push(row('满意度', `${((l.satisfaction ?? 1) * 100).toFixed(0)}%`));
       const ez = bus.energized ?? 1;
       rows.push(row('状态', bus.blackout && ez > 0.05 && ez < 0.95 ? `🔌 黑启动恢复中 ${(ez * 100).toFixed(0)}%` : bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }

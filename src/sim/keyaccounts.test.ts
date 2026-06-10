@@ -88,6 +88,35 @@ describe('大客户负荷（能源品类）', () => {
     expect(dcCurtail).toBeLessThan(0.05); // 数据中心几乎不被切
   });
 
+  it('充分供电的大客户满意度保持高位', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    const g = sim.grid;
+    const coal = g.addPlant('coal', 0, 0);
+    const sub = g.addSubstation(2, 0);
+    const { load } = g.addLoad(4, 0, 'datacenter', 40, '数据中心', 0);
+    g.addLine(coal.bus.id, sub.id);
+    g.addLine(sub.id, load.busId);
+    for (let i = 0; i < 24; i++) sim.tick(3600, 1);
+    expect(load.satisfaction).toBeGreaterThan(0.95);
+    expect(sim.customerSatisfaction).toBeGreaterThan(0.95);
+  });
+
+  it('长期欠供使大客户满意度下降', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    const { load } = sim.grid.addLoad(0, 0, 'datacenter', 40, '数据中心', 0); // 无电源 → 失负荷
+    for (let i = 0; i < 24; i++) sim.tick(3600, 1);
+    expect(load.satisfaction).toBeLessThan(0.4);
+    expect(sim.customerSatisfaction).toBeLessThan(0.4);
+  });
+
+  it('满意度进入快照', () => {
+    const sim = new Simulation();
+    sim.grid.addLoad(0, 0, 'datacenter', 40, '数据中心', 0);
+    expect(sim.snapshot().customerSatisfaction).toBeGreaterThanOrEqual(0);
+  });
+
   it('KEY_ACCOUNTS 含四类大客户且 profile 一致', () => {
     expect(Object.keys(KEY_ACCOUNTS).sort()).toEqual(['datacenter', 'mining', 'petrochem', 'transport']);
     for (const [id, spec] of Object.entries(KEY_ACCOUNTS)) {

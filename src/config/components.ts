@@ -389,6 +389,7 @@ export interface KeyAccountSpec {
   icon: string;
   desc: string;
 }
+export const SAT_TIME_CONSTANT = 6; // 客户满意度 EMA 时间常数（小时）
 export const KEY_ACCOUNTS: Record<string, KeyAccountSpec> = {
   datacenter: { label: '数据中心', profile: 'datacenter', baseDemand: 48, growthPerHour: 0.006, connectionCapex: 180_000, buildDays: 2, color: 0xec4899, icon: '💻', desc: '24/7极平高负载·溢价·停电=SLA重罚（要可靠）' },
   transport: { label: '大交通枢纽', profile: 'transport', baseDemand: 40, growthPerHour: 0.005, connectionCapex: 140_000, buildDays: 2, color: 0x60a5fa, icon: '🚄', desc: '轨交/机场/港口·通勤双峰+牵引尖峰（需灵活性）' },

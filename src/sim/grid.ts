@@ -108,7 +108,7 @@ export class Grid {
     const bus = this.addBus('load', x, y, name);
     const load: Load = {
       id: this.id(), busId: bus.id, profile, baseDemand,
-      demand: 0, served: 0, growthPerHour,
+      demand: 0, served: 0, growthPerHour, satisfaction: 1,
     };
     this.loads.set(load.id, load);
     return { bus, load };
