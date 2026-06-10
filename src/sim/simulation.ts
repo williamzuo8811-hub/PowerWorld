@@ -28,7 +28,7 @@ import {
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
   CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
-  SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP,
+  SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP, SEASON_ADEQ_MARGIN,
   IRP_LOAD_FACTOR, IRP_SUMMER_PEAK, IRP_SOLAR_PEAK_CREDIT, IRP_WIND_PEAK_CREDIT, IRP_RENEW_CF,
   IRP_TIGHT_MARGIN, IRP_SCENARIOS, type StressScenarioSpec,
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
@@ -214,6 +214,7 @@ export class Simulation {
   reserveReqMult = 1; // 新能源预测误差对运行备用需求的放大倍数（≥1）
   reserveRequirementMW = 0; // 当前运行备用需求 (MW)
   renewablePenetration = 0; // 当前瞬时新能源出力占比 0..1
+  private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -286,6 +287,7 @@ export class Simulation {
     this.capacityAdequacy = 1;
     this.regPrice = AS_REG_PRICE_BASE;
     this.reservePrice = AS_RESERVE_PRICE_BASE;
+    this.lastSeason = '';
     this.history = [];
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
@@ -848,6 +850,9 @@ export class Simulation {
     // —— 燃料价格波动 ——
     this.updateFuelPrices(dtHours);
 
+    // —— 迎峰预警：进入夏/冬旺季时校核可信容量对季节峰值的充裕度 ——
+    this.checkSeasonAlert();
+
     // —— 机组老化 + 强迫停运 ——
     const dtDays = dtHours / 24;
     for (const g of this.grid.gens.values()) {
@@ -1399,16 +1404,58 @@ export class Simulation {
    * 评估各情景下的容量充裕度（备用率）与经济韧性（粗估日净现金流）。
    * 纯分析，不改动任何仿真状态。
    */
+  /** 某类负荷的日内峰值乘子（采样日曲线取最大） */
+  private dayPeakMultiplier(profile: LoadProfile): number {
+    let mx = 0;
+    for (let h = 0; h < 24; h++) mx = Math.max(mx, demandMultiplier(h, profile));
+    return mx;
+  }
+
+  /** 本公司可信容量（可调机组 + 储能信用 + 新能源极低尖峰信用）MW */
+  private ownFirmCapacity(): number {
+    let firm = 0;
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      const credit = g.dispatchable ? CAPACITY_CREDIT[g.type] : (g.type === 'solar' ? IRP_SOLAR_PEAK_CREDIT : IRP_WIND_PEAK_CREDIT);
+      firm += g.capacity * credit;
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) firm += b.powerRating * STORAGE[b.type].capacityCredit;
+    }
+    return firm;
+  }
+
+  /** 当前季节下，本公司可信容量对自有峰值负荷的充裕度 */
+  seasonalPeakAdequacy(): { firm: number; peak: number; margin: number } {
+    const firm = this.ownFirmCapacity();
+    let peak = 0;
+    for (const load of this.grid.loads.values()) peak += load.baseDemand * this.dayPeakMultiplier(load.profile);
+    peak *= this.seasonDemandFactor; // 当前季节峰
+    const margin = peak > 0 ? firm / peak - 1 : (firm > 0 ? 1 : 0);
+    return { firm, peak, margin };
+  }
+
+  /** 迎峰预警：进入夏/冬旺季时（季节边沿）校核充裕度并提示 */
+  private checkSeasonAlert(): void {
+    const season = this.seasonLabel;
+    if (season === this.lastSeason) return;
+    this.lastSeason = season;
+    if ((season !== '夏' && season !== '冬') || this.grid.loads.size === 0) return;
+    const a = this.seasonalPeakAdequacy();
+    if (a.peak <= 0) return;
+    const name = season === '夏' ? '迎峰度夏' : '迎峰度冬';
+    if (a.margin < SEASON_ADEQ_MARGIN) {
+      this.log('warn', `⚠ ${name}：可信容量 ${a.firm.toFixed(0)}MW vs 季节峰值 ${a.peak.toFixed(0)}MW（备用 ${(a.margin * 100).toFixed(0)}%），及时补强/购电避免缺供`);
+    } else {
+      this.log('good', `${name}：可信容量充裕（备用 ${(a.margin * 100).toFixed(0)}%）`);
+    }
+  }
+
   stressTest(scenarios: StressScenarioSpec[] = IRP_SCENARIOS): StressResult[] {
-    // 每类负荷的日峰值乘子（采样日内曲线取最大）
-    const dayPeak = (profile: LoadProfile): number => {
-      let mx = 0;
-      for (let h = 0; h < 24; h++) mx = Math.max(mx, demandMultiplier(h, profile));
-      return mx;
-    };
     // 基础夏季晚峰需求（剔除当前季节/景气，取纯峰）
     let basePeak = 0;
-    for (const load of this.grid.loads.values()) basePeak += load.baseDemand * dayPeak(load.profile);
+    for (const load of this.grid.loads.values()) basePeak += load.baseDemand * this.dayPeakMultiplier(load.profile);
     basePeak *= IRP_SUMMER_PEAK;
 
     const gens = [...this.grid.gens.values()];

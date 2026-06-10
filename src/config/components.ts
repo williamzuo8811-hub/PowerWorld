@@ -176,6 +176,7 @@ export const SEASON_SUMMER_DEMAND = 0.18; // 盛夏制冷高峰需求加成（+1
 export const SEASON_WINTER_DEMAND = 0.12; // 深冬采暖高峰需求加成（+12%）
 export const SEASON_SOLAR_AMP = 0.3; // 光伏季节摆幅（夏强冬弱 ±30%）
 export const SEASON_WIND_AMP = 0.35; // 风电季节摆幅（冬强夏弱 ±35%）
+export const SEASON_ADEQ_MARGIN = 0.1; // 迎峰预警阈值：可信容量备用率低于此即告警
 
 // —— 长期规划压力测试（IRP：在现有机队上跑 what-if 情景，评估充裕度与经济韧性）——
 export const IRP_LOAD_FACTOR = 0.72; // 平均负荷 / 峰值负荷
