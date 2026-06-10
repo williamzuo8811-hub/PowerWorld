@@ -23,6 +23,13 @@ describe('新手教程驱动', () => {
     expect(t.update(sim)).toContain('开始供电'); // 步骤4（尚未开始计时）
 
     for (let i = 0; i < 8; i++) sim.tick(0.05, 600); // 推进时间 + 供电
+    expect(t.update(sim)).toContain('储能'); // 步骤6：建储能并接线
+
+    const bat = g.addBattery(3, 2).bus;
+    g.addLine(sub.id, bat.id);
+    expect(t.update(sim)).toContain('科技'); // 步骤7：解锁科技
+
+    sim.tech.unlocked.add('ehv');
     expect(t.update(sim)).toBeNull(); // 全部完成
     expect(t.takeCompleted()).toBe(true);
     expect(t.takeCompleted()).toBe(false); // 一次性

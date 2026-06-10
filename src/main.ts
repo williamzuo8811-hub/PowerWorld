@@ -15,6 +15,7 @@ import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
 import { Tutorial } from './game/tutorial';
+import { Advisor } from './game/advisor';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, listSaves, deleteSave, exportSave, importSave, type SlotId } from './game/save';
 import { TECHS, type TechId } from './config/tech';
@@ -44,6 +45,7 @@ const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
 const tutorial = new Tutorial();
+const advisor = new Advisor();
 let lastBadEvents = 0; // 上一帧的严重事件计数，用于触发报警音
 let wasGameOver = false; // 用于检测输赢瞬间
 
@@ -60,6 +62,7 @@ function newGame(scenario: Scenario): void {
   scenario.setup(sim);
   currentScenarioId = scenario.id;
   lastAutosaveDay = sim.day;
+  advisor.reset();
   enterGame();
   if (scenario.id === 'tutorial') tutorial.start();
   else { tutorial.stop(); hud.setTutorial(null); }
@@ -740,6 +743,11 @@ async function start(): Promise<void> {
       // 新手教程引导
       if (tutorial.active) hud.setTutorial(tutorial.update(sim));
       if (tutorial.takeCompleted()) { hud.setTutorial(null); hud.toast('🎓 教程完成！进入自由建造'); sound.win(); }
+      // 顾问提示：在玩家需要某个系统的时刻情境化教学
+      if (!tutorial.active) {
+        const tip = advisor.update(sim);
+        if (tip) { hud.toast(tip); sound.click(); }
+      }
       // 严重事件（跳闸/破产）触发报警音
       if (sim.badEventCount > lastBadEvents) sound.trip();
       lastBadEvents = sim.badEventCount;

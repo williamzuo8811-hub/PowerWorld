@@ -28,7 +28,9 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   { text: '选「➖ 拉线路」，先点电厂、再点变电站，架一条高压输电线。', done: (s) => lineBetween(s, 'plant', 'substation') },
   { text: '继续用「拉线路」，把变电站接到居民区（中压配电线）。', done: (s) => lineBetween(s, 'substation', 'load') },
   { text: '点顶栏 ▶（或按空格）开始供电，让时间流动起来。', done: (s) => s.clock > 0.02 },
-  { text: '很好！盯住「频率」≈50Hz 与「发电/需求」。教程完成 🎓', done: (s) => [...s.grid.loads.values()].some((l) => l.served > 0.5) },
+  { text: '盯住「频率」≈50Hz 与「发电/需求」——居民区有电了！', done: (s) => [...s.grid.loads.values()].some((l) => l.served > 0.5) },
+  { text: '展开工具栏「储能」分类，建一座 ▰ 电池储能并用线路接到变电站——它会低充高放、平滑峰谷。', done: (s) => s.grid.batteries.size > 0 && [...s.grid.batteries.values()].some((b) => [...s.grid.lines.values()].some((ln) => ln.from === b.busId || ln.to === b.busId)) },
+  { text: '点顶栏 🔬 打开科技树，用送你的研发点解锁任意一项科技（五条分支各有专精）。教程完成 🎓', done: (s) => s.tech.unlocked.size > 0 },
 ];
 
 export class Tutorial {

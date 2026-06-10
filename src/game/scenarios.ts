@@ -222,6 +222,7 @@ SCENARIOS.push({
     sim.money = 600_000;
     sim.goalDay = Infinity;
     sim.goalReliability = 1;
+    sim.tech.points = 60; // 送研发点：教程最后一步教解锁科技
     const g = sim.grid;
     g.addPlant('coal', 5, 8); // 免费电厂（待连接）
     g.addLoad(16, 8, 'residential', 24, '居民区', 0); // 待接入的城区
