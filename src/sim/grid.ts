@@ -1,6 +1,7 @@
 // 电网图容器：管理母线、机组、负荷、线路，并提供拓扑分析（连通分量 = 孤岛）。
 import type { Bus, Generator, Load, Line, Battery, BusKind, PlantType, LoadProfile, VoltageClass } from './types';
 import { PLANTS, VOLTAGE, SUBSTATION_RATING, STORAGE, type StorageType, X_PER_TILE, R_PER_TILE } from '../config/components';
+import { Terrain } from './terrain';
 
 /** 电网可序列化数据（存档用） */
 export interface GridData {
@@ -10,6 +11,7 @@ export interface GridData {
   loads: Load[];
   lines: Line[];
   batteries: Battery[];
+  terrainSeed?: number; // 地形/资源图层种子（确定性可复现）
 }
 
 export class Grid {
@@ -18,19 +20,26 @@ export class Grid {
   loads = new Map<number, Load>();
   lines = new Map<number, Line>();
   batteries = new Map<number, Battery>();
+  terrain = new Terrain(1); // 地理资源图层（风带/光照/地形造价）
   private nextId = 1;
+
+  /** 重设地形种子（关卡/每日挑战可定制地图；已建资产不回算） */
+  setTerrainSeed(seed: number): void {
+    this.terrain = new Terrain(seed);
+  }
 
   private id(): number {
     return this.nextId++;
   }
 
-  /** 清空全部内容（开新关卡前） */
+  /** 清空全部内容（开新关卡前）；地形回到默认种子 */
   clear(): void {
     this.buses = new Map();
     this.gens = new Map();
     this.loads = new Map();
     this.lines = new Map();
     this.batteries = new Map();
+    this.terrain = new Terrain(1);
     this.nextId = 1;
   }
 
@@ -43,6 +52,7 @@ export class Grid {
       loads: [...this.loads.values()],
       lines: [...this.lines.values()],
       batteries: [...this.batteries.values()],
+      terrainSeed: this.terrain.seed,
     };
   }
 
@@ -53,6 +63,7 @@ export class Grid {
     this.loads = new Map(d.loads.map((l) => [l.id, { ...l }]));
     this.lines = new Map(d.lines.map((l) => [l.id, { ...l }]));
     this.batteries = new Map((d.batteries ?? []).map((b) => [b.id, { ...b }]));
+    this.terrain = new Terrain(d.terrainSeed ?? 1);
     this.nextId = d.nextId;
   }
 
@@ -62,16 +73,18 @@ export class Grid {
     return bus;
   }
 
-  /** 建一座电厂：自动创建母线 + 机组 */
+  /** 建一座电厂：自动创建母线 + 机组（风/光/水按落点地形记录资源系数） */
   addPlant(type: PlantType, x: number, y: number): { bus: Bus; gen: Generator } {
     const spec = PLANTS[type];
     const bus = this.addBus('plant', x, y, spec.label);
+    const site = this.terrain.siteQuality(type, x, y);
     const gen: Generator = {
       id: this.id(), busId: bus.id, type,
       capacity: spec.capacity, pmin: spec.pmin, output: 0,
       rampRate: spec.rampRate, marginalCost: spec.marginalCost,
       dispatchable: spec.dispatchable, availability: spec.dispatchable ? 1 : 0,
-      age: 0, committed: false, commitLockUntil: 0, startups: 0,
+      age: 0, siteFactor: site !== 1 ? site : undefined,
+      committed: false, commitLockUntil: 0, startups: 0,
     };
     this.gens.set(gen.id, gen);
     return { bus, gen };
@@ -238,11 +251,12 @@ export class Grid {
     return result;
   }
 
-  /** 计算建一条线路的造价（按电压等级，用于 UI 预览/扣款） */
+  /** 计算建一条线路的造价（按电压等级 × 沿线地形系数，用于 UI 预览/扣款） */
   lineCost(fromBusId: number, toBusId: number): number {
     const a = this.buses.get(fromBusId)!;
     const b = this.buses.get(toBusId)!;
     const length = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
-    return Math.round(length * VOLTAGE[this.connectionVoltage(fromBusId, toBusId)].costPerTile);
+    const terrainF = this.terrain.lineFactor(a.x, a.y, b.x, b.y);
+    return Math.round(length * VOLTAGE[this.connectionVoltage(fromBusId, toBusId)].costPerTile * terrainF);
   }
 }

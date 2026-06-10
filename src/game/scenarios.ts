@@ -232,6 +232,7 @@ export function dailySeed(date = new Date()): number {
 /** 用种子确定性生成每日挑战的题面（导出供测试） */
 export function setupDaily(sim: Simulation, seed: number): void {
   const rnd = mulberry32(seed);
+  sim.grid.setTerrainSeed(seed); // 当日地形/资源图也由日期种子决定
   const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
   sim.money = 850_000 + Math.floor(rnd() * 5) * 100_000;
   sim.goalDay = 12 + Math.floor(rnd() * 5); // 12~16 天

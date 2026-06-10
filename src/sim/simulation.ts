@@ -923,29 +923,32 @@ export class Simulation {
     return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * SALVAGE_FRACTION * 0.5);
   }
 
-  /** 在建资产取消的全额退款（反悔/撤销）：尚未投运的工程退还全部投资；非在建返回 null */
+  /** 在建资产取消的全额退款（反悔/撤销）：尚未投运的工程退还全部投资（含地形抬价）；非在建返回 null */
   cancelRefund(busId: number): number | null {
     const bus = this.grid.buses.get(busId);
     if (!bus || !bus.underConstruction) return null;
     if (bus.kind === 'plant') {
       const g = this.grid.gensAtBus(busId)[0];
-      return g ? PLANTS[g.type].capex : 0;
+      return g ? this.buildCostAt(bus.x, bus.y, PLANTS[g.type].capex) : 0;
     }
     if (bus.kind === 'storage') {
       const b = this.grid.batteriesAtBus(busId)[0];
-      return b ? STORAGE[b.type].capex : 0;
+      return b ? this.buildCostAt(bus.x, bus.y, STORAGE[b.type].capex) : 0;
     }
-    if (bus.kind === 'substation') return SUBSTATION_CAPEX;
+    if (bus.kind === 'substation') return this.buildCostAt(bus.x, bus.y, SUBSTATION_CAPEX);
     if (bus.kind === 'load') {
       const l = this.grid.loadsAtBus(busId)[0];
       return l && KEY_ACCOUNTS[l.profile] ? KEY_ACCOUNTS[l.profile].connectionCapex : 0;
     }
     return 0;
   }
-  /** 在建线路取消的全额退款；非在建返回 null */
+  /** 在建线路取消的全额退款（含沿线地形系数）；非在建返回 null */
   lineCancelRefund(ln: Line): number | null {
     if (!ln.underConstruction) return null;
-    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile);
+    const a = this.grid.buses.get(ln.from);
+    const b = this.grid.buses.get(ln.to);
+    const terrainF = a && b ? this.grid.terrain.lineFactor(a.x, a.y, b.x, b.y) : 1;
+    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * terrainF);
   }
 
   /** 某燃料的季节性回归基准（深冬抬升、夏季/换季回到 1.0） */
@@ -977,6 +980,11 @@ export class Simulation {
     this.logs.push({ time: this.clock, level, msg });
     if (level === 'bad') this.badEventCount++;
     if (this.logs.length > 40) this.logs.shift();
+  }
+
+  /** 某落点的建设造价（基准 capex × 地形系数：山地/水域更贵） */
+  buildCostAt(x: number, y: number, baseCapex: number): number {
+    return Math.round(baseCapex * this.grid.terrain.buildFactor(x, y));
   }
 
   canAfford(amount: number): boolean {
@@ -1077,9 +1085,10 @@ export class Simulation {
         if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor;
         if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
         a *= this.tech.renewAvailFactor; // 功率预测 AI：预测准 → 有效出力略升
+        a *= g.siteFactor ?? 1; // 选址资源禀赋（风带/光照分区）
         g.availability = clamp(a, 0, 1);
       } else if (g.type === 'hydro') {
-        g.availability = this.hydroAvailability; // 来水决定水电可用出力（夏丰冬枯）
+        g.availability = clamp(this.hydroAvailability * (g.siteFactor ?? 1), 0, 1); // 来水 × 临水选址
       } else if (g.type === 'coal') {
         g.availability = this.policy.coalCap; // 环保督查：燃煤限产
       }

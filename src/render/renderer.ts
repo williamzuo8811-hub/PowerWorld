@@ -21,6 +21,7 @@ export class Renderer {
   app = new Application();
   private world = new Container();
   private gridLayer = new Graphics();
+  private resourceLayer = new Graphics(); // 资源热力覆盖（选中风/光/水电工具时显示）
   private lineLayer = new Graphics();
   private flowLayer = new Graphics();
   private busLayer = new Graphics();
@@ -62,7 +63,7 @@ export class Renderer {
     });
     parent.appendChild(this.app.canvas);
 
-    this.world.addChild(this.gridLayer, this.lineLayer, this.flowLayer, this.smokeLayer, this.busLayer, this.labelLayer);
+    this.world.addChild(this.gridLayer, this.resourceLayer, this.lineLayer, this.flowLayer, this.smokeLayer, this.busLayer, this.labelLayer);
     this.app.stage.addChild(this.world);
     this.app.stage.addChild(this.ambientLayer); // 屏幕空间滤镜在最上层（不随相机移动）
 
@@ -161,9 +162,36 @@ export class Renderer {
   private drawBackgroundGrid(): void {
     const g = this.gridLayer;
     g.clear();
+    // 地形底图：水域/山地/森林用低饱和色块（资源图层让"选址"有了地理意义）
+    const TERRAIN_COLOR: Record<string, number> = { water: 0x0d1d33, hill: 0x1a212c, forest: 0x101d15 };
     for (let x = -2; x <= 60; x++) {
       for (let y = -2; y <= 36; y++) {
+        const kind = this.grid.terrain.kind(x, y);
+        const c = TERRAIN_COLOR[kind];
+        if (c != null) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color: c, alpha: 0.85 });
         g.circle(x * TILE, y * TILE, 1).fill({ color: 0x16212d, alpha: 0.8 });
+      }
+    }
+  }
+
+  /** 地形种子变化后（开新局/读档）重绘底图 */
+  refreshTerrain(): void {
+    this.drawBackgroundGrid();
+  }
+
+  /** 资源热力覆盖：选中风/光/水电建造工具时展示对应资源分布（亮=优质场址） */
+  setResourceOverlay(kind: 'wind' | 'solar' | 'hydro' | null): void {
+    const g = this.resourceLayer;
+    g.clear();
+    if (!kind) return;
+    const color = kind === 'wind' ? 0x4ade80 : kind === 'solar' ? 0xf2c94c : 0x38bdf8;
+    const range: Record<string, [number, number]> = { wind: [0.8, 1.2], solar: [0.85, 1.15], hydro: [0.85, 1.15] };
+    const [lo, hi] = range[kind];
+    for (let x = 0; x <= 58; x++) {
+      for (let y = 0; y <= 34; y++) {
+        const q = this.grid.terrain.siteQuality(kind, x, y);
+        const t = Math.max(0, Math.min(1, (q - lo) / (hi - lo)));
+        if (t > 0.05) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color, alpha: 0.04 + t * 0.22 });
       }
     }
   }

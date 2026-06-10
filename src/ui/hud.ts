@@ -66,6 +66,7 @@ export class Hud {
   onToggleSound?: () => void; // 静音切换回调
   onSettings?: () => void; // 设置面板回调
   onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
+  onToolChange?: (id: ToolId) => void; // 工具切换回调（资源覆盖联动）
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
@@ -227,6 +228,7 @@ export class Hud {
 
   setTool(id: ToolId): void {
     this.currentTool = id;
+    this.onToolChange?.(id);
     // 若所选工具在折叠分类内，展开它以便看到高亮
     const gi = TOOL_GROUPS.findIndex((g) => g.ids.includes(id));
     if (gi >= 0 && this.collapsedGroups.has(gi)) {

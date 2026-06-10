@@ -54,6 +54,7 @@ export interface Generator {
   dispatchable: boolean; // 是否可调度（火电/核电=是；风/光=否，靠天吃饭）
   availability: number; // 0..1，本 tick 可用出力系数（新能源由天气决定）
   age: number; // 役龄（游戏天，投运后累计）—— 老化用
+  siteFactor?: number; // 选址资源系数（风带/光照/临水，建厂时由地形决定；火电/核电为 1）
   outageUntil?: number; // 强迫停运结束时刻（累计仿真小时），其间离线
   ccs?: boolean; // 是否加装碳捕集（捕碳但边际成本上升）
   committed?: boolean; // 机组组合：是否已并网在线（用于启停成本/最小开停机）
