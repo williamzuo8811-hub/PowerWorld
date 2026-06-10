@@ -792,6 +792,8 @@ async function start(): Promise<void> {
       wasGameOver = sim.gameOver;
     }
     renderer.clock = sim.clock;
+    renderer.hourOfDay = sim.hourOfDay;
+    renderer.weatherKind = sim.events.current;
     renderer.update(dt);
     if (hintTimer > 0) {
       hintTimer -= dt;

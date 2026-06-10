@@ -7,6 +7,16 @@ import { PLANTS, VOLTAGE, STORAGE, KEY_ACCOUNTS } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
+// 标签样式缓存（避免每帧 new TextStyle 的分配）
+const LABEL_STYLE = new TextStyle({ fontFamily: 'monospace', fontSize: 11, fill: 0xcfe3f2 });
+
+/** 煤电烟雾粒子 */
+interface Smoke {
+  x: number; y: number; // 世界像素
+  vx: number; vy: number;
+  age: number; // 0..1
+}
+
 export class Renderer {
   app = new Application();
   private world = new Container();
@@ -14,9 +24,13 @@ export class Renderer {
   private lineLayer = new Graphics();
   private flowLayer = new Graphics();
   private busLayer = new Graphics();
+  private smokeLayer = new Graphics();
   private labelLayer = new Container();
+  private ambientLayer = new Graphics(); // 屏幕空间：昼夜/天气色调滤镜
   private labels = new Map<number, Text>(); // busId -> Text
   private flowPhase = new Map<number, number>(); // lineId -> 0..1
+  private smokes: Smoke[] = [];
+  private lightningTimer = 0; // 风暴闪电计时
 
   // 相机
   private camX = 0;
@@ -33,6 +47,8 @@ export class Renderer {
   categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
   clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
   colorblind = false; // 色盲友好配色（负载色阶避开红绿对比）
+  hourOfDay = 12; // 当前一天中的小时（昼夜色调用，由外部每帧写入）
+  weatherKind = 'clear'; // 当前天气事件种类（天气滤镜用）
 
   constructor(private grid: Grid) {}
 
@@ -46,8 +62,9 @@ export class Renderer {
     });
     parent.appendChild(this.app.canvas);
 
-    this.world.addChild(this.gridLayer, this.lineLayer, this.flowLayer, this.busLayer, this.labelLayer);
+    this.world.addChild(this.gridLayer, this.lineLayer, this.flowLayer, this.smokeLayer, this.busLayer, this.labelLayer);
     this.app.stage.addChild(this.world);
+    this.app.stage.addChild(this.ambientLayer); // 屏幕空间滤镜在最上层（不随相机移动）
 
     // 初始相机：让世界大致居中
     this.camX = 80;
@@ -155,7 +172,66 @@ export class Renderer {
   update(dtSec: number): void {
     this.drawLines(dtSec);
     this.drawBuses();
+    this.updateSmoke(dtSec);
     this.syncLabels();
+    this.drawAmbient(dtSec);
+  }
+
+  /** 昼夜色调 + 天气滤镜（屏幕空间，轻量低饱和） */
+  private drawAmbient(dtSec: number): void {
+    const g = this.ambientLayer;
+    g.clear();
+    const w = this.app.screen.width, h = this.app.screen.height;
+    // 昼夜：夜里罩深蓝、黎明/黄昏带暖色
+    const hr = this.hourOfDay;
+    const dayness = Math.max(0, Math.min(1, (Math.cos(((hr - 13) / 24) * 2 * Math.PI) + 0.5) * 1.2)); // 13 点最亮
+    const nightAlpha = (1 - dayness) * 0.22;
+    if (nightAlpha > 0.01) g.rect(0, 0, w, h).fill({ color: 0x0a1228, alpha: nightAlpha });
+    const dusk = Math.max(0, 1 - Math.abs(hr - 6.5) / 1.5) + Math.max(0, 1 - Math.abs(hr - 18.5) / 1.5);
+    if (dusk > 0.02) g.rect(0, 0, w, h).fill({ color: 0xff9a4d, alpha: dusk * 0.05 });
+    // 天气滤镜
+    const tints: Record<string, [number, number]> = {
+      heatwave: [0xff7733, 0.06], coldsnap: [0x9cc8ff, 0.08], overcast: [0x6b7886, 0.12], calm: [0x8896a6, 0.05], storm: [0x4a5666, 0.16],
+    };
+    const t = tints[this.weatherKind];
+    if (t) g.rect(0, 0, w, h).fill({ color: t[0], alpha: t[1] });
+    // 风暴闪电：随机短促白闪
+    if (this.weatherKind === 'storm') {
+      this.lightningTimer -= dtSec;
+      if (this.lightningTimer <= 0) this.lightningTimer = 1.5 + Math.random() * 4;
+      if (this.lightningTimer < 0.1) g.rect(0, 0, w, h).fill({ color: 0xffffff, alpha: 0.18 });
+    }
+  }
+
+  /** 煤/燃气电厂烟雾粒子：出力越大烟越多（与"临近污染压口碑"机制视觉呼应） */
+  private updateSmoke(dtSec: number): void {
+    // 生成
+    for (const gen of this.grid.gens.values()) {
+      if (gen.output < 1) continue;
+      const co2Heavy = gen.type === 'coal' ? 1 : gen.type === 'gas' ? 0.35 : 0;
+      if (co2Heavy === 0) continue;
+      const bus = this.grid.buses.get(gen.busId);
+      if (!bus || bus.underConstruction) continue;
+      const rate = (gen.output / gen.capacity) * co2Heavy * 6; // 粒子/秒
+      if (Math.random() < rate * dtSec && this.smokes.length < 140) {
+        this.smokes.push({
+          x: bus.x * TILE + (Math.random() - 0.5) * 8,
+          y: bus.y * TILE - 12,
+          vx: (Math.random() - 0.2) * 6,
+          vy: -14 - Math.random() * 8,
+          age: 0,
+        });
+      }
+    }
+    // 推进 + 绘制
+    const g = this.smokeLayer;
+    g.clear();
+    this.smokes = this.smokes.filter((s) => (s.age += dtSec / 2.6) < 1);
+    for (const s of this.smokes) {
+      s.x += s.vx * dtSec;
+      s.y += s.vy * dtSec;
+      g.circle(s.x, s.y, 2 + s.age * 5).fill({ color: 0x8a949e, alpha: 0.16 * (1 - s.age) });
+    }
   }
 
   private drawLines(dtSec: number): void {
@@ -268,6 +344,21 @@ export class Renderer {
 
       if (bus.kind === 'plant') {
         g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+        // 风机叶片动画：转速 ∝ 当前风况可用度
+        if (gen0?.type === 'wind' && !bus.underConstruction) {
+          const speed = 0.5 + gen0.availability * 5;
+          const ang = (this.clock * speed) % (Math.PI * 2);
+          for (let k = 0; k < 3; k++) {
+            const a = ang + (k * 2 * Math.PI) / 3;
+            g.moveTo(cx, cy).lineTo(cx + Math.cos(a) * r * 0.85, cy + Math.sin(a) * r * 0.85)
+              .stroke({ width: 2, color: 0xeafff8, alpha: 0.9 * alpha });
+          }
+          g.circle(cx, cy, 2).fill({ color: 0xeafff8, alpha });
+        }
+        // 光伏正午高亮：板面反光随太阳角度
+        if (gen0?.type === 'solar' && !bus.underConstruction && gen0.availability > 0.05) {
+          g.rect(cx - r + 2, cy - r + 2, (r * 2 - 4) * gen0.availability, 3).fill({ color: 0xfff7cc, alpha: 0.8 * alpha });
+        }
       } else if (bus.kind === 'load') {
         // 用一个房子状的多边形表示负荷
         g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
@@ -289,13 +380,12 @@ export class Renderer {
 
   /** 维护每个母线下方的文字标签（缓存复用，按需增删） */
   private syncLabels(): void {
-    const style = new TextStyle({ fontFamily: 'monospace', fontSize: 11, fill: 0xcfe3f2 });
     const alive = new Set<number>();
     for (const bus of this.grid.buses.values()) {
       alive.add(bus.id);
       let t = this.labels.get(bus.id);
       if (!t) {
-        t = new Text({ text: '', style });
+        t = new Text({ text: '', style: LABEL_STYLE.clone() });
         t.anchor.set(0.5, 0);
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
