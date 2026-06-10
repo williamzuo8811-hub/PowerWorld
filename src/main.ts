@@ -332,6 +332,7 @@ function openFinance(): void {
 /** 评估成就并弹出新解锁的提示 */
 function pollAchievements(): void {
   const techCount = sim.tech.unlocked.size;
+  const kaKinds = new Set([...sim.grid.loads.values()].filter((l) => KEY_ACCOUNTS[l.profile] && !sim.grid.buses.get(l.busId)?.underConstruction).map((l) => l.profile)).size;
   achievements.evaluate({
     peakServed: sim.peakServed,
     totalEnergyServed: sim.totalEnergyServed,
@@ -339,8 +340,15 @@ function pollAchievements(): void {
     reputation: sim.reputation,
     techCount,
     allTech: techCount >= ALL_TECH_COUNT,
-    won: sim.gameOver && sim.win,
+    won: sim.win,
     n1Secure: sim.n1Secure,
+    grade: sim.gradeScore().grade,
+    outageEnergyTotal: sim.outageEnergyTotal,
+    netWorth: sim.netWorth,
+    debt: sim.debt,
+    marketShare: sim.marketShare,
+    day: sim.day,
+    keyAccountKinds: kaKinds,
   });
   for (const a of achievements.drain()) { hud.toast(`🏆 成就解锁：${a.name}`); sound.unlock(); }
 }
