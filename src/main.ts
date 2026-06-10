@@ -231,6 +231,7 @@ function openFinance(): void {
       capacityAdequacy: sim.capacityAdequacy,
       regPrice: sim.regPrice,
       reservePrice: sim.reservePrice,
+      reserveReqMult: sim.reserveReqMult,
       capCommitMW: sim.capCommitments.reduce((s, c) => s + c.mw, 0),
       zoneNorth: sim.zoneNorthPrice,
       zoneSouth: sim.zoneSouthPrice,

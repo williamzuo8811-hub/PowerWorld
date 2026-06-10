@@ -36,7 +36,7 @@ import {
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
   AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
-  AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX,
+  AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
   FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
@@ -211,6 +211,9 @@ export class Simulation {
   capacityAdequacy = 1; // 区域容量充裕度
   regPrice = AS_REG_PRICE_BASE; // 当前调频出清价 ¥/(MW·天)
   reservePrice = AS_RESERVE_PRICE_BASE; // 当前备用出清价 ¥/(MW·天)
+  reserveReqMult = 1; // 新能源预测误差对运行备用需求的放大倍数（≥1）
+  reserveRequirementMW = 0; // 当前运行备用需求 (MW)
+  renewablePenetration = 0; // 当前瞬时新能源出力占比 0..1
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -1062,7 +1065,17 @@ export class Simulation {
     const regReq = this.regionalDemand * AS_REG_REQ_FRAC;
     const regSupply = regCap + compCap * AS_COMP_FAST_FRAC;
     this.regPrice = AS_REG_PRICE_BASE * clamp(1 + (AS_ADEQ_REF - regSupply / Math.max(regReq, 1)) * AS_K, AS_PRICE_MIN, AS_PRICE_MAX);
-    const reserveReq = this.regionalDemand * AS_RESERVE_REQ_FRAC;
+    // 新能源预测误差推高运行备用需求：按当前瞬时新能源出力占比放大（无新能源出力则不加）
+    let renewOut = 0, totalOut = 0;
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      totalOut += g.output;
+      if (!g.dispatchable) renewOut += g.output;
+    }
+    this.renewablePenetration = totalOut > 0.5 ? clamp(renewOut / totalOut, 0, 1) : 0;
+    this.reserveReqMult = 1 + RENEW_RESERVE_K * this.renewablePenetration;
+    const reserveReq = this.regionalDemand * AS_RESERVE_REQ_FRAC * this.reserveReqMult;
+    this.reserveRequirementMW = reserveReq;
     const reserveSupply = reserveCap + compCap * AS_COMP_RESERVE_FRAC;
     this.reservePrice = AS_RESERVE_PRICE_BASE * clamp(1 + (AS_ADEQ_REF - reserveSupply / Math.max(reserveReq, 1)) * AS_K, AS_PRICE_MIN, AS_PRICE_MAX);
     const ancillaryIncome = (regCap * this.regPrice + reserveCap * this.reservePrice) * omDayFrac;

@@ -267,6 +267,7 @@ export const AS_RESERVE_PRICE_BASE = 2.5; // 备用基准价 ¥/(MW·天)
 export const AS_GAS_REG_FACTOR = 0.5; // 燃气可提供调频的容量比例
 export const AS_REG_REQ_FRAC = 0.10; // 调频需求占区域需求比例
 export const AS_RESERVE_REQ_FRAC = 0.20; // 备用需求占区域需求比例
+export const RENEW_RESERVE_K = 0.8; // 新能源占比对运行备用需求的放大系数（满清洁时 +80%，覆盖预测误差）
 export const AS_COMP_FAST_FRAC = 0.05; // 竞争对手可提供调频的容量比例（仅少量机组快速）
 export const AS_COMP_RESERVE_FRAC = 0.10; // 竞争对手可提供备用的容量比例
 export const AS_ADEQ_REF = 1.2; // 充裕度参考点

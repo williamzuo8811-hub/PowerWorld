@@ -31,6 +31,7 @@ export interface FinanceData {
   capacityAdequacy: number;
   regPrice: number;
   reservePrice: number;
+  reserveReqMult: number;
   capCommitMW: number;
   zoneNorth: number;
   zoneSouth: number;
@@ -135,7 +136,8 @@ export class FinancePanel {
         d.capacityAdequacy < 1 ? 'freq-warn' : '')
       + row('北区/南区价 · 跨区套利', `¥${d.zoneNorth.toFixed(0)} / ¥${d.zoneSouth.toFixed(0)} · ${d.zoneArbMW.toFixed(0)}MW`,
         d.zoneArbMW > 0 ? 'freq-ok' : '')
-      + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`);
+      + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`)
+      + row('备用需求系数', `×${d.reserveReqMult.toFixed(2)}（新能源预测误差）`, d.reserveReqMult > 1.3 ? 'freq-warn' : '');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');
