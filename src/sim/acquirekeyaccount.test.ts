@@ -58,4 +58,27 @@ describe('大客户竞价招商', () => {
     for (let k = 0; k < 8; k++) dominant.grid.addPlant('coal', k, 0); // 玩家主导市场
     expect(contested.keyAccountAcquireCost('datacenter')).toBeGreaterThan(dominant.keyAccountAcquireCost('datacenter'));
   });
+
+  it('限时招商机会期间接入费打折，仅限对应品类', () => {
+    const sim = withStanding(80, 1, 1);
+    const normalDC = sim.keyAccountAcquireCost('datacenter');
+    const normalMine = sim.keyAccountAcquireCost('mining');
+    sim.keyAccountLead = { profile: 'datacenter', endClock: sim.clock + 1000 };
+    expect(sim.keyAccountLeadActive('datacenter')).toBe(true);
+    expect(sim.keyAccountLeadActive('mining')).toBe(false);
+    expect(sim.keyAccountAcquireCost('datacenter')).toBeLessThan(normalDC); // 数据中心打折
+    expect(sim.keyAccountAcquireCost('mining')).toBe(normalMine); // 矿业不受影响
+  });
+
+  it('招商机会到点出现并可存档', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    expect(sim.keyAccountLead).toBeNull();
+    for (let i = 0; i < 24 * 6; i++) sim.tick(3600, 1); // 推进 6 天（超过首个机会日）
+    expect(sim.keyAccountLead).not.toBeNull();
+    const blob = JSON.parse(JSON.stringify(sim.serialize()));
+    const sim2 = new Simulation();
+    sim2.deserialize(blob);
+    expect(sim2.keyAccountLead?.profile).toBe(sim.keyAccountLead?.profile);
+  });
 });

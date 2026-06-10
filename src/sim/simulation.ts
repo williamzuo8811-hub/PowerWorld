@@ -22,6 +22,7 @@ import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
   CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, BACKUP_FRACTION, BACKUP_CAPEX,
   ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
+  LEAD_FIRST_DAY, LEAD_INTERVAL_DAYS, LEAD_WINDOW_DAYS, LEAD_DISCOUNT,
   UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
@@ -169,6 +170,8 @@ export interface SimSaveState {
   frequency: number;
   reliability: number;
   reputation: number;
+  keyAccountLead: { profile: LoadProfile; endClock: number } | null;
+  nextLeadAt: number;
   renewableShare: number;
   windBase: number;
   lastLossFraction: number;
@@ -208,6 +211,8 @@ export class Simulation {
   reliability = 1; // 供电率滑动平均 0..1
   reputation = 70; // 公众形象 0..100
   customerSatisfaction = 1; // 大客户加权满意度 0..1
+  keyAccountLead: { profile: LoadProfile; endClock: number } | null = null; // 当前限时招商机会
+  nextLeadAt = LEAD_FIRST_DAY * 24; // 下个招商机会出现时刻
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
   peakServed = 0; // 历史峰值供电 (MW) —— 成就用
   totalEnergyServed = 0; // 累计送达电量 (MWh) —— 成就用
@@ -283,6 +288,8 @@ export class Simulation {
     this.reliability = 1;
     this.reputation = 70;
     this.customerSatisfaction = 1;
+    this.keyAccountLead = null;
+    this.nextLeadAt = LEAD_FIRST_DAY * 24;
     this.renewableShare = 1;
     this.peakServed = 0;
     this.totalEnergyServed = 0;
@@ -348,7 +355,9 @@ export class Simulation {
   serialize(): SimSaveState {
     return {
       money: this.money, clock: this.clock, frequency: this.frequency,
-      reliability: this.reliability, reputation: this.reputation, renewableShare: this.renewableShare,
+      reliability: this.reliability, reputation: this.reputation,
+      keyAccountLead: this.keyAccountLead ? { ...this.keyAccountLead } : null, nextLeadAt: this.nextLeadAt,
+      renewableShare: this.renewableShare,
       windBase: this.windBase, lastLossFraction: this.lastLossFraction,
       goalDay: this.goalDay, goalReliability: this.goalReliability, carbonPriceMult: this.carbonPriceMult, sandbox: this.sandbox,
       gameOver: this.gameOver, win: this.win,
@@ -381,6 +390,8 @@ export class Simulation {
     this.frequency = d.frequency;
     this.reliability = d.reliability;
     this.reputation = d.reputation ?? 70;
+    this.keyAccountLead = d.keyAccountLead ? { ...d.keyAccountLead } : null;
+    this.nextLeadAt = d.nextLeadAt ?? LEAD_FIRST_DAY * 24;
     this.renewableShare = d.renewableShare ?? 1;
     this.windBase = d.windBase;
     this.lastLossFraction = d.lastLossFraction;
@@ -942,6 +953,9 @@ export class Simulation {
 
     // —— 迎峰预警：进入夏/冬旺季时校核可信容量对季节峰值的充裕度 ——
     this.checkSeasonAlert();
+
+    // —— 限时招商机会调度 ——
+    this.checkKeyAccountLead();
 
     // —— 机组老化 + 强迫停运 ——
     const dtDays = dtHours / 24;
@@ -1638,7 +1652,26 @@ export class Simulation {
     if (this.companyStanding < ACQ_STANDING_MIN) return -1; // 大客户拒绝入驻
     const factor = clamp(ACQ_FACTOR_BASE - this.companyStanding * ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX);
     const compFactor = clamp(1 + ACQ_COMP_K * this.marketContestation, 1, ACQ_COMP_MAX);
-    return Math.round(spec.connectionCapex * factor * compFactor);
+    const leadDiscount = this.keyAccountLeadActive(profile) ? LEAD_DISCOUNT : 1; // 限时招商机会折扣
+    return Math.round(spec.connectionCapex * factor * compFactor * leadDiscount);
+  }
+
+  /** 当前是否有针对该品类的限时招商机会 */
+  keyAccountLeadActive(profile: LoadProfile): boolean {
+    return !!this.keyAccountLead && this.keyAccountLead.profile === profile && this.clock < this.keyAccountLead.endClock;
+  }
+
+  /** 限时招商机会调度：到点出现、过期清除 */
+  private checkKeyAccountLead(): void {
+    if (this.keyAccountLead && this.clock >= this.keyAccountLead.endClock) this.keyAccountLead = null;
+    if (this.clock >= this.nextLeadAt) {
+      const profiles: LoadProfile[] = ['datacenter', 'transport', 'petrochem', 'mining'];
+      const p = profiles[Math.floor(Math.random() * profiles.length)];
+      this.keyAccountLead = { profile: p, endClock: this.clock + LEAD_WINDOW_DAYS * 24 };
+      this.nextLeadAt = this.clock + LEAD_INTERVAL_DAYS * 24 + Math.random() * 48;
+      const spec = KEY_ACCOUNTS[p];
+      this.log('good', `🎯 招商机会：${spec.icon}${spec.label}正在选址，${LEAD_WINDOW_DAYS}天内接入享 ${(LEAD_DISCOUNT * 10).toFixed(0)}折接入费！`);
+    }
   }
 
   /** 电网是否具备黑启动能力（有可用燃气机组或有电量的储能作种子） */

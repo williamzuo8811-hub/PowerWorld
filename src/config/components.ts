@@ -398,6 +398,11 @@ export const ACQ_FACTOR_MIN = 0.8; // 高竞争力最多打到 0.8 折
 export const ACQ_FACTOR_MAX = 1.8; // 低竞争力最高 1.8 倍溢价
 export const ACQ_COMP_K = 0.5; // 市场竞争激烈度对招商成本的加成系数
 export const ACQ_COMP_MAX = 1.5; // 竞争最激烈时招商成本最高加成（×1.5）
+// —— 限时招商机会：某类大客户正在选址，窗口期内接入享折扣 ——
+export const LEAD_FIRST_DAY = 4; // 首个招商机会出现的天
+export const LEAD_INTERVAL_DAYS = 6; // 招商机会间隔（天）
+export const LEAD_WINDOW_DAYS = 3; // 招商窗口时长（天）
+export const LEAD_DISCOUNT = 0.6; // 窗口期内接入费折扣
 // —— 大客户流失与自备应急 ——
 export const CHURN_THRESHOLD = 0.55; // 满意度持续低于此累积流失风险
 export const CHURN_DAYS = 3; // 持续低满意达此天数 → 大客户流失（撤离）

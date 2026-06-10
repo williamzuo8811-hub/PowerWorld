@@ -10,6 +10,7 @@ export interface PortfolioPanelOptions {
   customerSatisfaction: number;
   companyStanding: number;
   marketContestation: number;
+  lead: { icon: string; label: string; daysLeft: number } | null;
   activeFilter: string | null;
   onFilter: (key: string | null) => void; // 点击品类→设置地图高亮筛选（再次点击同项=清除）
   onClose: () => void;
@@ -29,8 +30,12 @@ export class PortfolioPanel {
 
     const sat = o.customerSatisfaction;
     const satCls = sat >= 0.85 ? 'freq-ok' : sat >= 0.6 ? 'freq-warn' : 'freq-bad';
+    const leadBanner = o.lead
+      ? `<div style="margin:6px 0;padding:8px 10px;border-radius:8px;background:rgba(74,222,128,0.14);border:1px solid rgba(74,222,128,0.4);font-size:12px">🎯 招商机会：${o.lead.icon}${o.lead.label} 正在选址 · 剩 ${o.lead.daysLeft.toFixed(1)} 天 · 接入享折扣</div>`
+      : '';
     panel.innerHTML = `<h1>🗂 能源品类</h1>`
       + `<p class="sub">点击品类 → 地图高亮该类资产、淡化其余（再次点击或 Esc 清除）</p>`
+      + leadBanner
       + `<div style="display:flex;justify-content:space-between;padding:4px 0">`
       + `<span style="color:var(--text-dim)">大客户加权满意度</span><b class="${satCls}">${(sat * 100).toFixed(0)}%</b></div>`
       + `<div style="display:flex;justify-content:space-between;padding:4px 0">`

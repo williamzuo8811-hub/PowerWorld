@@ -181,6 +181,7 @@ function openPortfolio(): void {
     customerSatisfaction: sim.customerSatisfaction,
     companyStanding: sim.companyStanding,
     marketContestation: sim.marketContestation,
+    lead: sim.keyAccountLead ? { icon: KEY_ACCOUNTS[sim.keyAccountLead.profile].icon, label: KEY_ACCOUNTS[sim.keyAccountLead.profile].label, daysLeft: Math.max(0, (sim.keyAccountLead.endClock - sim.clock) / 24) } : null,
     activeFilter: renderer.categoryFilter,
     onFilter: (key) => {
       renderer.categoryFilter = key;
