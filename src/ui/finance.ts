@@ -23,6 +23,8 @@ export interface FinanceData {
   marketExport: number;
   demandResponse: boolean;
   drCurtailed: number;
+  interruptibleMW: number;
+  interruptibleRate: number;
   marketShare: number;
   clearingPrice: number;
   regionalDemand: number;
@@ -63,6 +65,7 @@ export interface FinancePanelOptions {
   onToggleInsurance: () => void;
   onToggleMarket: () => void;
   onToggleDR: () => void;
+  onInterruptible: (mw: number, days: number) => void;
   onClose: () => void;
 }
 
@@ -259,6 +262,15 @@ export class FinancePanel {
     drBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     mkBtn(drBtns, d.demandResponse ? '退出需求响应' : '启用需求响应', true, () => o.onToggleDR());
     panel.appendChild(drBtns);
+
+    // 可中断负荷合同
+    panel.insertAdjacentHTML('beforeend', section(`可中断负荷合同（持有 ${d.interruptibleMW.toFixed(0)}MW · 可用费 ¥${d.interruptibleRate.toFixed(1)}/MW·天 · 作备用/容量资源）`));
+    const interBtns = document.createElement('div');
+    interBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    mkBtn(interBtns, '签约 30MW×10天', true, () => o.onInterruptible(30, 10));
+    mkBtn(interBtns, '签约 60MW×20天', true, () => o.onInterruptible(60, 20));
+    if (d.interruptibleMW > 0) mkBtn(interBtns, '解约', true, () => o.onInterruptible(0, 0));
+    panel.appendChild(interBtns);
 
     panel.insertAdjacentHTML('beforeend', section(`融资（信用额度 ¥${fmt(d.creditLimit)} · 可借 ¥${fmt(avail)} · 日利率 ${(d.dailyRate * 100).toFixed(2)}%）`));
 

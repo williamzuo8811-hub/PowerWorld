@@ -220,6 +220,8 @@ function openFinance(): void {
       marketExport: sim.marketExportMW,
       demandResponse: sim.demandResponse,
       drCurtailed: sim.drCurtailedMW,
+      interruptibleMW: sim.interruptibleMW,
+      interruptibleRate: sim.interruptiblePremiumRate,
       marketShare: sim.marketShare,
       clearingPrice: sim.marketClearingPrice,
       regionalDemand: sim.regionalDemand,
@@ -251,6 +253,11 @@ function openFinance(): void {
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
     onToggleDR: () => { sim.demandResponse = !sim.demandResponse; sim.log('info', sim.demandResponse ? '📉 已启用需求响应' : '已退出需求响应'); sound.click(); openFinance(); },
+    onInterruptible: (mw, days) => {
+      if (mw <= 0) { sim.interruptibleMW = 0; sim.interruptibleEndClock = 0; sim.log('info', '已解约可中断负荷'); sound.click(); }
+      else if (sim.signInterruptible(mw, days)) sound.build(); else sound.error();
+      openFinance();
+    },
     onClose: () => { finPanel.hide(); panelOpen = false; },
   });
 }

@@ -38,7 +38,7 @@ import {
   AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
   AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
   FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX,
-  STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K,
+  STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K, INTERRUPT_RATE_BASE, INTERRUPT_SEASON_K,
   FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
@@ -171,6 +171,8 @@ export interface SimSaveState {
   marketEnabled: boolean;
   demandResponse: boolean;
   mergedCapacity: { mw: number; marginalCost: number }[];
+  interruptibleMW: number;
+  interruptibleEndClock: number;
   history: HistorySample[];
   nextSampleAt: number;
 }
@@ -220,6 +222,8 @@ export class Simulation {
   flexRequirementMW = 0; // 当前灵活性需求 (MW)
   storageArbDay = 0; // 储能价差套利日收益（EMA, ¥/天）
   netLoadAvg = 0; // 净负荷日均（套利价差信号的参考）
+  interruptibleMW = 0; // 已签约的可中断负荷容量 (MW)
+  interruptibleEndClock = 0; // 可中断合同到期时刻（仿真小时）
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -296,6 +300,8 @@ export class Simulation {
     this.flexPrice = FLEX_PRICE_BASE;
     this.storageArbDay = 0;
     this.netLoadAvg = 0;
+    this.interruptibleMW = 0;
+    this.interruptibleEndClock = 0;
     this.lastSeason = '';
     this.history = [];
     this.nextSampleAt = 0;
@@ -329,6 +335,8 @@ export class Simulation {
       marketEnabled: this.marketEnabled,
       demandResponse: this.demandResponse,
       mergedCapacity: this.mergedCapacity.map((m) => ({ ...m })),
+      interruptibleMW: this.interruptibleMW,
+      interruptibleEndClock: this.interruptibleEndClock,
       history: this.history.map((h) => ({ ...h })),
       nextSampleAt: this.nextSampleAt,
     };
@@ -370,6 +378,8 @@ export class Simulation {
     this.marketEnabled = d.marketEnabled ?? false;
     this.demandResponse = d.demandResponse ?? false;
     this.mergedCapacity = (d.mergedCapacity ?? []).map((m) => ({ ...m }));
+    this.interruptibleMW = d.interruptibleMW ?? 0;
+    this.interruptibleEndClock = d.interruptibleEndClock ?? 0;
     this.history = (d.history ?? []).map((h) => ({ ...h }));
     this.nextSampleAt = d.nextSampleAt ?? 0;
   }
@@ -439,6 +449,20 @@ export class Simulation {
     if (p < 0.625) return '秋';
     return '冬';
   }
+  /** 可中断负荷可用费率 ¥/(MW·天)：旺季更贵（更稀缺、更值钱） */
+  get interruptiblePremiumRate(): number {
+    const s = seasonIntensity(this.yearPhase);
+    return INTERRUPT_RATE_BASE * (1 + INTERRUPT_SEASON_K * Math.max(s.summer, s.winter));
+  }
+  /** 签订可中断负荷合同：承诺 mw MW × days 天（替换现有合同） */
+  signInterruptible(mw: number, days: number): boolean {
+    if (mw <= 0 || days <= 0) return false;
+    this.interruptibleMW = mw;
+    this.interruptibleEndClock = this.clock + days * 24;
+    this.log('info', `🔌 签订可中断负荷合同：${mw.toFixed(0)}MW × ${days}天（可用费 ¥${this.interruptiblePremiumRate.toFixed(1)}/MW·天，作备用/容量资源）`);
+    return true;
+  }
+
   /** 季节性检修成本系数：换季优惠、旺季加价（按夏/冬峰强度插值） */
   get seasonMaintFactor(): number {
     const s = seasonIntensity(this.yearPhase);
@@ -1060,8 +1084,13 @@ export class Simulation {
       if (b.kind === 'substation' && !b.underConstruction) omCost += SUBSTATION_OM_PER_DAY * omDayFrac;
     }
 
+    // —— 可中断负荷合同：到期失效；作为可信容量与运行备用资源参与 ——
+    if (this.clock >= this.interruptibleEndClock) this.interruptibleMW = 0;
+    const interMW = this.interruptibleMW;
+    const interruptPremium = interMW * this.interruptiblePremiumRate * omDayFrac; // 季节性可用费
+
     // —— 容量补偿：按可用确定性容量获补偿（奖励保留备用）——
-    let firmCapacity = 0;
+    let firmCapacity = interMW; // 可中断负荷=确定性可信容量
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
       firmCapacity += g.capacity * CAPACITY_CREDIT[g.type];
@@ -1133,7 +1162,7 @@ export class Simulation {
     }
 
     // —— 需求响应激励：付费换取尖峰削减 ——
-    const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours;
+    const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours + interruptPremium;
 
     // —— 输电阻塞成本：线路超过阈值负载率即计费 ——
     let congestionCost = 0;
