@@ -265,8 +265,13 @@ export const CONGESTION_PRICE = 8; // 阻塞费 ¥/(MW·MWh 超额)
 
 // —— 需求响应（可中断负荷）——
 // 高价时段付激励让用户自愿削减用电，平抑尖峰、替代昂贵调峰/购电。
-export const DR_FRACTION = 0.12; // 可削减的需求比例
+export const DR_FRACTION = 0.12; // 可削减的需求基准比例
 export const DR_TRIGGER_PRICE = 110; // 现货价高于此触发需求响应
+// 各品类可中断性：石化/矿业等过程负荷最可中断，数据中心最不愿被切（要可靠）
+export const DR_CURTAILABILITY: Record<LoadProfile, number> = {
+  residential: 0.3, commercial: 0.6, industrial: 1.0,
+  datacenter: 0.2, transport: 0.4, petrochem: 1.6, mining: 1.2,
+};
 export const DR_INCENTIVE = 90; // 削减激励 ¥/MWh（低于峰荷供电成本）
 
 // —— 辅助服务市场（调频 + 运行备用，竞价出清）——

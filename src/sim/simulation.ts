@@ -37,7 +37,7 @@ import {
   REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
   CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
   CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
-  CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
+  CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_CURTAILABILITY, DR_TRIGGER_PRICE, DR_INCENTIVE,
   AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
   AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
   FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX,
@@ -933,14 +933,15 @@ export class Simulation {
     // —— 更新负荷需求（城市增长 × 竞争力 + 噪声 + 事件 + 需求响应 + 景气）——
     const compFactor = clamp(0.6 + this.marketShare * COMPETITIVENESS_K, 0.6, 1.5); // 越有竞争力获客越快
     const drActive = this.demandResponse && this.spotPrice > DR_TRIGGER_PRICE; // 高价时段触发可中断负荷
-    const drFactor = drActive ? 1 - DR_FRACTION : 1;
     this.drCurtailedMW = 0;
     for (const load of this.grid.loads.values()) {
       if (this.grid.buses.get(load.busId)?.underConstruction) { load.demand = 0; continue; } // 在建大客户尚未接入
       load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
       const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor * this.seasonDemandFactor;
-      load.demand = full * drFactor;
+      // 各品类可中断性不同：石化/矿业可大幅削减，数据中心几乎不切
+      const curtail = drActive ? clamp(DR_FRACTION * DR_CURTAILABILITY[load.profile], 0, 0.9) : 0;
+      load.demand = full * (1 - curtail);
       this.drCurtailedMW += full - load.demand;
     }
 

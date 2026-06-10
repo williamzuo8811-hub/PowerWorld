@@ -67,6 +67,27 @@ describe('大客户负荷（能源品类）', () => {
     expect(load.demand).toBe(0);
   });
 
+  it('需求响应：石化最可中断，数据中心几乎不切', () => {
+    function demandWith(profile: 'petrochem' | 'datacenter', dr: boolean, spot: number): number {
+      const orig = Math.random;
+      Math.random = () => 0.5; // 去噪
+      try {
+        const sim = new Simulation();
+        sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+        sim.demandResponse = dr;
+        const { load } = sim.grid.addLoad(0, 0, profile, 50, 'L', 0);
+        sim.spotPrice = spot; // 需求循环开始即读取该价
+        sim.tick(0.05, 600);
+        return load.demand;
+      } finally { Math.random = orig; }
+    }
+    const petroCurtail = 1 - demandWith('petrochem', true, 200) / demandWith('petrochem', false, 50);
+    const dcCurtail = 1 - demandWith('datacenter', true, 200) / demandWith('datacenter', false, 50);
+    expect(petroCurtail).toBeGreaterThan(dcCurtail);
+    expect(petroCurtail).toBeGreaterThan(0.1); // 石化明显被削峰
+    expect(dcCurtail).toBeLessThan(0.05); // 数据中心几乎不被切
+  });
+
   it('KEY_ACCOUNTS 含四类大客户且 profile 一致', () => {
     expect(Object.keys(KEY_ACCOUNTS).sort()).toEqual(['datacenter', 'mining', 'petrochem', 'transport']);
     for (const [id, spec] of Object.entries(KEY_ACCOUNTS)) {
