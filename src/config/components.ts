@@ -337,6 +337,17 @@ export const VOLTAGE: Record<VoltageClass, VoltageSpec> = {
 // —— 电气常量 ——
 export const X_PER_TILE = 0.018; // 单位长度电抗
 export const R_PER_TILE = 0.004; // 单位长度电阻
+// —— 无功功率与电压（在 DC 潮流之上做无功平衡近似，驱动电压质量与电容补偿）——
+export const LOAD_PF_TAN = 0.33; // 负荷无功/有功比（功率因数≈0.95 滞后）
+export const GEN_Q_FACTOR = 0.5; // 机组无功能力 = 在线容量 × 此值 (MVAr/MW)
+export const STORAGE_Q_FACTOR = 0.4; // 储能逆变器无功能力
+export const LINE_Q_PER_FLOW2 = 0.02; // 线路无功消耗 = flow² × 电抗 × 此值（长重线压降）
+export const CAPACITOR_Q = 22; // 单组电容器无功补偿 (MVAr)
+export const CAPACITOR_CAPEX = 60_000; // 电容器组改造造价
+export const VOLT_SAG_K = 0.35; // 无功缺额→电压跌落系数
+export const VOLT_MIN = 0.7; // 电压下限（pu）
+export const VOLT_LOW = 0.95; // 欠压阈值（pu）
+export const VOLT_LOSS_K = 2.0; // 欠压线损放大系数（低压大电流）
 export const MAX_LOSS_FRACTION = 0.12; // 线损上限（占潮流比例），防数值发散
 
 // —— 经济常量 ——

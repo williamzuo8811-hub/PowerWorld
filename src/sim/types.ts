@@ -27,6 +27,10 @@ export interface Bus {
   blackout: boolean;
   /** 能量化程度 0..1：全黑后逐步恢复，黑启动资源加速恢复（停电恢复 / 冷负荷启动） */
   energized?: number;
+  /** 本 tick 电压（标幺值 pu）：由所在孤岛的无功平衡近似得出，<1 表示欠压 */
+  voltage?: number;
+  /** 是否加装电容器组（无功补偿，支撑电压）——变电站专用 */
+  capacitor?: boolean;
   // —— 建设工期（电厂/变电站/储能）——
   underConstruction?: boolean; // 在建中：已付 capex 但尚未投运
   commissionAt?: number; // 投运时刻（累计仿真小时）
@@ -151,4 +155,5 @@ export interface SimSnapshot {
   blackStartCapable: boolean; // 是否具备黑启动能力（燃气/储能种子）
   gridEnergized: number; // 全网能量化程度 0..1（<1=停电恢复中）
   outageEnergyTotal: number; // 累计失负荷电量 (MWh)
+  voltage: number; // 主电网电压（pu）
 }

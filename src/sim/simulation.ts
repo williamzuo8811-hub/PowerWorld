@@ -26,6 +26,7 @@ import {
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION,
   BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE,
+  LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
@@ -108,6 +109,7 @@ interface IslandResult {
   marketImport: number; // 本岛向市场购电 (MW)
   curtailed: number; // 本岛弃风弃光 (MW，可外送)
   startupCost: number; // 本岛本 tick 发生的启停成本 ¥
+  voltage: number; // 本岛电压（pu）
 }
 
 /** 一笔远期套保合约（差价合约） */
@@ -186,6 +188,7 @@ export class Simulation {
   money = START_MONEY;
   clock = 0; // 累计仿真小时
   frequency = FREQ_NOMINAL;
+  voltage = 1; // 主电网电压（pu）
   reliability = 1; // 供电率滑动平均 0..1
   reputation = 70; // 公众形象 0..100
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
@@ -259,6 +262,7 @@ export class Simulation {
     this.money = START_MONEY;
     this.clock = 0;
     this.frequency = FREQ_NOMINAL;
+    this.voltage = 1;
     this.reliability = 1;
     this.reputation = 70;
     this.renewableShare = 1;
@@ -955,6 +959,7 @@ export class Simulation {
     let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
+    let mainVoltage = 1;
 
     for (const busIds of islands) {
       const r = this.solveIsland(busIds, dtSim);
@@ -964,12 +969,14 @@ export class Simulation {
       fuelCost += r.fuelCost; co2Rate += r.co2;
       startupCostAgg += r.startupCost;
       penalty += Math.max(0, r.demand - r.served) * UNSERVED_PENALTY * dtHours;
-      // 把"需求最大的岛"视为主电网，用其频率做仪表显示
+      // 把"需求最大的岛"视为主电网，用其频率/电压做仪表显示
       if (r.demand > mainDemand) {
         mainDemand = r.demand;
         mainFreq = freqFromBalance(r.gen, r.demand);
+        mainVoltage = r.voltage;
       }
     }
+    this.voltage = mainVoltage;
 
     // —— 过载保护 / 连锁跳闸（含自动重合闸科技）——
     for (const ln of this.grid.lines.values()) {
@@ -1472,6 +1479,22 @@ export class Simulation {
       }
     }
 
+    // —— 无功/电压：按孤岛无功平衡近似推算电压（pu）；欠压增大线损 ——
+    let qDemand = 0;
+    for (const l of loads) qDemand += l.served * LOAD_PF_TAN; // 负荷无功
+    for (const ln of islandLines) qDemand += ln.flow * ln.flow * ln.reactance * LINE_Q_PER_FLOW2; // 线路无功消耗（长重线压降）
+    let qSupply = 0;
+    for (const g of gens) qSupply += g.capacity * GEN_Q_FACTOR; // 在线机组无功能力
+    for (const b of batteries) qSupply += b.powerRating * STORAGE_Q_FACTOR; // 储能逆变器
+    for (const id of busIds) {
+      const b = this.grid.buses.get(id);
+      if (b?.capacitor && !b.underConstruction) qSupply += CAPACITOR_Q; // 电容器组补偿
+    }
+    const qMargin = qDemand > 0.1 ? qSupply / qDemand : 2;
+    const voltage = clamp(qMargin >= 1 ? 1 : 1 - VOLT_SAG_K * (1 - qMargin), VOLT_MIN, 1);
+    for (const id of busIds) { const b = this.grid.buses.get(id); if (b) b.voltage = voltage; }
+    lossSum *= 1 + VOLT_LOSS_K * Math.max(0, VOLT_LOW - voltage); // 欠压→大电流→线损上升
+
     // 经济量（燃料价格 × 高效机组科技；碳排单列）
     let fuelCost = 0, co2 = 0;
     for (const g of gens) {
@@ -1479,7 +1502,7 @@ export class Simulation {
       co2 += g.output * this.effCo2(g);
     }
 
-    return { gen: totalGen, demand, served: servedDelivered, loss: lossSum, fuelCost, co2, marketImport, curtailed, startupCost };
+    return { gen: totalGen, demand, served: servedDelivered, loss: lossSum, fuelCost, co2, marketImport, curtailed, startupCost, voltage };
   }
 
   /** 更新公众形象与清洁电力占比 */
@@ -1793,6 +1816,7 @@ export class Simulation {
       blackStartCapable: this.blackStartCapable,
       gridEnergized: this.gridEnergized,
       outageEnergyTotal: this.outageEnergyTotal,
+      voltage: this.voltage,
     };
   }
 }
