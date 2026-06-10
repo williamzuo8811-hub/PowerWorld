@@ -232,6 +232,7 @@ function openFinance(): void {
       regPrice: sim.regPrice,
       reservePrice: sim.reservePrice,
       reserveReqMult: sim.reserveReqMult,
+      flexPrice: sim.flexPrice,
       capCommitMW: sim.capCommitments.reduce((s, c) => s + c.mw, 0),
       zoneNorth: sim.zoneNorthPrice,
       zoneSouth: sim.zoneSouthPrice,

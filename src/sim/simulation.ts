@@ -37,6 +37,7 @@ import {
   CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_TRIGGER_PRICE, DR_INCENTIVE,
   AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
   AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
+  FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX,
   FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
@@ -214,6 +215,8 @@ export class Simulation {
   reserveReqMult = 1; // 新能源预测误差对运行备用需求的放大倍数（≥1）
   reserveRequirementMW = 0; // 当前运行备用需求 (MW)
   renewablePenetration = 0; // 当前瞬时新能源出力占比 0..1
+  flexPrice = FLEX_PRICE_BASE; // 当前灵活性/爬坡出清价 ¥/(MW·天)
+  flexRequirementMW = 0; // 当前灵活性需求 (MW)
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -287,6 +290,7 @@ export class Simulation {
     this.capacityAdequacy = 1;
     this.regPrice = AS_REG_PRICE_BASE;
     this.reservePrice = AS_RESERVE_PRICE_BASE;
+    this.flexPrice = FLEX_PRICE_BASE;
     this.lastSeason = '';
     this.history = [];
     this.nextSampleAt = 0;
@@ -1083,7 +1087,21 @@ export class Simulation {
     this.reserveRequirementMW = reserveReq;
     const reserveSupply = reserveCap + compCap * AS_COMP_RESERVE_FRAC;
     this.reservePrice = AS_RESERVE_PRICE_BASE * clamp(1 + (AS_ADEQ_REF - reserveSupply / Math.max(reserveReq, 1)) * AS_K, AS_PRICE_MIN, AS_PRICE_MAX);
-    const ancillaryIncome = (regCap * this.regPrice + reserveCap * this.reservePrice) * omDayFrac;
+    // —— 灵活性/爬坡市场：净负荷波动（∝新能源渗透率）越大越缺灵活资源；奖励燃气/储能等快速可调 ——
+    let flexCap = 0; // 玩家快速可调能力 (MW)
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      if (g.type === 'gas') flexCap += g.capacity;
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) flexCap += b.powerRating * this.tech.batteryPowerFactor;
+    }
+    const flexReq = this.regionalDemand * (FLEX_BASE_FRAC + FLEX_RENEW_FACTOR * this.renewablePenetration);
+    this.flexRequirementMW = flexReq;
+    const flexSupply = flexCap + compCap * FLEX_COMP_FRAC;
+    this.flexPrice = FLEX_PRICE_BASE * clamp(1 + (FLEX_ADEQ_REF - flexSupply / Math.max(flexReq, 1)) * FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX);
+    const ancillaryIncome = (regCap * this.regPrice + reserveCap * this.reservePrice + flexCap * this.flexPrice) * omDayFrac;
 
     // —— 远期容量结算：差价合约(锁价−现货) − 欠交付罚款 ——
     this.capCommitments = this.capCommitments.filter((c) => this.clock < c.endClock);

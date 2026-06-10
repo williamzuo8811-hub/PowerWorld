@@ -269,6 +269,15 @@ export const AS_GAS_REG_FACTOR = 0.5; // 燃气可提供调频的容量比例
 export const AS_REG_REQ_FRAC = 0.10; // 调频需求占区域需求比例
 export const AS_RESERVE_REQ_FRAC = 0.20; // 备用需求占区域需求比例
 export const RENEW_RESERVE_K = 0.8; // 新能源占比对运行备用需求的放大系数（满清洁时 +80%，覆盖预测误差）
+// —— 灵活性/爬坡市场：净负荷波动越大，越需快速可调资源（燃气/储能）提供爬坡 ——
+export const FLEX_PRICE_BASE = 3.5; // 灵活性基准价 ¥/(MW·天)
+export const FLEX_BASE_FRAC = 0.05; // 基础灵活性需求占区域需求比例
+export const FLEX_RENEW_FACTOR = 0.6; // 新能源渗透率对灵活性需求的附加（净负荷波动代理）
+export const FLEX_COMP_FRAC = 0.08; // 竞争对手快速资源计入灵活性供给的比例
+export const FLEX_ADEQ_REF = 1.2; // 灵活性供需充裕参考点
+export const FLEX_K = 2.5; // 灵活性价格对充裕度的敏感度
+export const FLEX_PRICE_MIN = 0.4; // 灵活性价下限系数
+export const FLEX_PRICE_MAX = 3.0; // 灵活性价上限系数
 export const AS_COMP_FAST_FRAC = 0.05; // 竞争对手可提供调频的容量比例（仅少量机组快速）
 export const AS_COMP_RESERVE_FRAC = 0.10; // 竞争对手可提供备用的容量比例
 export const AS_ADEQ_REF = 1.2; // 充裕度参考点
