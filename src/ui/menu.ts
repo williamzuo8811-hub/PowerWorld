@@ -6,6 +6,7 @@ import { SLOT_LABEL } from '../game/save';
 export interface MenuOptions {
   scenarios: Scenario[];
   saves: SaveMeta[]; // 已有存档（按时间倒序）
+  bests?: Record<string, { grade: string; score: number }>; // 各关卡个人最佳（徽章）
   scenarioName: (id: string) => string;
   gameActive: boolean; // 当前是否有进行中的对局（可"另存到槽位"/"返回游戏"）
   onStart: (s: Scenario) => void;
@@ -122,7 +123,9 @@ export class Menu {
       const card = document.createElement('button');
       card.className = 'menu-card';
       const goalsHtml = s.goals ? `<div class="mc-goals" style="margin-top:6px;font-size:11px;color:var(--accent)">🎯 ${s.goals}</div>` : '';
-      card.innerHTML = `<div class="mc-name">${s.name}</div><div class="mc-brief">${s.brief}</div>${goalsHtml}`;
+      const best = opts.bests?.[s.id];
+      const bestHtml = best ? `<span style="float:right;font-weight:600;font-size:12px;color:var(--warn)">🏆 ${best.grade}·${best.score.toFixed(0)}</span>` : '';
+      card.innerHTML = `<div class="mc-name">${s.name}${bestHtml}</div><div class="mc-brief">${s.brief}</div>${goalsHtml}`;
       card.onclick = () => opts.onStart(s);
       grid.appendChild(card);
     }

@@ -66,7 +66,9 @@ export class Hud {
   onToggleSound?: () => void; // 静音切换回调
   onSettings?: () => void; // 设置面板回调
   onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
+  onShareScore?: () => void; // 复制战绩文本回调
   onToolChange?: (id: ToolId) => void; // 工具切换回调（资源覆盖联动）
+  overlayBestText: string | null = null; // 结束遮罩上的"个人最佳"说明（由 main 在胜利时设置）
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
@@ -353,6 +355,18 @@ export class Hud {
       cont.style.display = s.win ? 'inline-block' : 'none';
       cont.onclick = () => { ov.style.display = 'none'; this.onContinueAfterWin?.(); };
     }
+    // 复制战绩（仅胜利时）+ 个人最佳说明
+    const share = document.getElementById('overlay-share') as HTMLButtonElement | null;
+    if (share) {
+      share.style.display = s.win ? 'inline-block' : 'none';
+      share.onclick = () => {
+        this.onShareScore?.();
+        share.textContent = '✅ 已复制';
+        setTimeout(() => { share.textContent = '📋 复制成绩'; }, 1800);
+      };
+    }
+    const bestEl = document.getElementById('overlay-best');
+    if (bestEl) bestEl.textContent = s.win ? (this.overlayBestText ?? '') : '';
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };

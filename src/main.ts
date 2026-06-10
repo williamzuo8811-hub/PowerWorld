@@ -19,6 +19,8 @@ import { Tutorial } from './game/tutorial';
 import { Advisor } from './game/advisor';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, listSaves, deleteSave, exportSave, importSave, type SlotId } from './game/save';
+import { recordScore, allBests, shareText, type ScoreRecord } from './game/leaderboard';
+import { dailySeed } from './game/scenarios';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
@@ -66,6 +68,8 @@ let panelOpen = false; // 研发/成就面板打开时暂停仿真与建造
 let currentScenarioId = SCENARIOS[0].id;
 let gameActive = false; // 是否有进行中的对局（菜单"返回对局"/"另存"用）
 let lastAutosaveDay = -1; // 上次自动存档的游戏天
+let currentDailySeed: number | undefined; // 每日挑战的日期种子（战绩归档用）
+let lastScore: ScoreRecord | null = null; // 最近一次通关战绩（分享用）
 
 // ——————————————————— 关卡 / 存档流程 ———————————————————
 /** 关卡 id → 固定地形种子（每关一张确定的地图；每日挑战在 setup 内用日期种子覆盖） */
@@ -81,6 +85,7 @@ function newGame(scenario: Scenario): void {
   sim.grid.setTerrainSeed(terrainSeedFor(scenario.id));
   scenario.setup(sim);
   currentScenarioId = scenario.id;
+  currentDailySeed = scenario.id === 'daily' ? dailySeed() : undefined;
   lastAutosaveDay = sim.day;
   advisor.reset();
   enterGame();
@@ -142,6 +147,7 @@ function openMenu(): void {
   menu.show({
     scenarios: SCENARIOS,
     saves: listSaves(),
+    bests: allBests(),
     scenarioName: (id) => scenarioById(id)?.name ?? '关卡',
     gameActive: gameActive && !sim.gameOver,
     onStart: (s) => newGame(s),
@@ -812,6 +818,15 @@ async function start(): Promise<void> {
   hud.onPortfolio = openPortfolio;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.onSettings = openSettings;
+  hud.onShareScore = () => {
+    if (!lastScore) return;
+    const text = shareText(lastScore, scenarioById(lastScore.scenarioId)?.name ?? '关卡');
+    try {
+      navigator.clipboard?.writeText(text);
+    } catch {
+      /* 剪贴板不可用时静默 */
+    }
+  };
   hud.onToolChange = (id) => {
     renderer.setResourceOverlay(id === 'wind' || id === 'solar' || id === 'hydro' ? id : null);
     if (id === 'wind' || id === 'solar' || id === 'hydro') flashHint('资源热力图：亮处=优质场址（出力更高）');
@@ -846,8 +861,24 @@ async function start(): Promise<void> {
       // 严重事件（跳闸/破产）触发报警音
       if (sim.badEventCount > lastBadEvents) sound.trip();
       lastBadEvents = sim.badEventCount;
-      // 输赢瞬间音效
-      if (sim.gameOver && !wasGameOver) (sim.win ? sound.win() : sound.lose());
+      // 输赢瞬间：音效 + 战绩归档（个人最佳/分享文本）
+      if (sim.gameOver && !wasGameOver) {
+        if (sim.win) {
+          sound.win();
+          const g = sim.gradeScore();
+          lastScore = {
+            scenarioId: currentScenarioId, seed: currentDailySeed, ts: Date.now(), day: sim.day,
+            score: g.score, grade: g.grade, reliability: sim.reliability,
+            clean: sim.renewableShare, marketShare: sim.marketShare, netWorth: sim.netWorth,
+          };
+          const { isBest, best } = recordScore(lastScore);
+          hud.overlayBestText = isBest
+            ? '🎉 个人新纪录！'
+            : `个人最佳：${best.grade}（${best.score.toFixed(0)} 分）· 本局 ${g.grade}（${g.score.toFixed(0)} 分）`;
+        } else {
+          sound.lose();
+        }
+      }
       wasGameOver = sim.gameOver;
     }
     renderer.clock = sim.clock;
