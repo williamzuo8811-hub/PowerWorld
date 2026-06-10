@@ -699,13 +699,36 @@ function row(k: string, v: string): string {
 
 function bindInput(): void {
   const c = renderer.canvas;
+  c.style.touchAction = 'none'; // 触屏：禁用浏览器默认手势，交给游戏处理
   // 首个手势解除浏览器音频自动播放限制
   window.addEventListener('pointerdown', () => sound.resume(), { once: true });
   window.addEventListener('keydown', () => sound.resume(), { once: true });
+  // 多点触控：记录活跃指针，双指捏合缩放
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchDist = 0;
+  const pinchPair = () => {
+    const [a, b] = [...pointers.values()];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2 };
+  };
   c.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      dragging = false; moved = true; // 进入捏合：取消点击/拖拽语义
+      pinchDist = pinchPair().dist;
+      return;
+    }
     dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('pointermove', (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const p = pinchPair();
+      if (pinchDist > 0 && Math.abs(p.dist - pinchDist) > 1) {
+        renderer.zoomAt(p.midX, p.midY, p.dist / pinchDist);
+        pinchDist = p.dist;
+      }
+      return;
+    }
     const tile = renderer.screenToTile(e.clientX, e.clientY);
     renderer.cursorTile = tile;
     const hover = renderer.nearestBus(tile.x, tile.y);
@@ -718,9 +741,15 @@ function bindInput(): void {
       lastX = e.clientX; lastY = e.clientY;
     }
   });
+  const endPointer = (e: PointerEvent) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+  };
+  window.addEventListener('pointercancel', endPointer);
   window.addEventListener('pointerup', (e) => {
     if (dragging && !moved) handleClick(e.clientX, e.clientY);
     dragging = false;
+    endPointer(e);
   });
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
