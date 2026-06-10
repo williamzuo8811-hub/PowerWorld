@@ -214,6 +214,14 @@ export class Renderer {
       if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
         g.circle(cx - r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x38d39f });
       }
+      // 欠压：黄色虚环（电压 < 0.95 pu，且非全黑）
+      if (!bus.underConstruction && (bus.voltage ?? 1) < 0.95 && (bus.energized ?? 1) > 0.05) {
+        g.circle(cx, cy, r + 3).stroke({ width: 1.5, color: 0xeab308, alpha: 0.85 });
+      }
+      // 电容器组：变电站右下角黄色小方点
+      if (bus.capacitor && !bus.underConstruction) {
+        g.rect(cx + r * 0.5, cy + r * 0.5, 3, 3).fill({ color: 0xfacc15 });
+      }
       // 停电环：全黑=红，正在黑启动恢复中=青色脉冲
       if (bus.blackout) {
         const restoring = ez > 0.05 && ez < 0.95;

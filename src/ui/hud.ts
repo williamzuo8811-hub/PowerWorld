@@ -89,6 +89,7 @@ export class Hud {
     add('networth', '净资产');
     add('time', '时间');
     add('freq', '频率');
+    add('volt', '电压');
     add('balance', '发电 / 需求');
     add('price', '现货电价');
     add('loss', '线损');
@@ -231,6 +232,7 @@ export class Hud {
     const mm = Math.floor((s.hourOfDay % 1) * 60).toString().padStart(2, '0');
     this.set('time', `第${s.day + 1}天 ${hh}:${mm}`);
     this.set('freq', `${s.frequency.toFixed(2)} Hz`, freqClass(s.frequency));
+    this.set('volt', `${s.voltage.toFixed(2)} pu`, s.voltage < 0.92 ? 'freq-bad' : s.voltage < 0.95 ? 'freq-warn' : 'freq-ok');
     this.set('balance', `${s.totalGen.toFixed(0)} / ${s.totalDemand.toFixed(0)} MW`,
       s.totalServed < s.totalDemand - 0.5 ? 'freq-warn' : '');
     this.set('price', `¥${s.spotPrice.toFixed(0)}`, s.spotPrice > 120 ? 'freq-bad' : s.spotPrice > 90 ? 'freq-warn' : 'freq-ok');
