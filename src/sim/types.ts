@@ -50,6 +50,9 @@ export interface Generator {
   age: number; // 役龄（游戏天，投运后累计）—— 老化用
   outageUntil?: number; // 强迫停运结束时刻（累计仿真小时），其间离线
   ccs?: boolean; // 是否加装碳捕集（捕碳但边际成本上升）
+  committed?: boolean; // 机组组合：是否已并网在线（用于启停成本/最小开停机）
+  commitLockUntil?: number; // 当前开/停机状态的锁定到期时刻（最小开/停机时间）
+  startups?: number; // 累计冷启动次数（统计）
 }
 
 /** 储能（双向：放电=电源，充电=负荷）。多类型：电池/抽蓄/氢储 */

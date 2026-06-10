@@ -464,6 +464,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('出力', `${gen.output.toFixed(1)} / ${gen.capacity} MW`));
       rows.push(row('边际成本(现)', `¥${sim.effMarginalCost(gen).toFixed(0)}/MWh`));
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
+      if (gen.dispatchable) rows.push(row('机组状态', `${gen.committed ? '🟢 并网' : '⚪ 解列'} · 启停${gen.startups ?? 0}次 · 启动费 ¥${spec.startupCost.toLocaleString('en-US')}`));
       rows.push(row('排放', `${sim.effCo2(gen).toFixed(2)} t/MWh${gen.ccs ? ' 🌫CCS' : ''}`));
       rows.push(row('役龄 / 磨损', `${gen.age.toFixed(1)}天 / ${(sim.wear(gen) * 100).toFixed(0)}%`));
       if (sim.genOffline(gen) && !bus.underConstruction) {

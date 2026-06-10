@@ -14,6 +14,9 @@ export interface PlantSpec {
   cf: number; // 代表性容量系数（0..1），用于投资回报估算
   dispatchable: boolean;
   co2: number; // 吨 / MWh
+  startupCost: number; // 冷启动成本 ¥（每次离线→并网）
+  minUpHours: number; // 最小开机时间（小时）
+  minDownHours: number; // 最小停机时间（小时）
   color: number; // 渲染颜色
   desc: string;
 }
@@ -23,26 +26,31 @@ export const PLANTS: Record<PlantType, PlantSpec> = {
   nuclear: {
     type: 'nuclear', label: '核电', capacity: 120, pmin: 80, rampRate: 0.08,
     marginalCost: 10, capex: 820_000, buildDays: 8, omPerDay: 1_200, cf: 0.9, dispatchable: true, co2: 0,
+    startupCost: 50_000, minUpHours: 24, minDownHours: 18,
     color: 0xa78bfa, desc: '巨大基荷·投资高·工期最长·几乎不可调',
   },
   coal: {
     type: 'coal', label: '燃煤', capacity: 60, pmin: 18, rampRate: 0.35,
     marginalCost: 26, capex: 230_000, buildDays: 4, omPerDay: 600, cf: 0.6, dispatchable: true, co2: 0.95,
-    color: 0x9aa4ad, desc: '便宜基荷·爬坡慢·高排放',
+    startupCost: 12_000, minUpHours: 6, minDownHours: 4,
+    color: 0x9aa4ad, desc: '便宜基荷·爬坡慢·高排放·启停成本高',
   },
   gas: {
     type: 'gas', label: '燃气', capacity: 40, pmin: 0, rampRate: 2.2,
     marginalCost: 58, capex: 110_000, buildDays: 1.5, omPerDay: 250, cf: 0.25, dispatchable: true, co2: 0.45,
-    color: 0xf2994a, desc: '工期短·灵活调峰·爬坡快·燃料贵',
+    startupCost: 700, minUpHours: 0.5, minDownHours: 0.5,
+    color: 0xf2994a, desc: '工期短·灵活调峰·爬坡快·启停廉价·燃料贵',
   },
   wind: {
     type: 'wind', label: '风电', capacity: 30, pmin: 0, rampRate: 999,
     marginalCost: 0, capex: 150_000, buildDays: 3, omPerDay: 200, cf: 0.35, dispatchable: false, co2: 0,
+    startupCost: 0, minUpHours: 0, minDownHours: 0,
     color: 0x56ccf2, desc: '零燃料·工期较长·看风·夜间也可发',
   },
   solar: {
     type: 'solar', label: '光伏', capacity: 30, pmin: 0, rampRate: 999,
     marginalCost: 0, capex: 125_000, buildDays: 2, omPerDay: 150, cf: 0.2, dispatchable: false, co2: 0,
+    startupCost: 0, minUpHours: 0, minDownHours: 0,
     color: 0xf2c94c, desc: '零燃料·工期中等·只在白天·午间最强',
   },
 };

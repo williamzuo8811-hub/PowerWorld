@@ -9,7 +9,7 @@ export interface FinanceData {
   netWorth: number;
   dailyRate: number;
   finance: {
-    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; market: number; capacity: number; congestion: number; dr: number; ancillary: number; net: number;
+    revenue: number; fuel: number; carbon: number; om: number; interest: number; penalty: number; hedge: number; rec: number; insurance: number; market: number; capacity: number; congestion: number; dr: number; ancillary: number; startup: number; net: number;
     byClass: { residential: number; commercial: number; industrial: number };
   };
   insured: boolean;
@@ -121,6 +121,7 @@ export class FinancePanel {
       + row('辅助服务', `+${abs(f.ancillary)}/天`, f.ancillary > 1 ? 'freq-ok' : '')
       + row('输电阻塞', `−${abs(f.congestion)}/天`, f.congestion < -1 ? 'freq-warn' : '')
       + row('需求响应', `−${abs(f.dr)}/天`, f.dr < -1 ? 'freq-warn' : '')
+      + row('机组启停', `−${abs(f.startup)}/天`, f.startup < -1 ? 'freq-warn' : '')
       + row('保险(净)', `${f.insurance >= 0 ? '+' : '−'}${abs(f.insurance)}/天`, f.insurance < 0 ? '' : 'freq-ok')
       + row('市场购/售电', `${f.market >= 0 ? '+' : '−'}${abs(f.market)}/天`, f.market < -1 ? 'freq-warn' : f.market > 1 ? 'freq-ok' : '')
       + row('净现金流', `${sign(f.net)}${abs(f.net)}/天`, f.net < 0 ? 'freq-bad' : 'freq-ok')

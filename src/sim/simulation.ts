@@ -105,6 +105,7 @@ interface IslandResult {
   co2: number; // 吨/h
   marketImport: number; // 本岛向市场购电 (MW)
   curtailed: number; // 本岛弃风弃光 (MW，可外送)
+  startupCost: number; // 本岛本 tick 发生的启停成本 ¥
 }
 
 /** 一笔远期套保合约（差价合约） */
@@ -238,9 +239,10 @@ export class Simulation {
   ftrs: FTR[] = []; // 活跃输电权
   // 现金流（按日估算，EMA 平滑，供财务报表显示）
   finance = {
-    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
+    revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, startup: 0, net: 0,
     byClass: { residential: 0, commercial: 0, industrial: 0 } as Record<LoadProfile, number>,
   };
+  startupsTotal = 0; // 累计机组启动次数（统计）
 
   constructor() {
     this.events.schedule(0);
@@ -307,9 +309,10 @@ export class Simulation {
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
     this.finance = {
-      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, net: 0,
+      revenue: 0, fuel: 0, carbon: 0, om: 0, interest: 0, penalty: 0, hedge: 0, rec: 0, insurance: 0, market: 0, capacity: 0, congestion: 0, dr: 0, ancillary: 0, startup: 0, net: 0,
       byClass: { residential: 0, commercial: 0, industrial: 0 },
     };
+    this.startupsTotal = 0;
   }
 
   /** 导出存档 */
@@ -940,7 +943,7 @@ export class Simulation {
 
     // —— 逐孤岛求解 ——
     const islands = this.grid.islands();
-    let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0;
+    let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
     let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
@@ -951,6 +954,7 @@ export class Simulation {
       aggMarketImport += r.marketImport;
       aggCurtailed += r.curtailed;
       fuelCost += r.fuelCost; co2Rate += r.co2;
+      startupCostAgg += r.startupCost;
       penalty += Math.max(0, r.demand - r.served) * UNSERVED_PENALTY * dtHours;
       // 把"需求最大的岛"视为主电网，用其频率做仪表显示
       if (r.demand > mainDemand) {
@@ -1197,7 +1201,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome + merchantCash + storageArbCash;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost - startupCostAgg + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome + merchantCash + storageArbCash;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -1218,6 +1222,7 @@ export class Simulation {
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);
     this.finance.dr = ema(this.finance.dr, -drCost * toDay);
+    this.finance.startup = ema(this.finance.startup, -startupCostAgg * toDay);
     const repF = this.reputationTariffFactor;
     for (const cls of ['residential', 'commercial', 'industrial'] as LoadProfile[]) {
       const r = classServed[cls] * TARIFF_CLASS[cls] * this.spotPrice * repF;
@@ -1225,13 +1230,14 @@ export class Simulation {
     }
     this.finance.net = this.finance.revenue - this.finance.fuel - this.finance.carbon
       - this.finance.om - this.finance.interest - this.finance.penalty
-      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion + this.finance.dr + this.finance.ancillary;
+      + this.finance.hedge + this.finance.rec + this.finance.insurance + this.finance.market + this.finance.capacity + this.finance.congestion + this.finance.dr + this.finance.ancillary + this.finance.startup;
     this.frequency = mainFreq;
     this.totalGen = aggGen;
     this.totalDemand = aggDemand;
     this.totalServed = aggServed;
     this.totalLoss = aggLoss;
     this.co2Rate = co2Rate;
+    this.startupsTotal = [...this.grid.gens.values()].reduce((s, g) => s + (g.startups ?? 0), 0);
     this.lastLossFraction = aggDemand > 1 ? clamp(aggLoss / aggDemand, 0, MAX_LOSS_FRACTION) : 0.02;
 
     // 研发点：随送达电量积累（电网越大、运行越好，研发越快）
@@ -1296,6 +1302,18 @@ export class Simulation {
       if (g.output < want) g.output = Math.min(want, g.output + step);
       else g.output = Math.max(want, g.output - step);
       g.output = clamp(g.output, 0, g.capacity);
+    }
+    // —— 机组组合：出力跨过在线阈值即并网（收取冷启动成本），降至 0 即解列 ——
+    let startupCost = 0;
+    for (const g of disp) {
+      const online = g.output > 0.5;
+      if (online && !g.committed) {
+        g.committed = true;
+        g.startups = (g.startups ?? 0) + 1;
+        startupCost += PLANTS[g.type].startupCost;
+      } else if (!online && g.committed) {
+        g.committed = false;
+      }
     }
     // 新能源先按可用出力发满
     for (const g of gens) if (!g.dispatchable) g.output = availMax.get(g.id) ?? 0;
@@ -1412,7 +1430,7 @@ export class Simulation {
       co2 += g.output * this.effCo2(g);
     }
 
-    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport, curtailed };
+    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport, curtailed, startupCost };
   }
 
   /** 更新公众形象与清洁电力占比 */
