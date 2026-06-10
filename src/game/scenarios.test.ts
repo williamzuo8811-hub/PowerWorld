@@ -33,6 +33,16 @@ describe('战役关卡', () => {
     expect(sim.carbonPrice).toBeGreaterThan(CARBON_PRICE_START); // 倍率生效
   });
 
+  it('商海争锋：竞争对手被强化', () => {
+    const baseline = new Simulation();
+    const baseCap = baseline.competitors.reduce((s, c) => s + c.base, 0);
+    const sim = new Simulation();
+    scenarioById('market')!.setup(sim);
+    const marketCap = sim.competitors.reduce((s, c) => s + c.base, 0);
+    expect(marketCap).toBeGreaterThan(baseCap); // 对手更强
+    expect(sim.grid.loads.size).toBeGreaterThanOrEqual(4); // 已签多个大客户
+  });
+
   it('迎峰度夏：开局即处于夏季', () => {
     const sim = new Simulation();
     scenarioById('summer')!.setup(sim);

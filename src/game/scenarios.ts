@@ -142,6 +142,30 @@ export const SCENARIOS: Scenario[] = [
       sim.log('info', '【能源大客户】服务数据中心/矿区/石化——备可靠电源、无功补偿与黑启动种子。');
     },
   },
+  {
+    id: 'market',
+    name: '⑦ 商海争锋',
+    brief: '强敌环伺的竞争市场：已签下数据中心/石化/轨交大客户，对手虎视眈眈。保供留客、做大市占、抓住机会反挖对手，撑过 16 天且可靠性≥90%。',
+    hint: '保供差大客户会被对手挖走且对手增强；做大装机降低市场激烈度；用长约/自备应急锁客；留意品类面板的反向挖角机会削弱对手。',
+    goals: '高星级=高可靠(护住大客户) + 盈利 + 清洁 + 口碑；做大市占抑制对手挖角',
+    setup(sim) {
+      sim.money = 1_750_000;
+      sim.goalDay = 16;
+      sim.goalReliability = 0.9;
+      for (const c of sim.competitors) { c.base *= 1.5; c.capacity = c.base; } // 强敌：对手更强
+      const g = sim.grid;
+      g.addLoad(15, 6, 'commercial', 24, '商务区', 0.004);
+      g.addLoad(17, 12, 'datacenter', 46, '云数据中心', 0.006);
+      g.addLoad(9, 15, 'petrochem', 64, '石化基地', 0.0025);
+      g.addLoad(22, 9, 'transport', 38, '轨交枢纽', 0.005);
+      const coal = g.addPlant('coal', 6, 6).bus;
+      const gas = g.addPlant('gas', 8, 4).bus;
+      const sub = g.addSubstation(13, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.log('info', '【商海争锋】强敌环伺——保供留客、做大市占、反挖对手，撑到第 16 天。');
+    },
+  },
 ];
 
 // 新手教程：手把手学会核心操作
