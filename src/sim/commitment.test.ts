@@ -46,16 +46,28 @@ describe('机组组合：启停成本与承诺状态', () => {
     expect(sim.startupsTotal).toBeGreaterThanOrEqual(1);
   });
 
-  it('循环停开各计一次启动（启停惩罚循环）', () => {
+  it('循环停开各计一次启动（受最小开/停机时间约束）', () => {
     const { sim, gen, load } = rig('coal', 40);
-    for (let i = 0; i < 40; i++) sim.tick(0.05, 600); // 启动 → committed
+    sim.tick(3600, 1); // 启动并网
     expect(gen.startups).toBe(1);
-    load.demand = 0; load.baseDemand = 0; // 需求归零 → 机组降到 0 → 解列
-    for (let i = 0; i < 120; i++) sim.tick(0.05, 600);
+    expect(gen.committed).toBe(true);
+    load.baseDemand = 0; // 需求归零；最小开机(6h)内须维持 pmin
+    sim.tick(3600, 1);
+    expect(gen.committed).toBe(true); // 仍在最小开机锁内
+    for (let i = 0; i < 12; i++) sim.tick(3600, 1); // 过最小开机 → 解列，进入最小停机
     expect(gen.committed).toBe(false);
-    load.baseDemand = 40; // 需求恢复 → 再次并网
-    for (let i = 0; i < 80; i++) sim.tick(0.05, 600);
-    expect(gen.startups).toBe(2); // 第二次启动
+    load.baseDemand = 40; // 需求恢复；最小停机(4h)内不可立即重启
+    for (let i = 0; i < 10; i++) sim.tick(3600, 1); // 过最小停机 → 再次并网
+    expect(gen.startups).toBe(2);
+  });
+
+  it('最小开机时间内即便无需求也维持 pmin（must-run）', () => {
+    const { sim, gen, load } = rig('coal', 40);
+    sim.tick(3600, 1); // 启动
+    load.baseDemand = 0;
+    sim.tick(3600, 1); // 最小开机锁内
+    expect(gen.committed).toBe(true);
+    expect(gen.output).toBeGreaterThan(gen.pmin - 1); // 维持在 pmin 附近
   });
 
   it('燃气启动成本远低于燃煤/核电', () => {

@@ -1286,14 +1286,41 @@ export class Simulation {
     const target = demand * (1 + this.lastLossFraction);
     let remaining = Math.max(0, target - renewAvail);
 
-    // 可调机组按"有效边际成本"排序（merit order，随燃料价格变化）
-    const disp = gens.filter((g) => g.dispatchable).sort((x, y) => this.effMarginalCost(x) - this.effMarginalCost(y));
+    // 可调机组：仅"已并网 或 离线但已过最小停机锁"的机组可参与出清（merit order）
+    const disp = gens.filter((g) => g.dispatchable);
+    const merit = disp.filter((g) => g.committed || this.clock >= (g.commitLockUntil ?? 0))
+      .sort((x, y) => this.effMarginalCost(x) - this.effMarginalCost(y));
     const desired = new Map<number, number>();
     let rem = remaining;
-    for (const g of disp) {
+    for (const g of merit) {
       const give = clamp(rem, 0, g.capacity);
       desired.set(g.id, give);
       rem -= give;
+    }
+    // —— 机组组合：最小开/停机约束 + 冷启动成本 ——
+    let startupCost = 0;
+    for (const g of disp) {
+      const sel = (desired.get(g.id) ?? 0) > 0.5;
+      const spec = PLANTS[g.type];
+      if (g.committed) {
+        if (sel) {
+          desired.set(g.id, Math.max(desired.get(g.id) ?? 0, g.pmin)); // 在线机组至少 pmin
+        } else if (this.clock < (g.commitLockUntil ?? 0)) {
+          desired.set(g.id, g.pmin); // 最小开机锁内：必须维持 pmin（must-run）
+        } else {
+          g.committed = false; // 解列，进入最小停机锁
+          g.commitLockUntil = this.clock + spec.minDownHours; // clock 与 minDownHours 同为"小时"
+          desired.set(g.id, 0);
+        }
+      } else if (sel) {
+        g.committed = true; // 冷启动并网，进入最小开机锁
+        g.commitLockUntil = this.clock + spec.minUpHours; // clock 与 minUpHours 同为"小时"
+        g.startups = (g.startups ?? 0) + 1;
+        startupCost += spec.startupCost;
+        desired.set(g.id, Math.max(desired.get(g.id) ?? 0, g.pmin));
+      } else {
+        desired.set(g.id, 0); // 停机锁内或不需要
+      }
     }
     // 按爬坡率把实际出力向期望值移动（这就是"机组无法瞬时响应"的硬核张力来源）
     for (const g of disp) {
@@ -1302,18 +1329,6 @@ export class Simulation {
       if (g.output < want) g.output = Math.min(want, g.output + step);
       else g.output = Math.max(want, g.output - step);
       g.output = clamp(g.output, 0, g.capacity);
-    }
-    // —— 机组组合：出力跨过在线阈值即并网（收取冷启动成本），降至 0 即解列 ——
-    let startupCost = 0;
-    for (const g of disp) {
-      const online = g.output > 0.5;
-      if (online && !g.committed) {
-        g.committed = true;
-        g.startups = (g.startups ?? 0) + 1;
-        startupCost += PLANTS[g.type].startupCost;
-      } else if (!online && g.committed) {
-        g.committed = false;
-      }
     }
     // 新能源先按可用出力发满
     for (const g of gens) if (!g.dispatchable) g.output = availMax.get(g.id) ?? 0;
