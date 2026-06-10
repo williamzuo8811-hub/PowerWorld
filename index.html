@@ -133,6 +133,22 @@
         padding: 11px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit; margin-bottom: 16px;
       }
       .menu-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      /* 存档区 */
+      .menu-saves { margin-bottom: 16px; display: flex; flex-direction: column; gap: 6px; }
+      .menu-sec-title { color: var(--text-dim); font-size: 11px; letter-spacing: 1px; }
+      .save-row { display: flex; gap: 6px; }
+      .save-load {
+        flex: 1; text-align: left; background: #15222e; color: var(--text); border: 1px solid var(--panel-border);
+        border-radius: 8px; padding: 8px 12px; cursor: pointer; font-family: inherit; font-size: 12px;
+      }
+      .save-load:hover { border-color: var(--accent); }
+      .save-load .save-ts { float: right; color: var(--text-dim); font-size: 11px; }
+      .save-mini {
+        background: #182431; color: var(--text); border: 1px solid var(--panel-border); border-radius: 8px;
+        padding: 6px 10px; cursor: pointer; font-family: inherit; font-size: 12px;
+      }
+      .save-mini:hover { border-color: var(--accent); }
+      .save-ts { color: var(--text-dim); font-size: 11px; }
       .menu-card {
         text-align: left; background: #141d28; color: var(--text); border: 1px solid var(--panel-border);
         border-radius: 10px; padding: 12px 14px; cursor: pointer; font-family: inherit;

@@ -16,7 +16,7 @@ import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
 import { Tutorial } from './game/tutorial';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
-import { saveGame, loadGame, hasSave } from './game/save';
+import { saveGame, loadGame, listSaves, deleteSave, exportSave, importSave, type SlotId } from './game/save';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
@@ -50,6 +50,8 @@ let wasGameOver = false; // 用于检测输赢瞬间
 let menuOpen = true; // 主菜单打开时暂停仿真与建造
 let panelOpen = false; // 研发/成就面板打开时暂停仿真与建造
 let currentScenarioId = SCENARIOS[0].id;
+let gameActive = false; // 是否有进行中的对局（菜单"返回对局"/"另存"用）
+let lastAutosaveDay = -1; // 上次自动存档的游戏天
 
 // ——————————————————— 关卡 / 存档流程 ———————————————————
 function newGame(scenario: Scenario): void {
@@ -57,17 +59,19 @@ function newGame(scenario: Scenario): void {
   renderer.categoryFilter = null;
   scenario.setup(sim);
   currentScenarioId = scenario.id;
+  lastAutosaveDay = sim.day;
   enterGame();
   if (scenario.id === 'tutorial') tutorial.start();
   else { tutorial.stop(); hud.setTutorial(null); }
   hud.setHint(scenario.hint);
 }
 
-function continueGame(): void {
-  const data = loadGame();
+function continueGame(slot: SlotId = 'quick'): void {
+  const data = loadGame(slot);
   if (!data) return;
   sim.deserialize(data.save);
   currentScenarioId = data.scenarioId;
+  lastAutosaveDay = sim.day;
   enterGame();
   tutorial.stop();
   hud.setTutorial(null);
@@ -89,28 +93,50 @@ function enterGame(): void {
   hud.setSpeed(0);
   menu.hide();
   menuOpen = false;
+  gameActive = true;
   const ov = document.getElementById('overlay');
   if (ov) ov.style.display = 'none';
+}
+
+/** 下载存档为 JSON 文件 */
+function downloadSave(slot: SlotId): void {
+  const json = exportSave(slot);
+  if (!json) return;
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `powerworld-${slot}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function openMenu(): void {
   menuOpen = true;
   hud.setSpeed(0);
-  const data = loadGame();
-  const label = data
-    ? `${scenarioById(data.scenarioId)?.name ?? '关卡'} · 第${Math.floor((data.save.clock ?? 0) / 24) + 1}天`
-    : undefined;
   menu.show({
     scenarios: SCENARIOS,
-    hasSave: hasSave(),
-    saveLabel: label,
+    saves: listSaves(),
+    scenarioName: (id) => scenarioById(id)?.name ?? '关卡',
+    gameActive: gameActive && !sim.gameOver,
     onStart: (s) => newGame(s),
-    onContinue: () => continueGame(),
+    onLoad: (slot) => continueGame(slot),
+    onDelete: (slot) => { deleteSave(slot); openMenu(); },
+    onExport: (slot) => downloadSave(slot),
+    onImport: (json) => { const ok = importSave(json, 'quick'); if (ok) openMenu(); return ok; },
+    onSaveTo: (slot) => { saveGame(sim, currentScenarioId, slot); openMenu(); },
+    onResume: () => { menu.hide(); menuOpen = false; },
   });
 }
 
 function doSave(): void {
-  flashHint(saveGame(sim, currentScenarioId) ? '已存档 💾' : '存档失败');
+  flashHint(saveGame(sim, currentScenarioId, 'quick') ? '已存档 💾' : '存档失败');
+}
+
+/** 每个游戏日自动存档一次（静默，菜单中可见/可载入） */
+function autosaveTick(): void {
+  if (sim.gameOver || sim.day === lastAutosaveDay) return;
+  lastAutosaveDay = sim.day;
+  saveGame(sim, currentScenarioId, 'auto');
 }
 
 /** 运行 N-1 冗余校核并把薄弱元件标注到画面 */
@@ -657,6 +683,7 @@ async function start(): Promise<void> {
     const dt = Math.min(0.05, renderer.app.ticker.deltaMS / 1000);
     if (!menuOpen && !panelOpen) {
       sim.tick(dt, hud.timeScale);
+      autosaveTick();
       hud.update(sim.snapshot(), sim.logs);
       pollAchievements();
       // 新手教程引导
