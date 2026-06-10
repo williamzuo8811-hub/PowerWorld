@@ -11,59 +11,27 @@ import {
   seasonalPeakAdequacy as seasonalPeakAdequacyOf,
   type StressResult, type ExpansionAdvice, type YearPlan, type PortfolioCategory,
 } from './planning';
+import {
+  assetValueOf, leverageOf, creditScoreOf, creditRatingOf, creditLimitOf, debtRatioOf,
+  esgScoreOf, esgRatingOf, loanDailyRateOf, netWorthOf, insurancePremiumOf,
+  applyDamage, addHedgeTo, addOptionTo, addFTRTo, addCapacityCommitmentTo, borrowFor, repayFor,
+} from './finance';
+import {
+  regionalDemandOf, effImportCapacityOf, clearMarket, playerNameplateOf, regionNameplateOf,
+  quoteAcquisition, doAcquireCompetitor, evolveCompetitorsOf, zoneNorthPriceOf, zoneSouthPriceOf, zoneSpreadOf,
+} from './market';
+import {
+  companyStandingOf, marketContestationOf, keyAccountAcquireCostOf, keyAccountLeadActiveOf,
+  onKeyAccountAcquiredOf, checkKeyAccountLeadOf, signKeyAccountContractOf, addBackupOf,
+} from './customers';
 import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
-  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
-  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType,
-  LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE,
-  RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT, ESG_RATE_DISCOUNT,
-  WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
-  REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
-  MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR,
-  INSURANCE_RATE_PER_DAY, INSURANCE_COVERAGE,
-  HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
+  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
 } from '../config/components';
 import type { Generator, Line, Load, LoadProfile } from './types';
 import {
-  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
-  CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, BACKUP_CAPEX,
-  CONTRACT_DAYS, CONTRACT_DISCOUNT,
-  ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
-  LEAD_FIRST_DAY, LEAD_INTERVAL_DAYS, LEAD_WINDOW_DAYS, LEAD_DISCOUNT,
-  POACH_WIN_STANDING, POACH_WIN_CHANCE, POACH_WIN_MIN_COMP, POACH_WIN_FRACTION,
-  UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
-  CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
-  REC_START, REC_DECLINE_PER_DAY, REC_MIN,
-  FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
-  MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
-  GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION,
-  BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE,
-  LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, CAPACITOR_CAPEX, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K,
-  POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
-  REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
-  INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
-  CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX,
-  SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP, SEASON_ADEQ_MARGIN,
-  IRP_SCENARIOS, type StressScenarioSpec,
-  REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K,
-  CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC,
-  CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW,
-  CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_CURTAILABILITY, DR_TRIGGER_PRICE, DR_INCENTIVE,
-  AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
-  AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
-  FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX,
-  STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K, INTERRUPT_RATE_BASE, INTERRUPT_SEASON_K,
-  FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
-  ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
-  COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
-  COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC, ACQUISITION_PRICE_PER_MW,
-  ANTITRUST_SOFT_SHARE, ANTITRUST_HARD_SHARE, ANTITRUST_PREMIUM_K,
-  COMP_GREEN_EXPAND_MULT, COMP_GREEN_RETIRE_MULT, COMP_PEAKER_WAR_SHARE, COMP_PEAKER_WAR_FLOOR,
-  COMP_PEAKER_ADJUST_RATE, COMP_LEAD_SNATCH_CHANCE, COMP_LEAD_SNATCH_FRACTION,
-  BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR,
-  AUTOOPS_RECLOSE_DELAY, AUTOOPS_WEAR_THRESHOLD, AUTOOPS_MAINT_CASH_MULT, AUTOOPS_CASH_FLOOR, AUTOOPS_PRECOMMIT_TARGET,
-  type CompetitorSpec,
+  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT, CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, CONTRACT_DAYS, CONTRACT_DISCOUNT, LEAD_FIRST_DAY, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY, CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN, REC_START, REC_DECLINE_PER_DAY, REC_MIN, FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY, MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY, GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION, BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE, LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, CAPACITOR_CAPEX, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K, POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT, REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY, CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX, SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP, SEASON_ADEQ_MARGIN, IRP_SCENARIOS, type StressScenarioSpec, REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K, CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC, CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW, CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_CURTAILABILITY, DR_TRIGGER_PRICE, DR_INCENTIVE, AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC, AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K, FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX, STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K, INTERRUPT_RATE_BASE, INTERRUPT_SEASON_K, CAP_DELIVERY_PENALTY, ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR, AUTOOPS_RECLOSE_DELAY, AUTOOPS_WEAR_THRESHOLD, AUTOOPS_MAINT_CASH_MULT, AUTOOPS_CASH_FLOOR, AUTOOPS_PRECOMMIT_TARGET, type CompetitorSpec,
 } from '../config/components';
 
 /** 运行期竞争对手（含初始容量与报价基准，用于扩张/退役上下限与价格战回归） */
@@ -245,7 +213,7 @@ export class Simulation {
   private lastYearIdx = 0; // 已结算年报的年序号（年度边界触发经营年报）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
-  private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
+  claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
   spotPrice = TARIFF; // 当前现货电价 ¥/MWh
   avgSpot = TARIFF; // 现货电价滑动均值（作为远期报价）
   reserveMargin = 1; // 当前备用率（可用容量/需求）
@@ -447,11 +415,11 @@ export class Simulation {
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
   private lastLossFraction = 0.02; // 上一 tick 的线损占比，用于本 tick 多发一点
-  private totalGen = 0;
-  private totalDemand = 0;
-  private totalServed = 0;
-  private totalLoss = 0;
-  private co2Rate = 0;
+  totalGen = 0;
+  totalDemand = 0;
+  totalServed = 0;
+  totalLoss = 0;
+  co2Rate = 0;
 
   get day(): number {
     return Math.floor(this.clock / 24);
@@ -536,262 +504,75 @@ export class Simulation {
     return MAINT_SHOULDER_FACTOR + (MAINT_PEAK_FACTOR - MAINT_SHOULDER_FACTOR) * peak;
   }
   /** 北区(便宜)电价 */
-  get zoneNorthPrice(): number {
-    const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24));
-    return clamp(this.marketClearingPrice + ZONE_NORTH_OFFSET + ZONE_NORTH_AMP * s, SPOT.floor, SPOT.cap);
-  }
+  get zoneNorthPrice(): number { return zoneNorthPriceOf(this); }
   /** 南区(贵)电价 */
-  get zoneSouthPrice(): number {
-    const s = Math.sin((2 * Math.PI * this.clock) / (ZONE_PERIOD_DAYS * 24) + 2);
-    return clamp(this.marketClearingPrice + ZONE_SOUTH_OFFSET + ZONE_SOUTH_AMP * s, SPOT.floor, SPOT.cap);
-  }
+  get zoneSouthPrice(): number { return zoneSouthPriceOf(this); }
   /** 跨区价差 */
-  get zoneSpread(): number {
-    return Math.abs(this.zoneSouthPrice - this.zoneNorthPrice);
-  }
+  get zoneSpread(): number { return zoneSpreadOf(this); }
 
   /** 区域市场总需求 (MW)：日曲线 × 景气 × 季节 */
-  get regionalDemand(): number {
-    const m = (demandMultiplier(this.hourOfDay, 'residential')
-      + demandMultiplier(this.hourOfDay, 'commercial')
-      + demandMultiplier(this.hourOfDay, 'industrial')) / 3;
-    return REGIONAL_BASE_DEMAND * m * this.cycleFactor * this.seasonDemandFactor * this.policy.regionalDemandMult;
-  }
+  get regionalDemand(): number { return regionalDemandOf(this); }
   /** 联络线有效进口容量：邻区短缺时被压缩 */
-  get effImportCapacity(): number {
-    return INTERCONNECTOR_CAPACITY * this.policy.importCapFactor;
-  }
+  get effImportCapacity(): number { return effImportCapacityOf(this); }
   /** 区域市场出清：你与竞争对手按报价排序，对区域需求出清 */
-  private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } {
-    const demand = this.regionalDemand;
-    const blocks: { mw: number; cost: number; player: boolean }[] = [];
-    // 火电型对手在环保督查期间同样被限产
-    for (const c of this.competitors) blocks.push({ mw: c.capacity * (c.style === 'coal' ? this.policy.coalCap : 1), cost: c.marginalCost, player: false });
-    for (const m of this.mergedCapacity) blocks.push({ mw: m.mw, cost: m.marginalCost, player: true }); // 商船队=自有
-    for (const g of this.grid.gens.values()) {
-      if (this.genOffline(g)) continue;
-      if (g.dispatchable) blocks.push({ mw: g.capacity * g.availability, cost: this.effMarginalCost(g), player: true }); // 水电按来水折减
-      else blocks.push({ mw: g.capacity * g.availability, cost: 0.5, player: true });
-    }
-    blocks.sort((a, b) => a.cost - b.cost);
-    let cum = 0, clearingCost = 0, playerDispatched = 0;
-    for (const b of blocks) {
-      if (cum >= demand) break;
-      const take = Math.min(b.mw, demand - cum);
-      cum += take;
-      clearingCost = b.cost;
-      if (b.player) playerDispatched += take;
-    }
-    return { clearingCost, playerDispatched, shortfall: Math.max(0, demand - cum) };
-  }
+  private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } { return clearMarket(this); }
 
   /** 玩家自有装机（自有机组 + 已并购商船队）MW —— 反垄断口径 */
-  get playerNameplate(): number {
-    let cap = 0;
-    for (const g of this.grid.gens.values()) cap += g.capacity;
-    for (const m of this.mergedCapacity) cap += m.mw;
-    return cap;
-  }
+  get playerNameplate(): number { return playerNameplateOf(this); }
   /** 全区域装机（玩家 + 所有竞争对手）MW */
-  get regionNameplate(): number {
-    let cap = this.playerNameplate;
-    for (const c of this.competitors) cap += c.capacity;
-    return cap;
-  }
+  get regionNameplate(): number { return regionNameplateOf(this); }
 
   /**
    * 并购报价（含反垄断审查）：返回基础估值、补救费、合计、并购后市占与是否被否决。
    * 监管按全网装机口径衡量集中度：市占越高，补救费越贵；超过硬上限直接否决。
    */
-  acquisitionQuote(index: number): { base: number; remedy: number; total: number; postShare: number; blocked: boolean } | null {
-    const c = this.competitors[index];
-    if (!c) return null;
-    const region = Math.max(this.regionNameplate, 1);
-    const postShare = (this.playerNameplate + c.capacity) / region;
-    const base = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
-    const blocked = postShare > ANTITRUST_HARD_SHARE;
-    const over = clamp((postShare - ANTITRUST_SOFT_SHARE) / (ANTITRUST_HARD_SHARE - ANTITRUST_SOFT_SHARE), 0, 1);
-    const remedy = blocked ? 0 : Math.round(base * ANTITRUST_PREMIUM_K * over);
-    return { base, remedy, total: base + remedy, postShare, blocked };
-  }
+  acquisitionQuote(index: number): { base: number; remedy: number; total: number; postShare: number; blocked: boolean } | null { return quoteAcquisition(this, index); }
 
   /** 并购一家竞争对手：过审后付估值(+补救费)，吸收为商船队（市场出清中作自有，捕获其市场利润） */
-  acquireCompetitor(index: number): boolean {
-    const c = this.competitors[index];
-    const q = this.acquisitionQuote(index);
-    if (!c || !q) return false;
-    if (q.blocked) {
-      this.log('warn', `🚫 反垄断否决：并购「${c.name}」后市占将达 ${(q.postShare * 100).toFixed(0)}%，超过 ${(ANTITRUST_HARD_SHARE * 100).toFixed(0)}% 上限`);
-      return false;
-    }
-    if (this.money < q.total) return false;
-    this.money -= q.total;
-    this.mergedCapacity.push({ mw: c.capacity, marginalCost: c.marginalCost });
-    this.competitors.splice(index, 1);
-    const remedyNote = q.remedy > 0 ? `（含反垄断补救费 ¥${q.remedy.toLocaleString('en-US')}）` : '';
-    this.log('good', `🤝 并购「${c.name}」${c.capacity.toFixed(0)}MW（¥${q.total.toLocaleString('en-US')}）${remedyNote}：吸收为自有商船队`);
-    return true;
-  }
+  acquireCompetitor(index: number): boolean { return doAcquireCompetitor(this, index); }
 
   /** 竞争对手演化：盈利扩张/亏损退役 + 性格化行为（清洁型猛扩张、激进型打价格战） */
-  private evolveCompetitors(dtDays: number): void {
-    for (const c of this.competitors) {
-      const margin = this.marketClearingPrice - c.marginalCost;
-      const expandMult = c.style === 'green' ? COMP_GREEN_EXPAND_MULT : 1;
-      const retireMult = c.style === 'green' ? COMP_GREEN_RETIRE_MULT : 1;
-      if (margin > COMPETITOR_EXPAND_MARGIN) c.capacity *= 1 + COMPETITOR_EXPAND_RATE * expandMult * dtDays;
-      else if (margin < 0) c.capacity *= 1 - COMPETITOR_RETIRE_RATE * retireMult * dtDays;
-      c.capacity = clamp(c.capacity, c.base * COMPETITOR_CAP_MIN_FRAC, c.base * COMPETITOR_CAP_MAX_FRAC);
-      // 激进调峰型：玩家市占过高时压价抢量（价格战），威胁解除后回归基准报价
-      if (c.style === 'peaker') {
-        const target = this.marketShare > COMP_PEAKER_WAR_SHARE ? c.mcBase * COMP_PEAKER_WAR_FLOOR : c.mcBase;
-        const before = c.marginalCost;
-        c.marginalCost += (target - c.marginalCost) * clamp(COMP_PEAKER_ADJUST_RATE * dtDays, 0, 1);
-        if (before > target + 1 && c.marginalCost <= target + 1) {
-          this.log('warn', `⚔ 「${c.name}」发动价格战：报价压至 ¥${c.marginalCost.toFixed(0)}/MWh 抢夺市场份额`);
-        }
-      }
-    }
-  }
+  private evolveCompetitors(dtDays: number): void { return evolveCompetitorsOf(this, dtDays); }
 
   /** 已建资产的账面价值（按 capex 估值），用于净资产与信用额度 */
-  get assetValue(): number {
-    let v = 0;
-    for (const g of this.grid.gens.values()) v += PLANTS[g.type].capex;
-    for (const b of this.grid.batteries.values()) v += STORAGE[b.type].capex;
-    for (const bus of this.grid.buses.values()) if (bus.kind === 'substation') v += SUBSTATION_CAPEX;
-    for (const ln of this.grid.lines.values()) v += ln.length * VOLTAGE[ln.voltage].costPerTile;
-    return v;
-  }
+  get assetValue(): number { return assetValueOf(this); }
   /** 杠杆率（以资产+基础额度为基数，避免与信用额度循环依赖） */
-  get leverage(): number {
-    return this.debt / Math.max(this.assetValue + LOAN_BASE_CREDIT, 1);
-  }
+  get leverage(): number { return leverageOf(this); }
   /** 信用评分 0..100：净资产/杠杆/可靠性/盈利综合 */
-  get creditScore(): number {
-    const leverageScore = 1 - clamp(this.leverage, 0, 1);
-    const netWorthScore = clamp(0.5 + this.netWorth / (2 * RATING_REF_NETWORTH), 0, 1);
-    const reliabScore = clamp(this.reliability, 0, 1);
-    const profitScore = clamp(0.5 + this.finance.net / (2 * RATING_REF_PROFIT), 0, 1);
-    return (0.3 * leverageScore + 0.3 * netWorthScore + 0.2 * reliabScore + 0.2 * profitScore) * 100;
-  }
+  get creditScore(): number { return creditScoreOf(this); }
   /** 信用评级字母 */
-  get creditRating(): string {
-    const s = this.creditScore;
-    if (s >= 90) return 'AAA';
-    if (s >= 80) return 'AA';
-    if (s >= 70) return 'A';
-    if (s >= 60) return 'BBB';
-    if (s >= 50) return 'BB';
-    if (s >= 40) return 'B';
-    if (s >= 25) return 'CCC';
-    return 'D';
-  }
+  get creditRating(): string { return creditRatingOf(this); }
   /** 信用额度 = (基础额度 + 资产抵押) × 评级系数(0.5~1.5) × 信贷环境（紧缩时压缩） */
-  get creditLimit(): number {
-    return (LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC) * (0.5 + this.creditScore / 100) * this.policy.creditLimitFactor;
-  }
-  get debtRatio(): number {
-    return this.creditLimit > 0 ? this.debt / this.creditLimit : 0;
-  }
+  get creditLimit(): number { return creditLimitOf(this); }
+  get debtRatio(): number { return debtRatioOf(this); }
   /** ESG 评分 0..100（环境/社会/治理三维平均） */
-  get esgScore(): number {
-    const intensity = this.co2Rate / Math.max(this.totalServed, 1);
-    const e = clamp(this.renewableShare * 0.6 + (1 - clamp(intensity / 0.9, 0, 1)) * 0.4, 0, 1); // 环境
-    const s = clamp(this.reliability * 0.5 + (this.reputation / 100) * 0.5, 0, 1); // 社会
-    const gov = clamp(this.creditScore / 100, 0, 1); // 治理
-    return ((e + s + gov) / 3) * 100;
-  }
+  get esgScore(): number { return esgScoreOf(this); }
   /** ESG 评级字母 */
-  get esgRating(): string {
-    const s = this.esgScore;
-    if (s >= 85) return 'A+';
-    if (s >= 70) return 'A';
-    if (s >= 55) return 'B';
-    if (s >= 40) return 'C';
-    return 'D';
-  }
+  get esgRating(): string { return esgRatingOf(this); }
   /** 日利率：基础 + 评级风险溢价 + 政策加息/紧缩 − ESG 绿色折扣 − 风险管理科技折扣 */
-  get loanDailyRate(): number {
-    const base = LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN + this.policy.loanRateAdder;
-    return Math.max(0.001, base - (this.esgScore / 100) * ESG_RATE_DISCOUNT - this.tech.loanRateDiscount);
-  }
+  get loanDailyRate(): number { return loanDailyRateOf(this); }
   /** 净资产 = 现金 + 资产 − 负债 */
-  get netWorth(): number {
-    return this.money + this.assetValue - this.debt;
-  }
+  get netWorth(): number { return netWorthOf(this); }
   /** 当前日保费（已投保时）；风险管理体系科技打折 */
-  get insurancePremiumPerDay(): number {
-    return this.insured ? this.assetValue * INSURANCE_RATE_PER_DAY * this.tech.insuranceFactor : 0;
-  }
+  get insurancePremiumPerDay(): number { return insurancePremiumOf(this); }
   /** 发生一次意外损失：已投保则保险覆盖大部分，玩家只付自付额 */
-  incurDamage(gross: number, label: string): void {
-    const covered = this.insured ? gross * INSURANCE_COVERAGE : 0;
-    const net = gross - covered;
-    this.money -= net;
-    this.claimCoveredTick += covered;
-    this.log('bad', `💥 ${label} ¥${Math.round(gross).toLocaleString('en-US')}${covered > 0 ? `（保险赔付 ¥${Math.round(covered).toLocaleString('en-US')}，自付 ¥${Math.round(net).toLocaleString('en-US')}）` : ''}`);
-  }
+  incurDamage(gross: number, label: string): void { return applyDamage(this, gross, label); }
   /** 签订一笔远期套保合约：锁定 volume MW × days 天，锁价 = 当前远期报价(avgSpot)；收手续费 */
-  addHedge(volume: number, days: number): boolean {
-    if (volume <= 0 || days <= 0) return false;
-    const fee = volume * days * HEDGE_FEE_PER_MW_DAY * this.tech.hedgeFeeFactor;
-    if (this.money < fee) return false;
-    this.money -= fee;
-    const strike = Math.round(this.avgSpot);
-    this.hedges.push({ volume, strike, endClock: this.clock + days * 24 });
-    this.log('info', `🔒 套保 ${volume}MW × ${days}天 @ ¥${strike}/MWh（手续费 ¥${Math.round(fee).toLocaleString('en-US')}）`);
-    return true;
-  }
+  addHedge(volume: number, days: number): boolean { return addHedgeTo(this, volume, days); }
 
   /** 买入电力期权：行权价=当前远期报价(avgSpot)，按量×天收权利金 */
-  addOption(kind: 'put' | 'call', volume: number, days: number): boolean {
-    if (volume <= 0 || days <= 0) return false;
-    const premium = volume * days * OPTION_PREMIUM_RATE * this.tech.optionPremiumFactor;
-    if (this.money < premium) return false;
-    this.money -= premium;
-    const strike = Math.round(this.avgSpot);
-    this.options.push({ kind, volume, strike, endClock: this.clock + days * 24 });
-    this.log('info', `🎟 ${kind === 'put' ? '看跌(保底)' : '看涨(封顶)'}期权 ${volume}MW × ${days}天 @ ¥${strike}（权利金 ¥${Math.round(premium).toLocaleString('en-US')}）`);
-    return true;
-  }
+  addOption(kind: 'put' | 'call', volume: number, days: number): boolean { return addOptionTo(this, kind, volume, days); }
 
   /** 买入输电权(FTR)：付当前价差×溢价的权利金，期内收取实际南北价差 */
-  addFTR(mw: number, days: number): boolean {
-    if (mw <= 0 || days <= 0) return false;
-    const premium = Math.round(this.zoneSpread * mw * days * 24 * FTR_MARKUP);
-    if (this.money < premium) return false;
-    this.money -= premium;
-    this.ftrs.push({ mw, endClock: this.clock + days * 24 });
-    this.log('info', `🔗 输电权 ${mw}MW × ${days}天（权利金 ¥${premium.toLocaleString('en-US')}），收取南北价差`);
-    return true;
-  }
+  addFTR(mw: number, days: number): boolean { return addFTRTo(this, mw, days); }
 
   /** 承诺远期容量：锁定容量价×溢价 days 天（差价合约 + 交付义务） */
-  addCapacityCommitment(mw: number, days: number): boolean {
-    if (mw <= 0 || days <= 0) return false;
-    this.capCommitments.push({ mw, price: this.capacityPrice * FORWARD_CAP_PREMIUM, endClock: this.clock + days * 24 });
-    this.log('info', `📜 远期容量 ${mw}MW × ${days}天 @ ¥${(this.capacityPrice * FORWARD_CAP_PREMIUM).toFixed(1)}/MW·天（须交付，否则罚款）`);
-    return true;
-  }
+  addCapacityCommitment(mw: number, days: number): boolean { return addCapacityCommitmentTo(this, mw, days); }
 
   /** 借款（受信用额度约束），成功返回 true */
-  borrow(amount: number): boolean {
-    if (amount <= 0 || this.debt + amount > this.creditLimit) return false;
-    this.debt += amount;
-    this.money += amount;
-    this.log('info', `🏦 借入 ¥${Math.round(amount).toLocaleString('en-US')}（负债 ¥${Math.round(this.debt).toLocaleString('en-US')}）`);
-    return true;
-  }
+  borrow(amount: number): boolean { return borrowFor(this, amount); }
   /** 还款（不超过负债与现金），返回实际还款额 */
-  repay(amount: number): number {
-    const x = Math.max(0, Math.min(amount, this.debt, this.money));
-    if (x <= 0) return 0;
-    this.debt -= x;
-    this.money -= x;
-    this.log('info', `🏦 还款 ¥${Math.round(x).toLocaleString('en-US')}（负债 ¥${Math.round(this.debt).toLocaleString('en-US')}）`);
-    return x;
-  }
+  repay(amount: number): number { return repayFor(this, amount); }
 
   /** 机组磨损系数 0..1（随役龄上升） */
   wear(g: Generator): number {
@@ -848,29 +629,10 @@ export class Simulation {
   }
 
   /** 与大客户签订长约：合约期内不被挖角，但电价折让；返回是否成功 */
-  signKeyAccountContract(busId: number, days: number = CONTRACT_DAYS): boolean {
-    const bus = this.grid.buses.get(busId);
-    if (!bus || bus.kind !== 'load' || bus.underConstruction) return false;
-    const l = this.grid.loadsAtBus(busId)[0];
-    if (!l || !KEY_ACCOUNTS[l.profile]) return false; // 仅大客户
-    if (l.contractEndClock && this.clock < l.contractEndClock) return false; // 已有有效长约
-    l.contractEndClock = this.clock + days * 24;
-    this.log('good', `📜 与「${bus.name}」签订 ${days} 天长约：锁定忠诚（不被挖角），电价折让 ${(CONTRACT_DISCOUNT * 100).toFixed(0)}%`);
-    return true;
-  }
+  signKeyAccountContract(busId: number, days: number = CONTRACT_DAYS): boolean { return signKeyAccountContractOf(this, busId, days); }
 
   /** 给大客户加装自备应急电源（UPS/柴发）：停电时兜底部分负荷，护住满意度、防流失 */
-  addBackup(busId: number): boolean {
-    const bus = this.grid.buses.get(busId);
-    if (!bus || bus.kind !== 'load' || bus.underConstruction) return false;
-    const l = this.grid.loadsAtBus(busId)[0];
-    if (!l || l.backup || !KEY_ACCOUNTS[l.profile]) return false; // 仅大客户、未加装
-    if (this.money < BACKUP_CAPEX) return false;
-    this.money -= BACKUP_CAPEX;
-    l.backup = true;
-    this.log('good', `🔋 ${bus.name} 加装自备应急电源（¥${BACKUP_CAPEX.toLocaleString('en-US')}）：停电时兜底 ${(BACKUP_FRACTION * 100).toFixed(0)}% 负荷`);
-    return true;
-  }
+  addBackup(busId: number): boolean { return addBackupOf(this, busId); }
 
   /** 给变电站加装电容器组（无功补偿，支撑电压、降欠压线损） */
   addCapacitor(busId: number): boolean {
@@ -1858,74 +1620,22 @@ export class Simulation {
   }
 
   /** 公司招商竞争力 0..1：口碑 + 可靠性 + 大客户满意度的综合（决定赢得大客户的能力/代价） */
-  get companyStanding(): number {
-    return clamp(0.4 * (this.reputation / 100) + 0.35 * clamp(this.reliability, 0, 1) + 0.25 * clamp(this.customerSatisfaction, 0, 1), 0, 1);
-  }
+  get companyStanding(): number { return companyStandingOf(this); }
 
   /** 市场招商激烈度 0..1：你在区域装机中份额越低，竞争对手抢客越激烈 */
-  get marketContestation(): number {
-    return clamp(1 - this.playerNameplate / Math.max(this.regionNameplate, 1), 0, 1);
-  }
+  get marketContestation(): number { return marketContestationOf(this); }
 
   /** 招商赢得某大客户所需的接入代价；竞争力越高越便宜、竞争越激烈越贵；过低则被拒(返回 -1) */
-  keyAccountAcquireCost(profile: LoadProfile): number {
-    const spec = KEY_ACCOUNTS[profile];
-    if (!spec) return -1;
-    if (this.companyStanding < ACQ_STANDING_MIN) return -1; // 大客户拒绝入驻
-    const factor = clamp(ACQ_FACTOR_BASE - this.companyStanding * ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX);
-    const compFactor = clamp(1 + ACQ_COMP_K * this.marketContestation, 1, ACQ_COMP_MAX);
-    const leadDiscount = this.keyAccountLeadActive(profile) ? LEAD_DISCOUNT : 1; // 限时招商机会折扣
-    return Math.round(spec.connectionCapex * factor * compFactor * leadDiscount);
-  }
+  keyAccountAcquireCost(profile: LoadProfile): number { return keyAccountAcquireCostOf(this, profile); }
 
   /** 当前是否有针对该品类的限时招商机会 */
-  keyAccountLeadActive(profile: LoadProfile): boolean {
-    return !!this.keyAccountLead && this.keyAccountLead.profile === profile && this.clock < this.keyAccountLead.endClock;
-  }
+  keyAccountLeadActive(profile: LoadProfile): boolean { return keyAccountLeadActiveOf(this, profile); }
 
   /** 大客户接入成功后调用：消费当前匹配机会；若为竞品客户则削弱最强对手（反向挖角） */
-  onKeyAccountAcquired(profile: LoadProfile): void {
-    const lead = this.keyAccountLead;
-    if (!lead || lead.profile !== profile || this.clock >= lead.endClock) return;
-    if (lead.poach && this.competitors.length > 0) {
-      const top = this.competitors.reduce((a, b) => (b.capacity > a.capacity ? b : a));
-      const shrink = (KEY_ACCOUNTS[profile]?.baseDemand ?? 0) * POACH_WIN_FRACTION;
-      top.capacity = Math.max(top.base * COMPETITOR_CAP_MIN_FRAC, top.capacity - shrink);
-      this.log('good', `🏆 从对手「${top.name}」赢得${KEY_ACCOUNTS[profile].label}！对手容量 −${shrink.toFixed(0)}MW`);
-    }
-    this.keyAccountLead = null; // 机会已用掉
-  }
+  onKeyAccountAcquired(profile: LoadProfile): void { return onKeyAccountAcquiredOf(this, profile); }
 
   /** 限时招商机会调度：到点出现、过期清除（过期未签的选址客户可能被最强对手抢走） */
-  private checkKeyAccountLead(): void {
-    if (this.keyAccountLead && this.clock >= this.keyAccountLead.endClock) {
-      const lead = this.keyAccountLead;
-      this.keyAccountLead = null;
-      if (!lead.poach && this.competitors.length > 0 && Math.random() < COMP_LEAD_SNATCH_CHANCE) {
-        const top = this.competitors.reduce((a, b) => (b.capacity > a.capacity ? b : a));
-        const spec = KEY_ACCOUNTS[lead.profile];
-        if (spec) {
-          top.capacity = Math.min(top.base * COMPETITOR_CAP_MAX_FRAC, top.capacity + spec.baseDemand * COMP_LEAD_SNATCH_FRACTION);
-          this.log('warn', `🏷 ${spec.icon}${spec.label}选址花落对手「${top.name}」（窗口期未签约），对手容量 +${(spec.baseDemand * COMP_LEAD_SNATCH_FRACTION).toFixed(0)}MW`);
-        }
-      }
-    }
-    if (this.clock >= this.nextLeadAt) {
-      const profiles: LoadProfile[] = ['datacenter', 'transport', 'petrochem', 'mining'];
-      const p = profiles[Math.floor(Math.random() * profiles.length)];
-      // 反向挖角：竞争力高且有较强对手时，机会可能是"竞品客户"（接入即从对手赢得）
-      const topComp = this.competitors.length ? Math.max(...this.competitors.map((c) => c.capacity)) : 0;
-      const poach = this.companyStanding > POACH_WIN_STANDING && topComp > POACH_WIN_MIN_COMP && Math.random() < POACH_WIN_CHANCE;
-      this.keyAccountLead = { profile: p, endClock: this.clock + LEAD_WINDOW_DAYS * 24, poach };
-      // 竞争力越高，招商机会越频繁（奖励优质运营商）
-      const intervalFactor = clamp(1.6 - this.companyStanding, 0.7, 1.6);
-      this.nextLeadAt = this.clock + LEAD_INTERVAL_DAYS * 24 * intervalFactor + Math.random() * 48;
-      const spec = KEY_ACCOUNTS[p];
-      this.log('good', poach
-        ? `🎯 竞品客户机会：${spec.icon}${spec.label}对现服务商不满，${LEAD_WINDOW_DAYS}天内接入可从对手赢得（并削弱对手）！`
-        : `🎯 招商机会：${spec.icon}${spec.label}正在选址，${LEAD_WINDOW_DAYS}天内接入享 ${(LEAD_DISCOUNT * 10).toFixed(0)}折接入费！`);
-    }
-  }
+  private checkKeyAccountLead(): void { return checkKeyAccountLeadOf(this); }
 
   /** 电网是否具备黑启动能力（有可用燃气机组或有电量的储能作种子） */
   get blackStartCapable(): boolean {
