@@ -719,6 +719,13 @@ async function start(): Promise<void> {
   hud.onIRP = openIRP;
   hud.onPortfolio = openPortfolio;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
+  hud.onContinueAfterWin = () => {
+    sim.gameOver = false;
+    sim.goalDay = Infinity; // 转入无尽经营：不再有通关日，但仍可破产
+    wasGameOver = false;
+    hud.setSpeed(1);
+    hud.toast('∞ 继续经营——目标已解除，城市继续成长，年报照常发布');
+  };
   hud.setSoundLabel(sound.muted);
   bindInput();
   openMenu(); // 开局先进主菜单选关

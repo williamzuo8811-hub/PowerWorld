@@ -64,6 +64,7 @@ export class Hud {
   onIRP?: () => void; // 长期规划压力测试面板按钮回调
   onPortfolio?: () => void; // 能源品类统计面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
+  onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
@@ -311,7 +312,9 @@ export class Hud {
     this.set('rp', `${s.researchPoints.toFixed(0)}`);
     this.set('grade', `${s.grade} · ${s.gradeScore.toFixed(0)}`,
       s.gradeScore >= 75 ? 'freq-ok' : s.gradeScore >= 45 ? 'freq-warn' : 'freq-bad');
-    this.set('goal', s.sandbox ? '★ 沙盒模式' : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
+    this.set('goal', s.sandbox ? '★ 沙盒模式'
+      : !isFinite(s.goalDay) ? '∞ 无尽经营 · 别破产'
+        : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');
     if (body) {
@@ -337,6 +340,12 @@ export class Hud {
     if (ov.style.display === 'flex') return;
     ov.style.display = 'flex';
     document.getElementById('overlay-title')!.textContent = s.win ? '🏆 通关！' : '💸 破产了';
+    // 胜利后可选择转入无尽模式继续经营
+    const cont = document.getElementById('overlay-continue') as HTMLButtonElement | null;
+    if (cont) {
+      cont.style.display = s.win ? 'inline-block' : 'none';
+      cont.onclick = () => { ov.style.display = 'none'; this.onContinueAfterWin?.(); };
+    }
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };

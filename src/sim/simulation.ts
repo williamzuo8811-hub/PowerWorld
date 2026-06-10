@@ -271,6 +271,7 @@ export class Simulation {
   /** 储能商业策略：'arb'=专注套利（不投调频）；'reg'=投标调频（套利捕获减半）——同一容量不能两头吃 */
   storageStrategy: 'arb' | 'reg' = 'arb';
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
+  private lastYearIdx = 0; // 已结算年报的年序号（年度边界触发经营年报）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
   private claimCoveredTick = 0; // 本 tick 保险理赔覆盖额（用于报表）
@@ -358,6 +359,7 @@ export class Simulation {
     this.interruptibleEndClock = 0;
     this.storageStrategy = 'arb';
     this.lastSeason = '';
+    this.lastYearIdx = 0;
     this.history = [];
     this.nextSampleAt = 0;
     this.claimCoveredTick = 0;
@@ -464,6 +466,7 @@ export class Simulation {
       ? d.competitors.map((c) => ({ ...c, mcBase: c.mcBase ?? c.marginalCost, style: c.style ?? 'coal' }))
       : COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
     this.storageStrategy = d.storageStrategy ?? 'arb';
+    this.lastYearIdx = Math.floor(this.day / SEASON_YEAR_DAYS); // 读档不重发既往年报
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
@@ -1063,6 +1066,14 @@ export class Simulation {
 
     // —— 迎峰预警：进入夏/冬旺季时校核可信容量对季节峰值的充裕度 ——
     this.checkSeasonAlert();
+
+    // —— 经营年报：每个完整年度（SEASON_YEAR_DAYS 天）结束时给出经营摘要 ——
+    const yearIdx = Math.floor(this.day / SEASON_YEAR_DAYS);
+    if (yearIdx > this.lastYearIdx) {
+      this.lastYearIdx = yearIdx;
+      const g = this.gradeScore();
+      this.log('good', `📅 经营年报 · 第 ${yearIdx} 年收官：净资产 ¥${Math.round(this.netWorth).toLocaleString('en-US')} · 可靠性 ${(this.reliability * 100).toFixed(1)}% · 清洁 ${(this.renewableShare * 100).toFixed(0)}% · 市占 ${(this.marketShare * 100).toFixed(0)}% · 评级 ${g.grade}(${g.score.toFixed(0)})`);
+    }
 
     // —— 限时招商机会调度 ——
     this.checkKeyAccountLead();

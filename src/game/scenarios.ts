@@ -166,6 +166,49 @@ export const SCENARIOS: Scenario[] = [
       sim.log('info', '【商海争锋】强敌环伺——保供留客、做大市占、反挖对手，撑到第 16 天。');
     },
   },
+  {
+    id: 'fullyear',
+    name: '⑧ 周年大考',
+    brief: '完整经历春夏秋冬一整年（24 天）：盛夏制冷峰、深冬采暖峰与气价飙升、季节检修窗口、丰枯来水轮替。撑过一整年且可靠性≥90%。',
+    hint: '看「季节」与「预报」排兵布阵：换季淡季检修、迎峰前补容量、冬季少靠水电与燃气、夏季多晒光伏。',
+    goals: '高星级 = 跨全年四季的稳定可靠 + 盈利 + 清洁 + 口碑（长周期经营的试金石）',
+    setup(sim) {
+      sim.money = 1_600_000;
+      sim.goalDay = 24; // 一整年
+      sim.goalReliability = 0.9;
+      const g = sim.grid;
+      g.addLoad(15, 5, 'residential', 30, '城北居民', 0.0035);
+      g.addLoad(19, 12, 'commercial', 26, '中央商务区', 0.004);
+      g.addLoad(8, 13, 'industrial', 34, '工业走廊', 0.003);
+      g.addLoad(24, 8, 'residential', 22, '城东新区', 0.004);
+      const coal = g.addPlant('coal', 5, 6).bus;
+      const gas = g.addPlant('gas', 7, 4).bus;
+      const sub = g.addSubstation(12, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.log('info', '【周年大考】完整一年四季——盛夏与深冬是两道大关，提前看预报与迎峰预警。');
+    },
+  },
+  {
+    id: 'endless',
+    name: '∞ 无尽经营',
+    brief: '没有终点的生涯模式：城市持续成长、四季循环、对手演化、政策更迭。唯一的失败是破产。每年给出经营年报，看你能把电力帝国带到多远。',
+    hint: '无尽模式：无通关日，但会破产！稳健扩张、留足现金流，用年报检视长期经营曲线。',
+    goals: '长期目标：跨年稳定 S 级 · 市占主导 · 全面清洁化 · 科技点满',
+    setup(sim) {
+      sim.money = 950_000;
+      sim.goalDay = Infinity; // 无终点
+      sim.goalReliability = 0.9;
+      const g = sim.grid;
+      g.addLoad(14, 4, 'residential', 26, '老城居民', 0.0045);
+      g.addLoad(17, 12, 'commercial', 22, '商业街', 0.005);
+      g.addLoad(7, 14, 'industrial', 32, '工业园', 0.0038);
+      const coal = g.addPlant('coal', 5, 5).bus;
+      const sub = g.addSubstation(10, 8, '中心变电站');
+      g.addLine(coal.id, sub.id);
+      sim.log('info', '【无尽经营】城市会一直成长——唯一的失败是破产。祝你基业长青。');
+    },
+  },
 ];
 
 // 新手教程：手把手学会核心操作
