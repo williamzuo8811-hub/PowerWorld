@@ -211,6 +211,64 @@ export const SCENARIOS: Scenario[] = [
   },
 ];
 
+// —— 每日挑战：以"当天日期"为种子生成同一张图——今天所有玩家面对同一道题 ——
+/** mulberry32：小巧的确定性伪随机数发生器 */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 当天的日期种子（UTC，全球同一题面） */
+export function dailySeed(date = new Date()): number {
+  return date.getUTCFullYear() * 10000 + (date.getUTCMonth() + 1) * 100 + date.getUTCDate();
+}
+
+/** 用种子确定性生成每日挑战的题面（导出供测试） */
+export function setupDaily(sim: Simulation, seed: number): void {
+  const rnd = mulberry32(seed);
+  const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
+  sim.money = 850_000 + Math.floor(rnd() * 5) * 100_000;
+  sim.goalDay = 12 + Math.floor(rnd() * 5); // 12~16 天
+  sim.goalReliability = 0.9;
+  sim.clock = Math.floor(rnd() * 24) * 24; // 随机开局季节
+  const g = sim.grid;
+  // 3~5 个城区：类型/位置/规模随机但当天确定
+  const n = 3 + Math.floor(rnd() * 3);
+  const profiles = ['residential', 'commercial', 'industrial'] as const;
+  for (let i = 0; i < n; i++) {
+    const p = pick([...profiles]);
+    const name = `${['城东', '城南', '城西', '城北', '新区'][i % 5]}${p === 'residential' ? '居民' : p === 'commercial' ? '商圈' : '工业'}`;
+    g.addLoad(8 + Math.floor(rnd() * 22), 3 + Math.floor(rnd() * 13), p, 18 + Math.floor(rnd() * 22), name, 0.003 + rnd() * 0.003);
+  }
+  // 起步电源：煤或气 + 中心变电站
+  const starter = pick(['coal', 'gas'] as const);
+  const plant = g.addPlant(starter, 4 + Math.floor(rnd() * 3), 4 + Math.floor(rnd() * 4)).bus;
+  const sub = g.addSubstation(12 + Math.floor(rnd() * 6), 7 + Math.floor(rnd() * 4), '中心变电站');
+  g.addLine(plant.id, sub.id);
+  // 当天的"风味"扰动：燃料起价 / 碳价倍率小幅随机
+  sim.fuelPrice.coal = 0.8 + rnd() * 0.5;
+  sim.fuelPrice.gas = 0.8 + rnd() * 0.7;
+  sim.carbonPriceMult = 0.9 + rnd() * 0.8;
+  sim.log('info', `【每日挑战 #${seed}】今天所有玩家同一张图——撑到第 ${sim.goalDay} 天、可靠性≥90%，比比谁的评级高！`);
+}
+
+SCENARIOS.push({
+  id: 'daily',
+  name: `📅 每日挑战`,
+  brief: '以今天日期为种子生成的随机图——全球玩家同一题面。城区布局/起步电源/开局季节/燃料行情每天换新，挑战高星级通关。',
+  hint: '题面每天 0 点(UTC)刷新：先看城区分布与开局季节，再定电源组合。',
+  goals: '同一张图拼评级：S 级是今日满分答卷',
+  setup(sim) {
+    setupDaily(sim, dailySeed());
+  },
+});
+
 // 新手教程：手把手学会核心操作
 SCENARIOS.push({
   id: 'tutorial',
