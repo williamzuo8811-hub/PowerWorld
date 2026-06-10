@@ -9,7 +9,7 @@ import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
   PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
-  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, type FuelType,
+  PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType,
   LOAN_BASE_CREDIT, LOAN_CREDIT_ASSET_FRAC, LOAN_BASE_DAILY_RATE,
   RATING_RATE_SPAN, RATING_REF_NETWORTH, RATING_REF_PROFIT, ESG_RATE_DISCOUNT,
   WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS,
@@ -694,13 +694,18 @@ export class Simulation {
     return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * SALVAGE_FRACTION * 0.5);
   }
 
-  /** 燃料价格波动：均值回归 + 随机游走 + 偶发跳涨 */
+  /** 某燃料的季节性回归基准（深冬抬升、夏季/换季回到 1.0） */
+  fuelSeasonMean(fuel: FuelType): number {
+    return 1 + FUEL_SEASON_WINTER_AMP[fuel] * seasonIntensity(this.yearPhase).winter;
+  }
+
+  /** 燃料价格波动：季节性均值回归 + 随机游走 + 偶发跳涨 */
   private updateFuelPrices(dtHours: number): void {
     const dtDay = dtHours / 24;
     for (const fuel of Object.keys(this.fuelPrice) as FuelType[]) {
       const info = FUEL_INFO[fuel];
       let p = this.fuelPrice[fuel];
-      p += (1 - p) * FUEL_MEAN_REVERT * dtDay; // 向基准回归
+      p += (this.fuelSeasonMean(fuel) - p) * FUEL_MEAN_REVERT * dtDay; // 向季节性基准回归
       p += (Math.random() * 2 - 1) * info.volatility * Math.sqrt(dtDay); // 随机游走
       if (Math.random() < FUEL_SHOCK_CHANCE_PER_DAY * dtDay) {
         p *= 1 + Math.random() * 0.5; // 供给冲击：跳涨 0~50%

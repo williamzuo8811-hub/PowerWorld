@@ -93,6 +93,13 @@ export const FUEL_INFO: Record<FuelType, { label: string; volatility: number }> 
 export const FUEL_MEAN_REVERT = 0.06; // 向基准 1.0 回归速度（每天）
 export const FUEL_MIN = 0.45;
 export const FUEL_MAX = 2.6;
+// 燃料价格的季节性基准偏移：深冬采暖需求推高天然气（与煤），核燃料几乎不受季节影响。
+// 回归目标 = 1 + amp × 冬季强度，冬季最强、夏季/换季回到 1.0。
+export const FUEL_SEASON_WINTER_AMP: Record<FuelType, number> = {
+  coal: 0.1, // 煤：轻度冬季溢价
+  gas: 0.35, // 天然气：强冬季溢价（采暖与电力争气）
+  uranium: 0.0, // 铀：长约/库存制，无季节性
+};
 export const FUEL_SHOCK_CHANCE_PER_DAY = 0.12; // 燃料价格跳涨概率（每天）
 export const FUEL_CONTRACT_PREMIUM = 1.03; // 燃料长约锁价相对现货的溢价（确定性的代价）
 
