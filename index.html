@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>电力世界 · PowerWorld</title>
+    <style>
+      :root {
+        --bg: #0b1016;
+        --panel: rgba(18, 26, 36, 0.92);
+        --panel-border: #2a3a4d;
+        --text: #cfe3f2;
+        --text-dim: #7c93a6;
+        --accent: #38d39f;
+        --warn: #f2c14e;
+        --danger: #ef5d60;
+        --ok: #38d39f;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0; height: 100%; overflow: hidden;
+        background: var(--bg); color: var(--text);
+        font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Microsoft YaHei", monospace;
+        -webkit-user-select: none; user-select: none;
+      }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      /* 顶部状态栏 */
+      #topbar {
+        position: fixed; top: 0; left: 0; right: 0; height: 52px;
+        display: flex; align-items: center; gap: 14px; padding: 0 16px;
+        background: var(--panel); border-bottom: 1px solid var(--panel-border);
+        backdrop-filter: blur(6px); z-index: 10; font-size: 13px;
+        overflow-x: auto; white-space: nowrap;
+      }
+      #topbar .stat { flex: 0 0 auto; }
+      #topbar .stat { display: flex; flex-direction: column; line-height: 1.25; }
+      #topbar .stat .k { color: var(--text-dim); font-size: 10px; letter-spacing: .5px; }
+      #topbar .stat .v { font-size: 15px; font-weight: 600; }
+      #topbar .spacer { flex: 1; }
+      .freq-ok { color: var(--ok); }
+      .freq-warn { color: var(--warn); }
+      .freq-bad { color: var(--danger); }
+
+      /* 速度控制 */
+      #speed { display: flex; gap: 4px; }
+      #speed button {
+        background: #182431; color: var(--text); border: 1px solid var(--panel-border);
+        border-radius: 6px; padding: 4px 9px; cursor: pointer; font-family: inherit; font-size: 12px;
+      }
+      #speed button.active { background: var(--accent); color: #04211a; border-color: var(--accent); font-weight: 700; }
+
+      /* 左下工具栏 */
+      #toolbar {
+        position: fixed; left: 16px; bottom: 16px; z-index: 10;
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
+        background: var(--panel); border: 1px solid var(--panel-border);
+        border-radius: 10px; padding: 10px; width: 230px;
+      }
+      #toolbar .title { grid-column: 1 / -1; color: var(--text-dim); font-size: 10px; letter-spacing: 1px; margin-bottom: 2px; }
+      #toolbar .tool-group {
+        grid-column: 1 / -1; color: var(--accent); font-size: 11px; font-weight: 600;
+        letter-spacing: 1px; padding: 4px 2px 2px; cursor: pointer; user-select: none;
+        border-top: 1px solid var(--panel-border);
+      }
+      #toolbar .tool-group:hover { color: #fff; }
+      #toolbar button {
+        text-align: left; background: #141d28; color: var(--text);
+        border: 1px solid var(--panel-border); border-radius: 7px; padding: 7px 8px;
+        cursor: pointer; font-family: inherit; font-size: 11px; line-height: 1.3;
+      }
+      #toolbar button .cost { display: block; color: var(--text-dim); font-size: 10px; }
+      #toolbar button.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+      #toolbar button:hover { background: #1b2733; }
+
+      /* 右下信息/告警 */
+      #log {
+        position: fixed; right: 16px; bottom: 16px; z-index: 10; width: 320px; max-height: 180px;
+        overflow: hidden; background: var(--panel); border: 1px solid var(--panel-border);
+        border-radius: 10px; padding: 8px 10px; font-size: 11px; line-height: 1.5;
+      }
+      #log .title { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; margin-bottom: 4px; }
+      #log .entry { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .e-info { color: var(--text-dim); }
+      .e-warn { color: var(--warn); }
+      .e-bad { color: var(--danger); }
+      .e-good { color: var(--ok); }
+
+      /* 检查器（鼠标悬停 / 选中） */
+      #inspector {
+        position: fixed; right: 16px; top: 64px; z-index: 10; width: 240px;
+        background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
+        padding: 10px 12px; font-size: 11px; line-height: 1.6; display: none;
+      }
+      #inspector .h { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+      #inspector .row { display: flex; justify-content: space-between; color: var(--text-dim); }
+      #inspector .row b { color: var(--text); font-weight: 600; }
+
+      /* 新手教程提示条 */
+      #tutorial {
+        position: fixed; top: 62px; left: 50%; transform: translateX(-50%); z-index: 11;
+        max-width: 600px; text-align: center; background: rgba(86, 204, 242, 0.14);
+        border: 1px solid #56ccf2; color: #d6effb; padding: 9px 18px; border-radius: 10px;
+        font-size: 13px; line-height: 1.5; display: none; pointer-events: none;
+      }
+
+      /* 提示条 */
+      #hint {
+        position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 10;
+        background: rgba(56, 211, 159, 0.12); border: 1px solid var(--accent); color: var(--accent);
+        padding: 5px 14px; border-radius: 20px; font-size: 12px; display: none;
+      }
+      /* 主菜单 / 关卡选择 / 研发面板 */
+      #menu, #panel {
+        position: fixed; inset: 0; z-index: 60; display: none;
+        align-items: center; justify-content: center; background: rgba(5, 8, 12, 0.93);
+      }
+      .menu-card:disabled { opacity: 0.45; cursor: default; }
+      .menu-card:disabled:hover { border-color: var(--panel-border); background: #141d28; }
+      .econ-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .econ-table th, .econ-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--panel-border); white-space: nowrap; }
+      .econ-table th:first-child, .econ-table td:first-child { text-align: left; }
+      .econ-table th { color: var(--text-dim); font-weight: 600; }
+      .menu-panel {
+        width: min(760px, 92vw); max-height: 90vh; overflow: auto;
+        background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px; padding: 26px 28px;
+      }
+      .menu-panel h1 { margin: 0; font-size: 30px; }
+      .menu-panel .sub { color: var(--text-dim); margin: 6px 0 18px; font-size: 13px; }
+      .menu-continue {
+        display: block; width: 100%; background: var(--accent); color: #04211a; border: 0; border-radius: 8px;
+        padding: 11px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit; margin-bottom: 16px;
+      }
+      .menu-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .menu-card {
+        text-align: left; background: #141d28; color: var(--text); border: 1px solid var(--panel-border);
+        border-radius: 10px; padding: 12px 14px; cursor: pointer; font-family: inherit;
+      }
+      .menu-card:hover { border-color: var(--accent); background: #1b2733; }
+      .mc-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+      .mc-brief { font-size: 12px; color: var(--text-dim); line-height: 1.55; }
+
+      /* 成就 / 解锁提示 toast */
+      #toast {
+        position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); z-index: 40;
+        display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+      }
+      .toast-item {
+        background: rgba(56, 211, 159, 0.16); border: 1px solid var(--accent); color: var(--accent);
+        padding: 8px 16px; border-radius: 20px; font-size: 13px; animation: toastIn .25s ease;
+      }
+      @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
+
+      /* 游戏结束遮罩 */
+      #overlay {
+        position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center;
+        background: rgba(5, 8, 12, 0.85); flex-direction: column; gap: 14px; text-align: center;
+      }
+      #overlay h1 { font-size: 32px; margin: 0; }
+      #overlay p { color: var(--text-dim); max-width: 460px; }
+      #overlay button {
+        background: var(--accent); color: #04211a; border: 0; border-radius: 8px;
+        padding: 10px 22px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-JaMWPu64.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="topbar"></div>
+    <div id="toolbar"></div>
+    <div id="log"></div>
+    <div id="inspector"></div>
+    <div id="hint"></div>
+    <div id="tutorial"></div>
+    <div id="menu"></div>
+    <div id="panel"></div>
+    <div id="toast"></div>
+    <div id="overlay">
+      <h1 id="overlay-title"></h1>
+      <div id="overlay-grade" style="font-size:40px;font-weight:700;letter-spacing:2px"></div>
+      <p id="overlay-text"></p>
+      <button id="overlay-btn" onclick="location.reload()">再来一局</button>
+    </div>
+  </body>
+</html>
