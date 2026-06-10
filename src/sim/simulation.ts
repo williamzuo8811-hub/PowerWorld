@@ -63,6 +63,16 @@ export interface HistorySample {
   demand: number;
 }
 
+/** 能源品类统计的一行（资产组合面板，呼应"能源品类"筛选器） */
+export interface PortfolioCategory {
+  key: string;
+  icon: string;
+  label: string;
+  count: number; // 该品类资产数量
+  value: string; // 规模/明细（MW、满意度等）
+  color: number;
+}
+
 /** 多年规划轨迹的逐年采样（IRP） */
 export interface YearPlan {
   year: number; // 距今第几年（0=当前）
@@ -1802,6 +1812,35 @@ export class Simulation {
       plans.push({ year: y, peakDemand: peak, firmSupply: firm, reserveMargin: margin, verdict });
     }
     return plans;
+  }
+
+  /** 按"能源品类"汇总当前资产组合（发电/电网/储能/各类大客户），供品类统计面板展示 */
+  portfolio(): PortfolioCategory[] {
+    const gens = [...this.grid.gens.values()];
+    const bats = [...this.grid.batteries.values()];
+    const loads = [...this.grid.loads.values()];
+    const cap = (arr: { capacity: number }[]) => arr.reduce((s, g) => s + g.capacity, 0);
+    const dem = (arr: { baseDemand: number }[]) => arr.reduce((s, l) => s + l.baseDemand, 0);
+    const renew = gens.filter((g) => g.type === 'wind' || g.type === 'solar');
+    const thermal = gens.filter((g) => g.type === 'coal' || g.type === 'gas');
+    const nuke = gens.filter((g) => g.type === 'nuclear');
+    const subs = [...this.grid.buses.values()].filter((b) => b.kind === 'substation');
+    const lineCount = this.grid.lines.size;
+    const ci = loads.filter((l) => l.profile === 'residential' || l.profile === 'commercial' || l.profile === 'industrial');
+    const out: PortfolioCategory[] = [
+      { key: 'renewable', icon: '☀️', label: '可再生能源发电', count: renew.length, value: `${cap(renew).toFixed(0)} MW`, color: 0x4ade80 },
+      { key: 'nuclear', icon: '⚛️', label: '核电', count: nuke.length, value: `${cap(nuke).toFixed(0)} MW`, color: 0xa78bfa },
+      { key: 'thermal', icon: '🔥', label: '火电(煤/气)', count: thermal.length, value: `${cap(thermal).toFixed(0)} MW`, color: 0xf2994a },
+      { key: 'grid', icon: '⚡', label: '输变电·电网', count: subs.length + lineCount, value: `${subs.length} 变电站 · ${lineCount} 线路`, color: 0x60a5fa },
+      { key: 'storage', icon: '🔋', label: '储能', count: bats.length, value: `${bats.reduce((s, b) => s + b.powerRating, 0).toFixed(0)} MW / ${bats.reduce((s, b) => s + b.energyCapacity, 0).toFixed(0)} MWh`, color: 0x38bdf8 },
+      { key: 'ci', icon: '🏭', label: '工商业·配网大客户', count: ci.length, value: `${dem(ci).toFixed(0)} MW`, color: 0xc98b6b },
+    ];
+    for (const [p, icon, label] of [['datacenter', '💻', '数据中心'], ['transport', '🚄', '大交通·枢纽'], ['petrochem', '🛢', '石油化工·LNG'], ['mining', '⛏', '矿业']] as const) {
+      const arr = loads.filter((l) => l.profile === p);
+      const avgSat = arr.length ? arr.reduce((s, l) => s + (l.satisfaction ?? 1), 0) / arr.length : 1;
+      out.push({ key: p, icon, label, count: arr.length, value: arr.length ? `${dem(arr).toFixed(0)} MW · 满意 ${(avgSat * 100).toFixed(0)}%` : '—', color: KEY_ACCOUNTS[p].color });
+    }
+    return out;
   }
 
   snapshot(): SimSnapshot {

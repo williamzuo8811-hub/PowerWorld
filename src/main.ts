@@ -9,6 +9,7 @@ import { EconomicsPanel } from './ui/economics';
 import { FinancePanel } from './ui/finance';
 import { HistoryPanel } from './ui/history';
 import { IRPPanel } from './ui/irp';
+import { PortfolioPanel } from './ui/portfolio';
 import { Sound } from './ui/sound';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
@@ -38,6 +39,7 @@ const econPanel = new EconomicsPanel();
 const finPanel = new FinancePanel();
 const historyPanel = new HistoryPanel();
 const irpPanel = new IRPPanel();
+const portfolioPanel = new PortfolioPanel();
 const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
@@ -79,6 +81,7 @@ function enterGame(): void {
   finPanel.hide();
   historyPanel.hide();
   irpPanel.hide();
+  portfolioPanel.hide();
   panelOpen = false;
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
@@ -166,6 +169,13 @@ function openIRP(): void {
   panelOpen = true;
   hud.setSpeed(0);
   irpPanel.show({ results: sim.stressTest(), advice: sim.recommendExpansion(), trajectory: sim.planningTrajectory(), onClose: () => { irpPanel.hide(); panelOpen = false; } });
+}
+
+/** 打开能源品类统计面板（资产组合） */
+function openPortfolio(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  portfolioPanel.show({ categories: sim.portfolio(), customerSatisfaction: sim.customerSatisfaction, onClose: () => { portfolioPanel.hide(); panelOpen = false; } });
 }
 
 /** 打开成就面板 */
@@ -594,6 +604,7 @@ async function start(): Promise<void> {
   hud.onFinance = openFinance;
   hud.onHistory = openHistory;
   hud.onIRP = openIRP;
+  hud.onPortfolio = openPortfolio;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
   hud.setSoundLabel(sound.muted);
   bindInput();
