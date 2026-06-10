@@ -20,13 +20,13 @@ import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TARIFF, TARIFF_CLASS,
-  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE, BLACKSTART_TYPES,
+  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE, BLACKSTART_TYPES, CAPACITOR_Q,
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'maintenance', 'ccs', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'maintenance', 'ccs', 'capacitor', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -407,6 +407,12 @@ function handleClick(clientX: number, clientY: number): void {
       else { flashHint('无法改造（非火电/已改造/资金不足）'); sound.error(); }
       return;
     }
+    case 'capacitor': {
+      if (!bus || bus.kind !== 'substation') { flashHint('请点击一座变电站加装'); return; }
+      if (sim.addCapacitor(bus.id)) sound.build();
+      else { flashHint('无法加装（非变电站/已装/资金不足）'); sound.error(); }
+      return;
+    }
     case 'bulldoze': {
       if (bus) {
         const salvage = sim.salvageValue(bus.id); // 退役前计算残值
@@ -494,6 +500,9 @@ function busInspectorHtml(bus: Bus): string {
     }
   } else if (bus.kind === 'substation') {
     rows.push(row('变压器', `${(bus.throughput ?? 0).toFixed(1)} / ${bus.rating ?? 0} MW`));
+    const v = bus.voltage ?? 1;
+    rows.push(row('电压', `${v.toFixed(2)} pu${v < 0.95 ? ' ⚠欠压' : ''}`));
+    rows.push(row('无功补偿', bus.capacitor ? `⚡ 电容器组 +${CAPACITOR_Q}MVAr` : '未加装（可用电容器组工具）'));
     rows.push(row('状态', bus.transformerTripped ? '⚠ 跳闸(点此重合闸)' : '正常'));
     const n = [...sim.grid.lines.values()].filter((ln) => ln.from === bus.id || ln.to === bus.id).length;
     rows.push(row('接入线路', `${n} 条`));

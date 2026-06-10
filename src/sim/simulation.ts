@@ -26,7 +26,7 @@ import {
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION,
   BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE,
-  LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K,
+  LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, CAPACITOR_CAPEX, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
@@ -764,6 +764,17 @@ export class Simulation {
     this.money -= cost;
     g.ccs = true;
     this.log('good', `🌫 ${bus.name} 加装碳捕集（¥${cost.toLocaleString('en-US')}）：捕碳 ${(CCS_CAPTURE_RATE * 100).toFixed(0)}%，成本上浮`);
+    return true;
+  }
+
+  /** 给变电站加装电容器组（无功补偿，支撑电压、降欠压线损） */
+  addCapacitor(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'substation' || bus.underConstruction || bus.capacitor) return false;
+    if (this.money < CAPACITOR_CAPEX) return false;
+    this.money -= CAPACITOR_CAPEX;
+    bus.capacitor = true;
+    this.log('good', `⚡ ${bus.name} 加装电容器组（¥${CAPACITOR_CAPEX.toLocaleString('en-US')}）：+${CAPACITOR_Q} MVAr 无功补偿，支撑电压`);
     return true;
   }
 

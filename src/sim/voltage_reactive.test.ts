@@ -58,6 +58,40 @@ describe('无功功率与电压', () => {
     expect(sim2.voltage).toBeGreaterThan(vLow);
   });
 
+  it('电容器组加装抬升欠压', () => {
+    const sim = stressed(false);
+    for (let i = 0; i < 40; i++) sim.tick(0.05, 600);
+    const vBefore = sim.voltage;
+    expect(vBefore).toBeLessThan(0.95);
+    const sub = [...sim.grid.buses.values()].find((b) => b.kind === 'substation')!;
+    sim.money = 10_000_000;
+    expect(sim.addCapacitor(sub.id)).toBe(true);
+    expect(sub.capacitor).toBe(true);
+    for (let i = 0; i < 10; i++) sim.tick(0.05, 600);
+    expect(sim.voltage).toBeGreaterThan(vBefore); // 无功补偿 → 电压回升
+  });
+
+  it('非变电站/重复加装被拒绝', () => {
+    const sim = healthy();
+    sim.money = 10_000_000;
+    const plant = [...sim.grid.buses.values()].find((b) => b.kind === 'plant')!;
+    expect(sim.addCapacitor(plant.id)).toBe(false); // 非变电站
+    const sub = [...sim.grid.buses.values()].find((b) => b.kind === 'substation')!;
+    expect(sim.addCapacitor(sub.id)).toBe(true);
+    expect(sim.addCapacitor(sub.id)).toBe(false); // 已加装
+  });
+
+  it('电容器组纳入存档', () => {
+    const sim = healthy();
+    sim.money = 10_000_000;
+    const sub = [...sim.grid.buses.values()].find((b) => b.kind === 'substation')!;
+    sim.addCapacitor(sub.id);
+    const blob = JSON.parse(JSON.stringify(sim.serialize()));
+    const sim2 = new Simulation();
+    sim2.deserialize(blob);
+    expect(sim2.grid.buses.get(sub.id)!.capacitor).toBe(true);
+  });
+
   it('电压进入快照与母线', () => {
     const sim = healthy();
     sim.tick(0.05, 600);
