@@ -32,6 +32,7 @@ export interface CustomScenarioData {
   goalReliability?: number; // 缺省 0.9
   carbonPriceMult?: number;
   terrainSeed?: number;
+  startClockHours?: number; // 开局时刻（累计仿真小时）：可指定开局季节/时辰，缺省 0
   buses: CustomBus[];
   lines?: [string, string][]; // 引用 bus id
 }
@@ -77,6 +78,7 @@ export function toScenario(data: CustomScenarioData): Scenario {
       sim.goalReliability = data.goalReliability ?? 0.9;
       if (data.carbonPriceMult != null) sim.carbonPriceMult = data.carbonPriceMult;
       if (data.terrainSeed != null) sim.grid.setTerrainSeed(data.terrainSeed);
+      if (data.startClockHours != null && data.startClockHours > 0) sim.clock = data.startClockHours;
       const g = sim.grid;
       const idMap = new Map<string, number>();
       for (const b of data.buses) {
@@ -142,6 +144,7 @@ export function exportCurrentAsScenario(sim: Simulation, name: string): CustomSc
     goalReliability: sim.goalReliability,
     carbonPriceMult: sim.carbonPriceMult,
     terrainSeed: g.terrain.seed,
+    startClockHours: Math.floor(sim.clock),
     buses,
     lines,
   };

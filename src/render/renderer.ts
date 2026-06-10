@@ -1,18 +1,22 @@
-// PixiJS 渲染层：把仿真状态画成可交互的电网图。
-// 只读 Grid 状态、自己维护相机与流动动画；不改任何仿真数据。
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+// PixiJS 渲染层：等轴（2:1 isometric）视角，把仿真状态画成可交互的电网世界。
+// 只读 Grid 状态、自己维护相机与动画；不改任何仿真数据。
+// 建筑使用程序化生成的伪 3D 贴图（见 sprites.ts），地貌按连续海拔/湿度场着色——零素材文件。
+import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
 import type { Bus, Line } from '../sim/types';
 import { Grid } from '../sim/grid';
-import { PLANTS, VOLTAGE, STORAGE, KEY_ACCOUNTS } from '../config/components';
+import { VOLTAGE } from '../config/components';
+import { buildSpriteTextures, type BuildingSprite } from './sprites';
 
-const TILE = 30; // 每瓦片像素
+// 等轴瓦片尺寸（2:1 菱形）
+const TW = 46; // 菱形宽
+const THh = 23; // 菱形高
 
 // 标签样式缓存（避免每帧 new TextStyle 的分配）
 const LABEL_STYLE = new TextStyle({ fontFamily: 'monospace', fontSize: 11, fill: 0xcfe3f2 });
 
 /** 煤电烟雾粒子 */
 interface Smoke {
-  x: number; y: number; // 世界像素
+  x: number; y: number; // 世界像素（等轴投影后）
   vx: number; vy: number;
   age: number; // 0..1
 }
@@ -20,15 +24,20 @@ interface Smoke {
 export class Renderer {
   app = new Application();
   private world = new Container();
-  private gridLayer = new Graphics();
-  private resourceLayer = new Graphics(); // 资源热力覆盖（选中风/光/水电工具时显示）
+  private gridLayer = new Graphics(); // 地形
+  private resourceLayer = new Graphics(); // 资源热力覆盖
   private lineLayer = new Graphics();
   private flowLayer = new Graphics();
-  private busLayer = new Graphics();
+  private groundFx = new Graphics(); // 地面层特效：阴影/状态环/光标地块/连线预览
+  private spriteLayer = new Container(); // 建筑贴图（按屏幕 y 深度排序）
+  private topFx = new Graphics(); // 建筑之上的特效：风机叶片/SoC 条/徽标
   private smokeLayer = new Graphics();
   private labelLayer = new Container();
   private ambientLayer = new Graphics(); // 屏幕空间：昼夜/天气色调滤镜
   private labels = new Map<number, Text>(); // busId -> Text
+  private sprites = new Map<number, Sprite>(); // busId -> 建筑贴图
+  private spriteKind = new Map<number, string>(); // busId -> 贴图键（类型变化时重建）
+  private textures = new Map<string, BuildingSprite>();
   private flowPhase = new Map<number, number>(); // lineId -> 0..1
   private smokes: Smoke[] = [];
   private lightningTimer = 0; // 风暴闪电计时
@@ -63,19 +72,34 @@ export class Renderer {
     });
     parent.appendChild(this.app.canvas);
 
-    this.world.addChild(this.gridLayer, this.resourceLayer, this.lineLayer, this.flowLayer, this.smokeLayer, this.busLayer, this.labelLayer);
+    this.spriteLayer.sortableChildren = true;
+    this.world.addChild(
+      this.gridLayer, this.resourceLayer, this.lineLayer, this.flowLayer,
+      this.groundFx, this.spriteLayer, this.topFx, this.smokeLayer, this.labelLayer,
+    );
     this.app.stage.addChild(this.world);
     this.app.stage.addChild(this.ambientLayer); // 屏幕空间滤镜在最上层（不随相机移动）
 
+    this.textures = buildSpriteTextures(this.app.renderer);
+
     // 初始相机：让世界大致居中
-    this.camX = 80;
-    this.camY = 90;
+    this.camX = this.app.screen.width / 2;
+    this.camY = 60;
     this.applyCamera();
     this.drawBackgroundGrid();
   }
 
   get canvas(): HTMLCanvasElement {
     return this.app.canvas;
+  }
+
+  // —— 等轴投影 ——
+  /** 瓦片坐标 → 世界像素（等轴 2:1） */
+  private projX(x: number, y: number): number {
+    return ((x - y) * TW) / 2;
+  }
+  private projY(x: number, y: number): number {
+    return ((x + y) * THh) / 2;
   }
 
   // —— 相机 ——
@@ -91,12 +115,12 @@ export class Renderer {
   }
   zoomAt(clientX: number, clientY: number, factor: number): void {
     const before = this.screenToTile(clientX, clientY);
-    this.zoom = Math.max(0.4, Math.min(2.4, this.zoom * factor));
+    this.zoom = Math.max(0.4, Math.min(2.6, this.zoom * factor));
     this.applyCamera();
     const after = this.screenToTile(clientX, clientY);
-    // 缩放后保持光标下的世界点不动
-    this.camX += (after.x - before.x) * TILE * this.zoom;
-    this.camY += (after.y - before.y) * TILE * this.zoom;
+    // 缩放后保持光标下的世界点不动（用投影差做通用补偿）
+    this.camX += (this.projX(after.x, after.y) - this.projX(before.x, before.y)) * this.zoom;
+    this.camY += (this.projY(after.x, after.y) - this.projY(before.x, before.y)) * this.zoom;
     this.applyCamera();
   }
 
@@ -105,27 +129,28 @@ export class Renderer {
     const buses = [...this.grid.buses.values()];
     const w = this.app.screen.width;
     const h = this.app.screen.height;
-    if (!buses.length) { this.camX = 80; this.camY = 90; this.zoom = 1; this.applyCamera(); return; }
+    if (!buses.length) { this.camX = w / 2; this.camY = 60; this.zoom = 1; this.applyCamera(); return; }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const b of buses) {
-      minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x);
-      minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y);
+      const px = this.projX(b.x, b.y), py = this.projY(b.x, b.y);
+      minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+      minY = Math.min(minY, py); maxY = Math.max(maxY, py);
     }
-    const pad = 4; // 边距（瓦片）
-    const bw = (maxX - minX + pad * 2) * TILE;
-    const bh = (maxY - minY + pad * 2) * TILE;
-    this.zoom = Math.max(0.4, Math.min(1.8, Math.min(w / Math.max(bw, 1), (h - 80) / Math.max(bh, 1))));
-    this.camX = w / 2 - ((minX + maxX) / 2) * TILE * this.zoom;
-    this.camY = (h + 52) / 2 - ((minY + maxY) / 2) * TILE * this.zoom; // 顶栏补偿
+    const pad = 3.5 * TW; // 边距（像素）
+    const bw = maxX - minX + pad * 2;
+    const bh = maxY - minY + pad * 2;
+    this.zoom = Math.max(0.45, Math.min(1.7, Math.min(w / Math.max(bw, 1), (h - 90) / Math.max(bh, 1))));
+    this.camX = w / 2 - ((minX + maxX) / 2) * this.zoom;
+    this.camY = (h + 52) / 2 - ((minY + maxY) / 2) * this.zoom; // 顶栏补偿
     this.applyCamera();
   }
 
-  /** 屏幕坐标 → 世界瓦片坐标 */
+  /** 屏幕坐标 → 世界瓦片坐标（等轴逆投影） */
   screenToTile(clientX: number, clientY: number): { x: number; y: number } {
     const rect = this.app.canvas.getBoundingClientRect();
     const lx = (clientX - rect.left - this.camX) / this.zoom;
     const ly = (clientY - rect.top - this.camY) / this.zoom;
-    return { x: lx / TILE, y: ly / TILE };
+    return { x: lx / TW + ly / THh, y: ly / THh - lx / TW };
   }
 
   /** 找最近的母线（瓦片距离 < maxDist） */
@@ -142,7 +167,7 @@ export class Renderer {
     return best;
   }
 
-  /** 找最近的线路（用于点击重合闸 / 拆除） */
+  /** 找最近的线路（用于点击重合闸 / 拆除）；瓦片空间判距（仿真坐标，与投影无关） */
   nearestLine(tileX: number, tileY: number, maxDist = 0.45): Line | null {
     let best: Line | null = null;
     let bestD = maxDist;
@@ -159,25 +184,35 @@ export class Renderer {
     return best;
   }
 
+  /** 等轴菱形地块路径（cx,cy 为中心，s 为占瓦片比例） */
+  private diamond(g: Graphics, cx: number, cy: number, s: number): Graphics {
+    const hw = (TW / 2) * s, hh = (THh / 2) * s;
+    return g.poly([cx, cy - hh, cx + hw, cy, cx, cy + hh, cx - hw, cy]);
+  }
+
   private drawBackgroundGrid(): void {
     const g = this.gridLayer;
     g.clear();
     const X0 = -2, X1 = 60, Y0 = -2, Y1 = 36;
     const terrain = this.grid.terrain;
-    // 1) 陆地底色：整张可玩区域先铺一层，比画布背景略亮——地图有"实体"边界感
-    g.rect(X0 * TILE - TILE / 2, Y0 * TILE - TILE / 2, (X1 - X0 + 1) * TILE, (Y1 - Y0 + 1) * TILE)
-      .fill({ color: 0x101720 });
+    // 1) 陆地底色：整张可玩区域的等轴大菱形，比画布背景略亮——地图有"实体"边界感
+    g.poly([
+      this.projX(X0, Y0), this.projY(X0, Y0) - THh / 2,
+      this.projX(X1, Y0) + TW / 2, this.projY(X1, Y0),
+      this.projX(X1, Y1), this.projY(X1, Y1) + THh / 2,
+      this.projX(X0, Y1) - TW / 2, this.projY(X0, Y1),
+    ]).fill({ color: 0x131c14 });
     // 2) 半瓦片子格采样：连续海拔/湿度场 → 平滑海岸线、水深渐变、山体坡面光照、森林纹理
-    const S = 0.5, PX = TILE * S + 0.5; // +0.5 防子格间缝隙
+    const S = 0.5;
     for (let x = X0; x <= X1; x += S) {
       for (let y = Y0; y <= Y1; y += S) {
         const kind = terrain.kind(x, y);
+        const cx = this.projX(x, y), cy = this.projY(x, y);
         if (kind === 'plain') {
-          // 平原：湿度高处罩一点草色，让大地有呼吸感（湿度低则保持底色，省绘制）
+          // 平原：湿度场调出深浅草色拼布（模拟城市式的田野感）
           const m = terrain.moisture(x, y);
-          if (m > 0.52) {
-            g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX)
-              .fill({ color: 0x12201a, alpha: Math.min(0.55, (m - 0.52) * 2.2) });
+          if (m > 0.45) {
+            this.diamond(g, cx, cy, S + 0.04).fill({ color: 0x1b2c1d, alpha: Math.min(0.85, (m - 0.45) * 2.4) });
           }
           continue;
         }
@@ -185,47 +220,56 @@ export class Renderer {
         let color: number;
         if (kind === 'water') {
           const depth = Math.max(0, Math.min(1, (0.34 - e) / 0.34)); // 离岸越远越深
-          color = lerpColor(0x1d4468, 0x0b1f38, depth);
+          color = lerpColor(0x2a6f9e, 0x0d2a47, depth);
         } else if (kind === 'hill') {
-          // 坡面光照：西北受光、东南背光 → 伪立体山地
-          const slope = (e - terrain.elevation(x - 0.7, y - 0.7)) * 5;
-          color = shadeColor(0x2b3344, 1 - Math.max(-0.35, Math.min(0.35, slope)));
+          // 山地：低处带草色、高处裸岩，按坡面光照做明暗（西北受光）
+          const rock = lerpColor(0x32402c, 0x4d483c, Math.max(0, Math.min(1, (e - 0.68) / 0.24)));
+          const slope = (e - terrain.elevation(x - 0.7, y - 0.7)) * 6;
+          color = shadeColor(rock, 1 - Math.max(-0.4, Math.min(0.4, slope)));
         } else {
-          color = 0x152619; // 森林底色
+          color = 0x1d3a22; // 森林底色
         }
-        g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX).fill({ color });
-        // 森林纹理：确定性散布的深色"树丛"点
+        this.diamond(g, cx, cy, S + 0.04).fill({ color });
+        // 山顶残雪（只点缀最高峰，避免糊成白斑）/ 森林树丛
+        if (kind === 'hill' && e > 0.86) {
+          this.diamond(g, cx, cy, S * 0.4).fill({ color: 0xd8e2ea, alpha: Math.min(0.55, (e - 0.86) * 5) });
+        }
         if (kind === 'forest') {
           const h = ((x * 2 + 31) * 73856093 ^ (y * 2 + 57) * 19349663) >>> 0;
-          if ((h % 100) < 38) {
-            const ox = ((h >> 8) % 10) / 10 * PX * 0.6;
-            const oy = ((h >> 16) % 10) / 10 * PX * 0.6;
-            g.circle(x * TILE - TILE / 2 + PX * 0.2 + ox, y * TILE - TILE / 2 + PX * 0.2 + oy, 2.2)
-              .fill({ color: 0x0d1a11, alpha: 0.9 });
+          if ((h % 100) < 42) {
+            const ox = (((h >> 8) % 9) - 4) * 1.1;
+            const oy = (((h >> 16) % 9) - 4) * 0.55;
+            // 小树：深色伞冠 + 高光
+            g.ellipse(cx + ox, cy + oy - 2.4, 3.1, 2).fill({ color: 0x10240f, alpha: 0.95 });
+            g.ellipse(cx + ox - 0.9, cy + oy - 3.1, 1.3, 0.8).fill({ color: 0x3f6b33, alpha: 0.9 });
           }
         }
       }
     }
-    // 3) 浅滩高亮：水陆交界处描一圈浅色，海岸线立刻清晰
+    // 3) 浅滩高亮：水陆交界处描浅色，海岸线立刻清晰
     for (let x = X0; x <= X1; x += S) {
       for (let y = Y0; y <= Y1; y += S) {
         if (terrain.kind(x, y) !== 'water') continue;
         const landNear = terrain.kind(x + S, y) !== 'water' || terrain.kind(x - S, y) !== 'water'
           || terrain.kind(x, y + S) !== 'water' || terrain.kind(x, y - S) !== 'water';
         if (landNear) {
-          g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, PX, PX).fill({ color: 0x3a6e96, alpha: 0.35 });
+          this.diamond(g, this.projX(x, y), this.projY(x, y), S + 0.04).fill({ color: 0x6fb7d8, alpha: 0.33 });
         }
       }
     }
-    // 4) 网格点（建造对齐参考），叠在地形之上但更淡
+    // 4) 网格点（建造对齐参考），叠在地形之上但很淡
     for (let x = X0; x <= X1; x++) {
       for (let y = Y0; y <= Y1; y++) {
-        g.circle(x * TILE, y * TILE, 1).fill({ color: 0x4a5a6a, alpha: 0.35 });
+        g.circle(this.projX(x, y), this.projY(x, y), 0.9).fill({ color: 0xd8e6f0, alpha: 0.12 });
       }
     }
     // 5) 地图边框：圈出可玩区域
-    g.rect(X0 * TILE - TILE / 2, Y0 * TILE - TILE / 2, (X1 - X0 + 1) * TILE, (Y1 - Y0 + 1) * TILE)
-      .stroke({ width: 2, color: 0x2a3a4d, alpha: 0.9 });
+    g.poly([
+      this.projX(X0, Y0), this.projY(X0, Y0) - THh / 2,
+      this.projX(X1, Y0) + TW / 2, this.projY(X1, Y0),
+      this.projX(X1, Y1), this.projY(X1, Y1) + THh / 2,
+      this.projX(X0, Y1) - TW / 2, this.projY(X0, Y1),
+    ]).stroke({ width: 2, color: 0x2a3a4d, alpha: 0.9 });
   }
 
   /** 地形种子变化后（开新局/读档）重绘底图 */
@@ -245,7 +289,7 @@ export class Renderer {
       for (let y = 0; y <= 34; y++) {
         const q = this.grid.terrain.siteQuality(kind, x, y);
         const t = Math.max(0, Math.min(1, (q - lo) / (hi - lo)));
-        if (t > 0.05) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color, alpha: 0.04 + t * 0.22 });
+        if (t > 0.05) this.diamond(g, this.projX(x, y), this.projY(x, y), 1).fill({ color, alpha: 0.04 + t * 0.22 });
       }
     }
   }
@@ -253,7 +297,7 @@ export class Renderer {
   /** 每帧重绘（dtSec 用于流动动画推进） */
   update(dtSec: number): void {
     this.drawLines(dtSec);
-    this.drawBuses();
+    this.syncBuildings();
     this.updateSmoke(dtSec);
     this.syncLabels();
     this.drawAmbient(dtSec);
@@ -264,20 +308,17 @@ export class Renderer {
     const g = this.ambientLayer;
     g.clear();
     const w = this.app.screen.width, h = this.app.screen.height;
-    // 昼夜：夜里罩深蓝、黎明/黄昏带暖色
     const hr = this.hourOfDay;
     const dayness = Math.max(0, Math.min(1, (Math.cos(((hr - 13) / 24) * 2 * Math.PI) + 0.5) * 1.2)); // 13 点最亮
     const nightAlpha = (1 - dayness) * 0.22;
     if (nightAlpha > 0.01) g.rect(0, 0, w, h).fill({ color: 0x0a1228, alpha: nightAlpha });
     const dusk = Math.max(0, 1 - Math.abs(hr - 6.5) / 1.5) + Math.max(0, 1 - Math.abs(hr - 18.5) / 1.5);
     if (dusk > 0.02) g.rect(0, 0, w, h).fill({ color: 0xff9a4d, alpha: dusk * 0.05 });
-    // 天气滤镜
     const tints: Record<string, [number, number]> = {
       heatwave: [0xff7733, 0.06], coldsnap: [0x9cc8ff, 0.08], overcast: [0x6b7886, 0.12], calm: [0x8896a6, 0.05], storm: [0x4a5666, 0.16],
     };
     const t = tints[this.weatherKind];
     if (t) g.rect(0, 0, w, h).fill({ color: t[0], alpha: t[1] });
-    // 风暴闪电：随机短促白闪
     if (this.weatherKind === 'storm') {
       this.lightningTimer -= dtSec;
       if (this.lightningTimer <= 0) this.lightningTimer = 1.5 + Math.random() * 4;
@@ -285,34 +326,32 @@ export class Renderer {
     }
   }
 
-  /** 煤/燃气电厂烟雾粒子：出力越大烟越多（与"临近污染压口碑"机制视觉呼应） */
+  /** 煤/燃气电厂烟雾粒子：出力越大烟越多 */
   private updateSmoke(dtSec: number): void {
-    // 生成
     for (const gen of this.grid.gens.values()) {
       if (gen.output < 1) continue;
       const co2Heavy = gen.type === 'coal' ? 1 : gen.type === 'gas' ? 0.35 : 0;
       if (co2Heavy === 0) continue;
       const bus = this.grid.buses.get(gen.busId);
       if (!bus || bus.underConstruction) continue;
-      const rate = (gen.output / gen.capacity) * co2Heavy * 6; // 粒子/秒
+      const rate = (gen.output / gen.capacity) * co2Heavy * 6;
       if (Math.random() < rate * dtSec && this.smokes.length < 140) {
         this.smokes.push({
-          x: bus.x * TILE + (Math.random() - 0.5) * 8,
-          y: bus.y * TILE - 12,
+          x: this.projX(bus.x, bus.y) - 5 + (Math.random() - 0.5) * 5,
+          y: this.projY(bus.x, bus.y) - 26,
           vx: (Math.random() - 0.2) * 6,
-          vy: -14 - Math.random() * 8,
+          vy: -13 - Math.random() * 8,
           age: 0,
         });
       }
     }
-    // 推进 + 绘制
     const g = this.smokeLayer;
     g.clear();
     this.smokes = this.smokes.filter((s) => (s.age += dtSec / 2.6) < 1);
     for (const s of this.smokes) {
       s.x += s.vx * dtSec;
       s.y += s.vy * dtSec;
-      g.circle(s.x, s.y, 2 + s.age * 5).fill({ color: 0x8a949e, alpha: 0.16 * (1 - s.age) });
+      g.circle(s.x, s.y, 2 + s.age * 5).fill({ color: 0xaeb6be, alpha: 0.18 * (1 - s.age) });
     }
   }
 
@@ -321,31 +360,30 @@ export class Renderer {
     const fg = this.flowLayer;
     lg.clear();
     fg.clear();
-    // 品类筛选：选中非"电网"品类时淡化线路
     const lineDim = this.categoryFilter && this.categoryFilter !== 'grid' ? 0.16 : 1;
 
     for (const ln of this.grid.lines.values()) {
       const a = this.grid.buses.get(ln.from);
       const b = this.grid.buses.get(ln.to);
       if (!a || !b) continue;
-      const ax = a.x * TILE, ay = a.y * TILE, bx = b.x * TILE, by = b.y * TILE;
+      const ax = this.projX(a.x, a.y), ay = this.projY(a.x, a.y);
+      const bx = this.projX(b.x, b.y), by = this.projY(b.x, b.y);
       const load = ln.capacity > 0 ? Math.abs(ln.flow) / ln.capacity : 0;
       const isHV = ln.voltage === 'HV';
-      const width = (isHV ? 3.4 : 1.9) + Math.min(5, ln.capacity / 30);
+      const width = (isHV ? 3.2 : 1.8) + Math.min(5, ln.capacity / 30);
 
       if (!this.grid.lineActive(ln)) {
         const constructing = ln.underConstruction
           || this.grid.buses.get(ln.from)?.underConstruction
           || this.grid.buses.get(ln.to)?.underConstruction;
-        // 建设中：暗黄绿虚线；跳闸/断开：暗红虚线
         drawDashed(lg, ax, ay, bx, by, constructing ? 0x6a7a3a : 0x6b2030, width * 0.7);
         continue;
       }
-      // N-1 薄弱线路：黄色光晕
       if (this.n1Lines.has(ln.id)) {
         lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 8, color: 0xf2c94c, alpha: 0.32 });
       }
-      // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
+      // 线路阴影（贴地感）+ 电压等级底色 + 负载率着色
+      lg.moveTo(ax, ay + 2).lineTo(bx, by + 2).stroke({ width: width + 1, color: 0x000000, alpha: 0.25 * lineDim });
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
       const color = loadColor(load, this.colorblind);
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
@@ -358,104 +396,129 @@ export class Renderer {
         this.flowPhase.set(ln.id, (phase + 1) % 1);
         const k = Math.max(1, Math.min(7, Math.round(Math.abs(ln.flow) / 11)));
         for (let i = 0; i < k; i++) {
-          let t = (((phase + i / k) % 1) + 1) % 1;
-          const px = ax + (bx - ax) * t;
-          const py = ay + (by - ay) * t;
-          fg.circle(px, py, width * 0.45).fill({ color: 0xffffff, alpha: 0.85 });
+          const t = (((phase + i / k) % 1) + 1) % 1;
+          fg.circle(ax + (bx - ax) * t, ay + (by - ay) * t, width * 0.45).fill({ color: 0xffffff, alpha: 0.85 });
         }
       }
-    }
-
-    // 连线预览（拉线工具）
-    if (this.pendingFromBus && this.cursorTile) {
-      const a = this.pendingFromBus;
-      drawDashed(lg, a.x * TILE, a.y * TILE, this.cursorTile.x * TILE, this.cursorTile.y * TILE, 0x38d39f, 2);
     }
   }
 
-  private drawBuses(): void {
-    const g = this.busLayer;
-    g.clear();
+  /** 母线 → 建筑贴图键 */
+  private spriteKeyOf(bus: Bus): string {
+    if (bus.kind === 'plant') return this.grid.gensAtBus(bus.id)[0]?.type ?? 'coal';
+    if (bus.kind === 'substation') return 'substation';
+    if (bus.kind === 'storage') return this.grid.batteriesAtBus(bus.id)[0]?.type ?? 'battery';
+    return this.grid.loadsAtBus(bus.id)[0]?.profile ?? 'residential';
+  }
+
+  /** 同步建筑贴图 + 地面状态环 + 顶层特效（叶片/SoC/徽标） */
+  private syncBuildings(): void {
+    const ground = this.groundFx;
+    const top = this.topFx;
+    ground.clear();
+    top.clear();
+
+    // 光标地块高亮（建造落点预览）
+    if (this.cursorTile) {
+      const sx = Math.round(this.cursorTile.x), sy = Math.round(this.cursorTile.y);
+      this.diamond(ground, this.projX(sx, sy), this.projY(sx, sy), 1)
+        .stroke({ width: 1.5, color: 0x38d39f, alpha: 0.45 });
+    }
+    // 连线预览（拉线工具）
+    if (this.pendingFromBus && this.cursorTile) {
+      const a = this.pendingFromBus;
+      drawDashed(ground, this.projX(a.x, a.y), this.projY(a.x, a.y),
+        this.projX(this.cursorTile.x, this.cursorTile.y), this.projY(this.cursorTile.x, this.cursorTile.y), 0x38d39f, 2);
+    }
+
+    const alive = new Set<number>();
     for (const bus of this.grid.buses.values()) {
-      const cx = bus.x * TILE, cy = bus.y * TILE;
-      const r = bus.kind === 'substation' ? 7 : 11;
-      const color = busColor(this.grid, bus);
+      alive.add(bus.id);
+      const cx = this.projX(bus.x, bus.y), cy = this.projY(bus.x, bus.y);
+      const key = this.spriteKeyOf(bus);
+      // —— 贴图生命周期 ——
+      let sp = this.sprites.get(bus.id);
+      if (sp && this.spriteKind.get(bus.id) !== key) { sp.destroy(); this.spriteLayer.removeChild(sp); sp = undefined; }
+      if (!sp) {
+        const tex = this.textures.get(key);
+        if (!tex) continue;
+        sp = new Sprite(tex.texture);
+        sp.anchor.set(tex.ax, tex.ay);
+        this.spriteLayer.addChild(sp);
+        this.sprites.set(bus.id, sp);
+        this.spriteKind.set(bus.id, key);
+      }
+      sp.x = cx;
+      sp.y = cy + 4; // 微微压入地块中心
+      sp.zIndex = cy; // 画家算法：南边建筑盖住北边
+      sp.scale.set(1.15); // 建筑相对地块略放大，提升可读性
+
       const gen0 = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
       const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
       const ez = bus.energized ?? 1;
-      // 在建/检修半透明；负荷按能量化程度变暗（停电恢复中逐步点亮）
-      let alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : (bus.kind === 'load' ? 0.35 + 0.65 * ez : 1);
-      // 能源品类筛选：匹配品类高亮，其余淡化
+      let alpha = bus.underConstruction ? 0.4 : inOutage ? 0.55 : (bus.kind === 'load' ? 0.45 + 0.55 * ez : 1);
       const matchFilter = !this.categoryFilter || busCategory(this.grid, bus) === this.categoryFilter;
       if (!matchFilter) alpha *= 0.13;
-      if (this.categoryFilter && matchFilter) g.circle(cx, cy, r + 6).stroke({ width: 2, color: 0xffffff, alpha: 0.7 });
+      sp.alpha = alpha;
+      sp.tint = bus.underConstruction ? 0xd9c87a : 0xffffff;
 
-      // 建设中黄环
-      if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
-      // 强迫停运检修：橙红环
-      if (inOutage) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xff7043, alpha: 0.9 });
-      // 碳捕集改造：绿色小点
-      if (gen0?.ccs) g.circle(cx + r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x4ade80 });
-      // 机组组合：已并网的可调机组左上角青色"在线"点
-      if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
-        g.circle(cx - r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x38d39f });
-      }
-      // 欠压：黄色虚环（电压 < 0.95 pu，且非全黑）
-      if (!bus.underConstruction && (bus.voltage ?? 1) < 0.95 && (bus.energized ?? 1) > 0.05) {
-        g.circle(cx, cy, r + 3).stroke({ width: 1.5, color: 0xeab308, alpha: 0.85 });
-      }
-      // 电容器组：变电站右下角黄色小方点
-      if (bus.capacitor && !bus.underConstruction) {
-        g.rect(cx + r * 0.5, cy + r * 0.5, 3, 3).fill({ color: 0xfacc15 });
-      }
-      // 停电环：全黑=红，正在黑启动恢复中=青色脉冲
+      // —— 地面阴影（贴地感） ——
+      ground.ellipse(cx, cy + 4, 15, 7).fill({ color: 0x000000, alpha: 0.3 * (matchFilter ? 1 : 0.2) });
+
+      // —— 地面状态环（等轴椭圆） ——
+      const ring = (rx: number, color: number, a2: number, w = 2) =>
+        ground.ellipse(cx, cy + 4, rx, rx / 2).stroke({ width: w, color, alpha: a2 });
+      if (this.categoryFilter && matchFilter) ring(20, 0xffffff, 0.7);
+      if (bus.underConstruction) ring(18, 0xf2c94c, 0.85);
+      if (inOutage) ring(18, 0xff7043, 0.9);
+      if (!bus.underConstruction && (bus.voltage ?? 1) < 0.95 && ez > 0.05) ring(15, 0xeab308, 0.85, 1.5);
       if (bus.blackout) {
         const restoring = ez > 0.05 && ez < 0.95;
-        const ringColor = restoring ? 0x38bdf8 : 0xef5d60;
-        const ringAlpha = restoring ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0.9;
-        g.circle(cx, cy, r + 5).stroke({ width: 2, color: ringColor, alpha: ringAlpha });
+        ring(18, restoring ? 0x38bdf8 : 0xef5d60, restoring ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0.9);
       }
-      // 变电站变压器跳闸：橙色警示环
-      if (bus.kind === 'substation' && bus.transformerTripped) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2994a, alpha: 0.95 });
-      // N-1 薄弱变电站：黄色虚警环
-      if (this.n1Subs.has(bus.id)) g.circle(cx, cy, r + 8).stroke({ width: 2, color: 0xf2c94c, alpha: 0.8 });
-      // 悬停高亮 / 拉线起点高亮
-      if (bus.id === this.hoverBusId || bus.id === this.pendingFromBus?.id) {
-        g.circle(cx, cy, r + 3).stroke({ width: 2, color: 0x38d39f, alpha: 0.9 });
-      }
+      if (bus.kind === 'substation' && bus.transformerTripped) ring(18, 0xf2994a, 0.95);
+      if (this.n1Subs.has(bus.id)) ring(22, 0xf2c94c, 0.8);
+      if (bus.id === this.hoverBusId || bus.id === this.pendingFromBus?.id) ring(16, 0x38d39f, 0.9);
 
-      if (bus.kind === 'plant') {
-        g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
-        // 风机叶片动画：转速 ∝ 当前风况可用度
-        if (gen0?.type === 'wind' && !bus.underConstruction) {
-          const speed = 0.5 + gen0.availability * 5;
-          const ang = (this.clock * speed) % (Math.PI * 2);
-          for (let k = 0; k < 3; k++) {
-            const a = ang + (k * 2 * Math.PI) / 3;
-            g.moveTo(cx, cy).lineTo(cx + Math.cos(a) * r * 0.85, cy + Math.sin(a) * r * 0.85)
-              .stroke({ width: 2, color: 0xeafff8, alpha: 0.9 * alpha });
-          }
-          g.circle(cx, cy, 2).fill({ color: 0xeafff8, alpha });
+      // —— 顶层特效 ——
+      if (gen0?.type === 'wind' && !bus.underConstruction) {
+        // 旋转叶片：转速 ∝ 风况
+        const hubX = cx, hubY = cy + 4 - 30;
+        const speed = 0.5 + gen0.availability * 5;
+        const ang = (this.clock * speed) % (Math.PI * 2);
+        for (let k = 0; k < 3; k++) {
+          const a2 = ang + (k * 2 * Math.PI) / 3;
+          top.moveTo(hubX, hubY).lineTo(hubX + Math.cos(a2) * 11, hubY + Math.sin(a2) * 11)
+            .stroke({ width: 2, color: 0xeef5f9, alpha: 0.95 * alpha });
         }
-        // 光伏正午高亮：板面反光随太阳角度
-        if (gen0?.type === 'solar' && !bus.underConstruction && gen0.availability > 0.05) {
-          g.rect(cx - r + 2, cy - r + 2, (r * 2 - 4) * gen0.availability, 3).fill({ color: 0xfff7cc, alpha: 0.8 * alpha });
-        }
-      } else if (bus.kind === 'load') {
-        // 用一个房子状的多边形表示负荷
-        g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
-          .fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
-      } else if (bus.kind === 'storage') {
-        // 储能：圆角矩形 + 底部 SoC 电量条
-        g.roundRect(cx - r, cy - r * 0.85, r * 2, r * 1.7, 3).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+        top.circle(hubX, hubY, 1.8).fill({ color: 0xf7fbfd, alpha: alpha });
+      }
+      if (gen0?.type === 'solar' && !bus.underConstruction && gen0.availability > 0.05) {
+        top.ellipse(cx, cy - 2, 9 * gen0.availability, 3 * gen0.availability).fill({ color: 0xfff7cc, alpha: 0.25 + 0.3 * gen0.availability });
+      }
+      if (gen0?.ccs) top.circle(cx + 12, cy - 14, 2.6).fill({ color: 0x4ade80 });
+      if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
+        top.circle(cx - 12, cy - 14, 2.6).fill({ color: 0x38d39f }); // 并网指示
+      }
+      if (bus.capacitor && !bus.underConstruction) {
+        top.rect(cx + 9, cy - 2, 3.4, 3.4).fill({ color: 0xfacc15 });
+      }
+      if (bus.kind === 'storage' && !bus.underConstruction) {
         const bat = this.grid.batteriesAtBus(bus.id)[0];
-        if (bat && !bus.underConstruction) {
+        if (bat) {
           const f = Math.max(0, Math.min(1, bat.soc / bat.energyCapacity));
-          g.rect(cx - r + 1.5, cy + r * 0.5, (r * 2 - 3) * f, 3).fill({ color: 0xeafff2 });
+          top.rect(cx - 10, cy + 7, 20, 3).fill({ color: 0x0b1016, alpha: 0.7 });
+          top.rect(cx - 9.2, cy + 7.6, 18.4 * f, 1.8).fill({ color: 0x86ffc7 });
         }
-      } else {
-        // 变电站：菱形
-        g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+      }
+    }
+    // 清理已拆除建筑的贴图
+    for (const [id, sp] of [...this.sprites]) {
+      if (!alive.has(id)) {
+        sp.destroy();
+        this.spriteLayer.removeChild(sp);
+        this.sprites.delete(id);
+        this.spriteKind.delete(id);
       }
     }
   }
@@ -478,11 +541,12 @@ export class Renderer {
         ? `${bus.name} 🏗${Math.max(0, ((bus.commissionAt ?? 0) - this.clock) / 24).toFixed(1)}d`
         : outage ? `${bus.name} 🔧检修`
           : busLabel(this.grid, bus);
-      t.x = bus.x * TILE;
-      t.y = bus.y * TILE + 14;
-      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0x9bb0c2;
+      t.x = this.projX(bus.x, bus.y);
+      t.y = this.projY(bus.x, bus.y) + 12;
+      const matchFilter = !this.categoryFilter || busCategory(this.grid, bus) === this.categoryFilter;
+      t.alpha = matchFilter ? 1 : 0.15;
+      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0xb9cbda;
     }
-    // 清理已删除的母线标签
     for (const [id, t] of [...this.labels]) {
       if (!alive.has(id)) {
         t.destroy();
@@ -539,24 +603,6 @@ function busCategory(grid: Grid, bus: Bus): string | null {
   if (!l) return null;
   if (l.profile === 'residential' || l.profile === 'commercial' || l.profile === 'industrial') return 'ci';
   return l.profile;
-}
-
-function busColor(grid: Grid, bus: Bus): number {
-  if (bus.kind === 'plant') {
-    const gen = grid.gensAtBus(bus.id)[0];
-    return gen ? PLANTS[gen.type].color : 0x9aa4ad;
-  }
-  if (bus.kind === 'substation') return 0x4f6b82;
-  if (bus.kind === 'storage') {
-    const bat = grid.batteriesAtBus(bus.id)[0];
-    return bat ? STORAGE[bat.type].color : STORAGE.battery.color;
-  }
-  // 负荷按画像着色（大客户用各自品类色）
-  const load = grid.loadsAtBus(bus.id)[0];
-  if (load && KEY_ACCOUNTS[load.profile]) return KEY_ACCOUNTS[load.profile].color;
-  if (load?.profile === 'industrial') return 0xc98b6b;
-  if (load?.profile === 'commercial') return 0x6b9bc9;
-  return 0x8fb98f;
 }
 
 function busLabel(grid: Grid, bus: Bus): string {
