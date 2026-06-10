@@ -316,7 +316,7 @@ export class Hud {
       }).join('');
     }
 
-    if (s.gameOver) this.showOverlay(s.win, s.goalDay, s.grade, s.gradeScore);
+    if (s.gameOver) this.showOverlay(s);
   }
 
   private set(key: string, value: string, cls = ''): void {
@@ -326,19 +326,20 @@ export class Hud {
     el.className = 'v ' + cls;
   }
 
-  private showOverlay(win: boolean, goalDay: number, grade: string, gradeScore: number): void {
+  private showOverlay(s: SimSnapshot): void {
     const ov = document.getElementById('overlay')!;
     if (ov.style.display === 'flex') return;
     ov.style.display = 'flex';
-    document.getElementById('overlay-title')!.textContent = win ? '🏆 通关！' : '💸 破产了';
+    document.getElementById('overlay-title')!.textContent = s.win ? '🏆 通关！' : '💸 破产了';
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };
-      gradeEl.textContent = win ? `评级 ${grade}　（${gradeScore.toFixed(0)} 分）` : '';
-      gradeEl.style.color = gradeColor[grade] ?? '#fff';
+      gradeEl.textContent = s.win ? `评级 ${s.grade}　（${s.gradeScore.toFixed(0)} 分）` : '';
+      gradeEl.style.color = gradeColor[s.grade] ?? '#fff';
     }
-    document.getElementById('overlay-text')!.textContent = win
-      ? `你把电网平稳地带过了 ${goalDay} 天，坚强可靠、灯火通明。综合评级 ${grade}——可靠性、财务、清洁占比与口碑共同决定星级，挑战 S 级吧！`
+    const summary = `经营摘要 · 可靠性 ${(s.reliability * 100).toFixed(1)}% · 市占 ${(s.marketShare * 100).toFixed(0)}% · 清洁 ${(s.renewableShare * 100).toFixed(0)}% · 大客户满意 ${(s.customerSatisfaction * 100).toFixed(0)}%`;
+    document.getElementById('overlay-text')!.textContent = s.win
+      ? `你把电网平稳地带过了 ${s.goalDay} 天，坚强可靠、灯火通明。${summary}。综合评级由可靠性、财务、清洁占比与口碑决定，挑战 S 级吧！`
       : '电力公司资金耗尽。停电罚款、燃料与碳成本压垮了现金流——下次更早布局电源与冗余线路。';
   }
 }
