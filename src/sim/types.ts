@@ -148,4 +148,7 @@ export interface SimSnapshot {
   win: boolean;
   grade: string; // 综合星级 S/A/B/C/D
   gradeScore: number; // 综合评分 0..100
+  blackStartCapable: boolean; // 是否具备黑启动能力（燃气/储能种子）
+  gridEnergized: number; // 全网能量化程度 0..1（<1=停电恢复中）
+  outageEnergyTotal: number; // 累计失负荷电量 (MWh)
 }

@@ -96,6 +96,7 @@ export class Hud {
     add('rep', '口碑');
     add('share', '市占');
     add('commit', '机组');
+    add('resil', '韧性');
     add('cycle', '景气');
     add('season', '季节');
     add('weather', '天气');
@@ -241,6 +242,11 @@ export class Hud {
     this.set('cycle', `${s.cycle} ${(s.cycleFactor * 100 - 100 >= 0 ? '+' : '')}${(s.cycleFactor * 100 - 100).toFixed(0)}%`,
       s.cycle === '繁荣' ? 'freq-ok' : s.cycle === '衰退' ? 'freq-warn' : '');
     this.set('commit', `${s.committedUnits}/${s.dispatchableUnits} 并网`, s.dispatchableUnits > 0 && s.committedUnits === 0 ? 'freq-warn' : '');
+    if (s.gridEnergized < 0.999) {
+      this.set('resil', `🔌 恢复 ${(s.gridEnergized * 100).toFixed(0)}%`, 'freq-bad');
+    } else {
+      this.set('resil', s.blackStartCapable ? '黑启动 ✓' : '黑启动 ✗', s.blackStartCapable ? 'freq-ok' : 'freq-warn');
+    }
     const seasonIcon: Record<string, string> = { 春: '🌱', 夏: '☀️', 秋: '🍂', 冬: '❄️' };
     this.set('season', `${seasonIcon[s.season] ?? ''}${s.season} +${(s.seasonFactor * 100 - 100).toFixed(0)}%`,
       s.season === '夏' || s.season === '冬' ? 'freq-warn' : '');

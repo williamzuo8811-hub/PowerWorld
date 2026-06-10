@@ -191,6 +191,7 @@ export class Simulation {
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
   peakServed = 0; // 历史峰值供电 (MW) —— 成就用
   totalEnergyServed = 0; // 累计送达电量 (MWh) —— 成就用
+  outageEnergyTotal = 0; // 累计失负荷电量 (MWh) —— 韧性指标（SAIDI 代理）
   n1Secure = false; // 是否通过过 N-1 校核 —— 成就用（由 UI 置位）
   badEventCount = 0; // 累计严重事件数（跳闸/破产等）—— UI 用来触发报警音
   logs: LogEntry[] = [];
@@ -263,6 +264,7 @@ export class Simulation {
     this.renewableShare = 1;
     this.peakServed = 0;
     this.totalEnergyServed = 0;
+    this.outageEnergyTotal = 0;
     this.n1Secure = false;
     this.badEventCount = 0;
     this.logs = [];
@@ -1250,6 +1252,7 @@ export class Simulation {
     this.tech.points += aggServed * dtHours * RP_PER_MWH;
     this.peakServed = Math.max(this.peakServed, aggServed);
     this.totalEnergyServed += aggServed * dtHours;
+    this.outageEnergyTotal += Math.max(0, aggDemand - aggServed) * dtHours;
 
     // 可靠性滑动平均（EMA）
     const instReliab = aggDemand > 0.5 ? aggServed / aggDemand : 1;
@@ -1517,6 +1520,30 @@ export class Simulation {
     return false;
   }
 
+  /** 电网是否具备黑启动能力（有可用燃气机组或有电量的储能作种子） */
+  get blackStartCapable(): boolean {
+    for (const g of this.grid.gens.values()) {
+      const bus = this.grid.buses.get(g.busId);
+      if (bus && !bus.underConstruction && BLACKSTART_TYPES[g.type] && !this.genOffline(g)) return true;
+    }
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction && b.soc > 1) return true;
+    }
+    return false;
+  }
+
+  /** 全网负荷加权的能量化程度（0..1）：<1 表示正处于停电恢复中 */
+  get gridEnergized(): number {
+    let sum = 0, w = 0;
+    for (const l of this.grid.loads.values()) {
+      const b = this.grid.buses.get(l.busId);
+      sum += (b?.energized ?? 1) * l.demand;
+      w += l.demand;
+    }
+    return w > 0 ? sum / w : 1;
+  }
+
   /**
    * 关卡综合评分（0..100）与星级（S/A/B/C/D）：可靠性 + 财务 + 清洁占比 + 口碑加权。
    * 纯分析，可随时调用（HUD/通关界面展示）。
@@ -1763,6 +1790,9 @@ export class Simulation {
       win: this.win,
       grade: grade.grade,
       gradeScore: grade.score,
+      blackStartCapable: this.blackStartCapable,
+      gridEnergized: this.gridEnergized,
+      outageEnergyTotal: this.outageEnergyTotal,
     };
   }
 }

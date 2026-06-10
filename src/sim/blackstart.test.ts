@@ -74,6 +74,35 @@ describe('黑启动与停电恢复', () => {
     expect(load.bus.energized).toBeCloseTo(1, 2); // 储能种子 → 快速恢复
   });
 
+  it('blackStartCapable 反映燃气/储能种子', () => {
+    const coalOnly = rig(false).sim;
+    expect(coalOnly.blackStartCapable).toBe(false); // 仅燃煤 → 无黑启动
+    const withGas = rig(true).sim;
+    expect(withGas.blackStartCapable).toBe(true); // 含燃气 → 有黑启动
+    const s = new Simulation();
+    s.grid.addBattery(0, 0, 'battery'); // 储能默认半电量
+    expect(s.blackStartCapable).toBe(true);
+  });
+
+  it('全黑期间 gridEnergized 下降、失负荷电量累积', () => {
+    const { sim, g } = rig(false);
+    for (let i = 0; i < 5; i++) sim.tick(3600, 1);
+    expect(sim.gridEnergized).toBeCloseTo(1, 2);
+    const o0 = sim.outageEnergyTotal;
+    for (const ge of g.gens.values()) ge.outageUntil = sim.clock + 1000;
+    for (let i = 0; i < 3; i++) sim.tick(3600, 1);
+    expect(sim.gridEnergized).toBeLessThan(0.2); // 恢复中/全黑
+    expect(sim.outageEnergyTotal).toBeGreaterThan(o0); // 失负荷电量累积
+  });
+
+  it('韧性指标进入快照', () => {
+    const { sim } = rig(true);
+    const snap = sim.snapshot();
+    expect(snap.blackStartCapable).toBe(true);
+    expect(snap.gridEnergized).toBeGreaterThan(0);
+    expect(typeof snap.outageEnergyTotal).toBe('number');
+  });
+
   it('能量化进入存档', () => {
     const { sim, g, load } = rig(false);
     for (let i = 0; i < 5; i++) sim.tick(3600, 1);
