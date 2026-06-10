@@ -3,7 +3,7 @@ import { solveDC, solveLinear } from './powerflow';
 import type { Line } from './types';
 
 function makeLine(id: number, from: number, to: number, reactance: number): Line {
-  return { id, from, to, reactance, resistance: 0, capacity: 100, length: 1, flow: 0, loss: 0, tripped: false, overloadTimer: 0 };
+  return { id, from, to, voltage: 'HV', reactance, resistance: 0, capacity: 100, length: 1, flow: 0, loss: 0, tripped: false, overloadTimer: 0 };
 }
 
 /** 计算"流出某母线"的净潮流（from 端为流出正方向） */

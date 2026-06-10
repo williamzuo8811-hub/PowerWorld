@@ -1,0 +1,68 @@
+import { describe, it, expect } from 'vitest';
+import { Simulation } from './simulation';
+
+describe('能源品类资产组合', () => {
+  it('空电网各品类计数为 0', () => {
+    const sim = new Simulation();
+    const cats = sim.portfolio();
+    expect(cats.length).toBe(10); // 6 供给/电网/工商业 + 4 大客户
+    for (const c of cats) expect(c.count).toBe(0);
+  });
+
+  it('按品类正确归类与计数', () => {
+    const sim = new Simulation();
+    const g = sim.grid;
+    g.addPlant('wind', 0, 0); g.addPlant('solar', 1, 0); // 可再生 ×2
+    g.addPlant('nuclear', 2, 0); // 核电 ×1
+    g.addPlant('coal', 3, 0); g.addPlant('gas', 4, 0); // 火电 ×2
+    g.addBattery(5, 0, 'battery'); // 储能 ×1
+    g.addLoad(6, 0, 'datacenter', 40, 'DC', 0); // 数据中心 ×1
+    g.addLoad(7, 0, 'mining', 50, '矿', 0); // 矿业 ×1
+    g.addLoad(8, 0, 'industrial', 30, '厂', 0); // 工商业 ×1
+    const by = Object.fromEntries(sim.portfolio().map((c) => [c.key, c.count]));
+    expect(by.renewable).toBe(2);
+    expect(by.nuclear).toBe(1);
+    expect(by.thermal).toBe(2);
+    expect(by.storage).toBe(1);
+    expect(by.datacenter).toBe(1);
+    expect(by.mining).toBe(1);
+    expect(by.ci).toBe(1);
+  });
+
+  it('电网品类统计变电站与线路', () => {
+    const sim = new Simulation();
+    const g = sim.grid;
+    const a = g.addSubstation(0, 0);
+    const b = g.addSubstation(4, 0);
+    g.addLine(a.id, b.id);
+    const grid = sim.portfolio().find((c) => c.key === 'grid')!;
+    expect(grid.count).toBe(3); // 2 变电站 + 1 线路
+  });
+
+  it('大客户品类显示满意度', () => {
+    const sim = new Simulation();
+    sim.grid.addLoad(0, 0, 'datacenter', 40, 'DC', 0);
+    const dc = sim.portfolio().find((c) => c.key === 'datacenter')!;
+    expect(dc.count).toBe(1);
+    expect(dc.value).toContain('满意');
+  });
+
+  it('发电品类反映实时出力占比', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    const g = sim.grid;
+    const coal = g.addPlant('coal', 0, 0);
+    const sub = g.addSubstation(2, 0);
+    const load = g.addLoad(4, 0, 'industrial', 40, '厂', 0);
+    g.addLine(coal.bus.id, sub.id);
+    g.addLine(sub.id, load.bus.id);
+    for (let i = 0; i < 30; i++) sim.tick(0.05, 600); // 让火电出力
+    const thermal = sim.portfolio().find((c) => c.key === 'thermal')!;
+    expect(thermal.share).toBeGreaterThan(0.9); // 全靠火电 → 发电占比≈100%
+    expect(thermal.co2Rate).toBeGreaterThan(0); // 火电有碳排
+    const grid = sim.portfolio().find((c) => c.key === 'grid')!;
+    expect(grid.share).toBe(0); // 电网类无占比条
+    const ci = sim.portfolio().find((c) => c.key === 'ci')!;
+    expect(ci.revenueRate).toBeGreaterThan(0); // 工商业负荷有售电收入
+  });
+});

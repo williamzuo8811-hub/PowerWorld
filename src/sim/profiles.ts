@@ -21,6 +21,18 @@ export function demandMultiplier(hour: number, profile: LoadProfile): number {
       return 0.3 + gauss(h, 14, 4) * 1.0;
     case 'industrial':
       return 0.72 + gauss(h, 13, 6) * 0.3;
+    case 'datacenter':
+      // 数据中心：近乎恒定的高负载（24/7），仅极小波动
+      return 0.96 + 0.02 * Math.sin((h / 24) * 2 * Math.PI);
+    case 'petrochem':
+      // 石油化工·LNG：巨型连续过程负荷，极平稳基荷
+      return 0.93;
+    case 'mining':
+      // 矿业：三班倒、基本平稳，白天略高
+      return 0.88 + gauss(h, 14, 7) * 0.08;
+    case 'transport':
+      // 大交通枢纽：早晚通勤双峰 + 牵引尖峰，白天有客流
+      return 0.38 + gauss(h, 8, 1.5) * 0.8 + gauss(h, 18, 2) * 0.9 + gauss(h, 13, 4.5) * 0.3;
   }
 }
 
@@ -42,4 +54,16 @@ export function renewableAvailability(type: PlantType, hour: number, windBase: n
     return Math.min(1, Math.max(0.02, windBase * diurnal));
   }
   return 1;
+}
+
+/**
+ * 季节强度：把年内相位 phase∈[0,1) 映射为 {summer, winter}∈[0,1]。
+ * - phase 0：春（中性，summer=winter=0）
+ * - phase 0.25：盛夏（summer=1）
+ * - phase 0.5：秋（中性）
+ * - phase 0.75：深冬（winter=1）
+ */
+export function seasonIntensity(phase: number): { summer: number; winter: number } {
+  const s = Math.sin(((phase % 1) + 1) % 1 * 2 * Math.PI);
+  return { summer: Math.max(0, s), winter: Math.max(0, -s) };
 }

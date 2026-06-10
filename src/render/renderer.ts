@@ -3,7 +3,7 @@
 import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { Bus, Line } from '../sim/types';
 import { Grid } from '../sim/grid';
-import { PLANTS } from '../config/components';
+import { PLANTS, VOLTAGE, STORAGE, KEY_ACCOUNTS } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
@@ -27,6 +27,11 @@ export class Renderer {
   pendingFromBus: Bus | null = null;
   cursorTile: { x: number; y: number } | null = null;
   hoverBusId: number | null = null;
+  // N-1 校核标注的薄弱元件
+  n1Lines = new Set<number>();
+  n1Subs = new Set<number>();
+  categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
+  clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
 
   constructor(private grid: Grid) {}
 
@@ -137,6 +142,8 @@ export class Renderer {
     const fg = this.flowLayer;
     lg.clear();
     fg.clear();
+    // 品类筛选：选中非"电网"品类时淡化线路
+    const lineDim = this.categoryFilter && this.categoryFilter !== 'grid' ? 0.16 : 1;
 
     for (const ln of this.grid.lines.values()) {
       const a = this.grid.buses.get(ln.from);
@@ -144,15 +151,25 @@ export class Renderer {
       if (!a || !b) continue;
       const ax = a.x * TILE, ay = a.y * TILE, bx = b.x * TILE, by = b.y * TILE;
       const load = ln.capacity > 0 ? Math.abs(ln.flow) / ln.capacity : 0;
-      const width = 2 + Math.min(6, ln.capacity / 20);
+      const isHV = ln.voltage === 'HV';
+      const width = (isHV ? 3.4 : 1.9) + Math.min(5, ln.capacity / 30);
 
-      if (ln.tripped) {
-        // 跳闸：暗红虚线
-        drawDashed(lg, ax, ay, bx, by, 0x6b2030, width * 0.7);
+      if (!this.grid.lineActive(ln)) {
+        const constructing = ln.underConstruction
+          || this.grid.buses.get(ln.from)?.underConstruction
+          || this.grid.buses.get(ln.to)?.underConstruction;
+        // 建设中：暗黄绿虚线；跳闸/断开：暗红虚线
+        drawDashed(lg, ax, ay, bx, by, constructing ? 0x6a7a3a : 0x6b2030, width * 0.7);
         continue;
       }
+      // N-1 薄弱线路：黄色光晕
+      if (this.n1Lines.has(ln.id)) {
+        lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 8, color: 0xf2c94c, alpha: 0.32 });
+      }
+      // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
       const color = loadColor(load);
-      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.9 });
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
 
       // 流动粒子（潮流方向：正=from→to）
       if (Math.abs(ln.flow) > 0.5) {
@@ -184,23 +201,67 @@ export class Renderer {
       const cx = bus.x * TILE, cy = bus.y * TILE;
       const r = bus.kind === 'substation' ? 7 : 11;
       const color = busColor(this.grid, bus);
+      const gen0 = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
+      const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
+      const ez = bus.energized ?? 1;
+      // 在建/检修半透明；负荷按能量化程度变暗（停电恢复中逐步点亮）
+      let alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : (bus.kind === 'load' ? 0.35 + 0.65 * ez : 1);
+      // 能源品类筛选：匹配品类高亮，其余淡化
+      const matchFilter = !this.categoryFilter || busCategory(this.grid, bus) === this.categoryFilter;
+      if (!matchFilter) alpha *= 0.13;
+      if (this.categoryFilter && matchFilter) g.circle(cx, cy, r + 6).stroke({ width: 2, color: 0xffffff, alpha: 0.7 });
 
-      // 停电红环
-      if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
+      // 建设中黄环
+      if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
+      // 强迫停运检修：橙红环
+      if (inOutage) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xff7043, alpha: 0.9 });
+      // 碳捕集改造：绿色小点
+      if (gen0?.ccs) g.circle(cx + r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x4ade80 });
+      // 机组组合：已并网的可调机组左上角青色"在线"点
+      if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
+        g.circle(cx - r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x38d39f });
+      }
+      // 欠压：黄色虚环（电压 < 0.95 pu，且非全黑）
+      if (!bus.underConstruction && (bus.voltage ?? 1) < 0.95 && (bus.energized ?? 1) > 0.05) {
+        g.circle(cx, cy, r + 3).stroke({ width: 1.5, color: 0xeab308, alpha: 0.85 });
+      }
+      // 电容器组：变电站右下角黄色小方点
+      if (bus.capacitor && !bus.underConstruction) {
+        g.rect(cx + r * 0.5, cy + r * 0.5, 3, 3).fill({ color: 0xfacc15 });
+      }
+      // 停电环：全黑=红，正在黑启动恢复中=青色脉冲
+      if (bus.blackout) {
+        const restoring = ez > 0.05 && ez < 0.95;
+        const ringColor = restoring ? 0x38bdf8 : 0xef5d60;
+        const ringAlpha = restoring ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0.9;
+        g.circle(cx, cy, r + 5).stroke({ width: 2, color: ringColor, alpha: ringAlpha });
+      }
+      // 变电站变压器跳闸：橙色警示环
+      if (bus.kind === 'substation' && bus.transformerTripped) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2994a, alpha: 0.95 });
+      // N-1 薄弱变电站：黄色虚警环
+      if (this.n1Subs.has(bus.id)) g.circle(cx, cy, r + 8).stroke({ width: 2, color: 0xf2c94c, alpha: 0.8 });
       // 悬停高亮 / 拉线起点高亮
       if (bus.id === this.hoverBusId || bus.id === this.pendingFromBus?.id) {
         g.circle(cx, cy, r + 3).stroke({ width: 2, color: 0x38d39f, alpha: 0.9 });
       }
 
       if (bus.kind === 'plant') {
-        g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
       } else if (bus.kind === 'load') {
         // 用一个房子状的多边形表示负荷
         g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
-          .fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+          .fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+      } else if (bus.kind === 'storage') {
+        // 储能：圆角矩形 + 底部 SoC 电量条
+        g.roundRect(cx - r, cy - r * 0.85, r * 2, r * 1.7, 3).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+        const bat = this.grid.batteriesAtBus(bus.id)[0];
+        if (bat && !bus.underConstruction) {
+          const f = Math.max(0, Math.min(1, bat.soc / bat.energyCapacity));
+          g.rect(cx - r + 1.5, cy + r * 0.5, (r * 2 - 3) * f, 3).fill({ color: 0xeafff2 });
+        }
       } else {
         // 变电站：菱形
-        g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color }).stroke({ width: 1.5, color: 0x0b1016 });
+        g.poly([cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy]).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
       }
     }
   }
@@ -218,10 +279,15 @@ export class Renderer {
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
       }
-      t.text = busLabel(this.grid, bus);
+      const og = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
+      const outage = !!og && og.outageUntil != null && og.outageUntil > this.clock && !bus.underConstruction;
+      t.text = bus.underConstruction
+        ? `${bus.name} 🏗${Math.max(0, ((bus.commissionAt ?? 0) - this.clock) / 24).toFixed(1)}d`
+        : outage ? `${bus.name} 🔧检修`
+          : busLabel(this.grid, bus);
       t.x = bus.x * TILE;
       t.y = bus.y * TILE + 14;
-      t.style.fill = bus.blackout ? 0xef5d60 : 0x9bb0c2;
+      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0x9bb0c2;
     }
     // 清理已删除的母线标签
     for (const [id, t] of [...this.labels]) {
@@ -242,14 +308,36 @@ function loadColor(load: number): number {
   return 0xef5d60; // 红（过载）
 }
 
+/** 母线所属能源品类（与品类面板的 key 对应，用于地图筛选高亮） */
+function busCategory(grid: Grid, bus: Bus): string | null {
+  if (bus.kind === 'plant') {
+    const g = grid.gensAtBus(bus.id)[0];
+    if (!g) return null;
+    if (g.type === 'wind' || g.type === 'solar') return 'renewable';
+    if (g.type === 'nuclear') return 'nuclear';
+    return 'thermal';
+  }
+  if (bus.kind === 'substation') return 'grid';
+  if (bus.kind === 'storage') return 'storage';
+  const l = grid.loadsAtBus(bus.id)[0];
+  if (!l) return null;
+  if (l.profile === 'residential' || l.profile === 'commercial' || l.profile === 'industrial') return 'ci';
+  return l.profile;
+}
+
 function busColor(grid: Grid, bus: Bus): number {
   if (bus.kind === 'plant') {
     const gen = grid.gensAtBus(bus.id)[0];
     return gen ? PLANTS[gen.type].color : 0x9aa4ad;
   }
   if (bus.kind === 'substation') return 0x4f6b82;
-  // 负荷按画像着色
+  if (bus.kind === 'storage') {
+    const bat = grid.batteriesAtBus(bus.id)[0];
+    return bat ? STORAGE[bat.type].color : STORAGE.battery.color;
+  }
+  // 负荷按画像着色（大客户用各自品类色）
   const load = grid.loadsAtBus(bus.id)[0];
+  if (load && KEY_ACCOUNTS[load.profile]) return KEY_ACCOUNTS[load.profile].color;
   if (load?.profile === 'industrial') return 0xc98b6b;
   if (load?.profile === 'commercial') return 0x6b9bc9;
   return 0x8fb98f;
@@ -263,6 +351,18 @@ function busLabel(grid: Grid, bus: Bus): string {
   if (bus.kind === 'load') {
     const l = grid.loadsAtBus(bus.id)[0];
     return l ? `${bus.name} ${l.served.toFixed(0)}/${l.demand.toFixed(0)}MW` : bus.name;
+  }
+  if (bus.kind === 'substation') {
+    if (bus.transformerTripped) return `${bus.name} ⚠跳闸`;
+    return `${bus.name} ${(bus.throughput ?? 0).toFixed(0)}/${bus.rating ?? 0}`;
+  }
+  if (bus.kind === 'storage') {
+    const b = grid.batteriesAtBus(bus.id)[0];
+    if (b) {
+      const pct = ((b.soc / b.energyCapacity) * 100).toFixed(0);
+      const act = b.output > 0.1 ? `放${b.output.toFixed(0)}` : b.output < -0.1 ? `充${(-b.output).toFixed(0)}` : '待机';
+      return `${bus.name} ${pct}% ${act}`;
+    }
   }
   return bus.name;
 }
