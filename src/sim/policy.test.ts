@@ -9,6 +9,7 @@ function activate(sim: Simulation, kind: Parameters<Simulation['policy']['has']>
 function setup(): Simulation {
   const sim = new Simulation();
   sim.forcedOutages = false;
+  sim.events.nextAt = Infinity; // 关闭随机天气：风暴损线会让测试沙盘提前破产
   const g = sim.grid;
   const coal = g.addPlant('coal', 0, 0).bus;
   const sub = g.addSubstation(2, 0);
