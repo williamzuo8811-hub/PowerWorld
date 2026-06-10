@@ -208,6 +208,10 @@ export class Renderer {
       if (inOutage) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xff7043, alpha: 0.9 });
       // 碳捕集改造：绿色小点
       if (gen0?.ccs) g.circle(cx + r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x4ade80 });
+      // 机组组合：已并网的可调机组左上角青色"在线"点
+      if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
+        g.circle(cx - r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x38d39f });
+      }
       // 停电红环
       if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
       // 变电站变压器跳闸：橙色警示环

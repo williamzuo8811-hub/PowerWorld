@@ -128,6 +128,9 @@ export interface SimSnapshot {
   cycleFactor: number; // 景气需求系数
   season: string; // 季节（春/夏/秋/冬）
   seasonFactor: number; // 季节需求系数
+  committedUnits: number; // 已并网可调机组数
+  dispatchableUnits: number; // 可调机组总数（已投运）
+  startupsTotal: number; // 累计机组启动次数
   marketShare: number; // 区域市场发电份额 0..1
   marketClearingPrice: number; // 区域出清价（批发）
   regionalDemand: number; // 区域市场总需求 MW

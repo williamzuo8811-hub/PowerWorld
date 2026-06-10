@@ -95,6 +95,7 @@ export class Hud {
     add('green', '清洁占比');
     add('rep', '口碑');
     add('share', '市占');
+    add('commit', '机组');
     add('cycle', '景气');
     add('season', '季节');
     add('weather', '天气');
@@ -238,6 +239,7 @@ export class Hud {
     this.set('share', `${(s.marketShare * 100).toFixed(0)}%`, s.marketShare > 0.25 ? 'freq-ok' : s.marketShare < 0.1 ? 'freq-warn' : '');
     this.set('cycle', `${s.cycle} ${(s.cycleFactor * 100 - 100 >= 0 ? '+' : '')}${(s.cycleFactor * 100 - 100).toFixed(0)}%`,
       s.cycle === '繁荣' ? 'freq-ok' : s.cycle === '衰退' ? 'freq-warn' : '');
+    this.set('commit', `${s.committedUnits}/${s.dispatchableUnits} 并网`, s.dispatchableUnits > 0 && s.committedUnits === 0 ? 'freq-warn' : '');
     const seasonIcon: Record<string, string> = { 春: '🌱', 夏: '☀️', 秋: '🍂', 冬: '❄️' };
     this.set('season', `${seasonIcon[s.season] ?? ''}${s.season} +${(s.seasonFactor * 100 - 100).toFixed(0)}%`,
       s.season === '夏' || s.season === '冬' ? 'freq-warn' : '');

@@ -74,4 +74,16 @@ describe('机组组合：启停成本与承诺状态', () => {
     expect(PLANTS.gas.startupCost).toBeLessThan(PLANTS.coal.startupCost);
     expect(PLANTS.coal.startupCost).toBeLessThan(PLANTS.nuclear.startupCost);
   });
+
+  it('快照暴露并网机组数/可调机组数/累计启动数', () => {
+    const { sim, gen } = rig('coal', 40);
+    let snap = sim.snapshot();
+    expect(snap.dispatchableUnits).toBe(1);
+    expect(snap.committedUnits).toBe(0); // 尚未并网
+    for (let i = 0; i < 40; i++) sim.tick(0.05, 600);
+    snap = sim.snapshot();
+    expect(gen.committed).toBe(true);
+    expect(snap.committedUnits).toBe(1);
+    expect(snap.startupsTotal).toBeGreaterThanOrEqual(1);
+  });
 });
