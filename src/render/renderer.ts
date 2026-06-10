@@ -200,7 +200,9 @@ export class Renderer {
       const color = busColor(this.grid, bus);
       const gen0 = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
       const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
-      const alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : 1; // 在建/检修半透明
+      const ez = bus.energized ?? 1;
+      // 在建/检修半透明；负荷按能量化程度变暗（停电恢复中逐步点亮）
+      const alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : (bus.kind === 'load' ? 0.35 + 0.65 * ez : 1);
 
       // 建设中黄环
       if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
@@ -212,8 +214,13 @@ export class Renderer {
       if (gen0?.dispatchable && gen0.committed && !bus.underConstruction && !inOutage) {
         g.circle(cx - r * 0.7, cy - r * 0.7, 2.6).fill({ color: 0x38d39f });
       }
-      // 停电红环
-      if (bus.blackout) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xef5d60, alpha: 0.9 });
+      // 停电环：全黑=红，正在黑启动恢复中=青色脉冲
+      if (bus.blackout) {
+        const restoring = ez > 0.05 && ez < 0.95;
+        const ringColor = restoring ? 0x38bdf8 : 0xef5d60;
+        const ringAlpha = restoring ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0.9;
+        g.circle(cx, cy, r + 5).stroke({ width: 2, color: ringColor, alpha: ringAlpha });
+      }
       // 变电站变压器跳闸：橙色警示环
       if (bus.kind === 'substation' && bus.transformerTripped) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2994a, alpha: 0.95 });
       // N-1 薄弱变电站：黄色虚警环

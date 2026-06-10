@@ -20,7 +20,7 @@ import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TARIFF, TARIFF_CLASS,
-  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE,
+  LINE_BUILD_DAYS_BASE, LINE_BUILD_DAYS_PER_TILE, BLACKSTART_TYPES,
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
@@ -467,6 +467,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('边际成本(现)', `¥${sim.effMarginalCost(gen).toFixed(0)}/MWh`));
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
       if (gen.dispatchable) rows.push(row('机组状态', `${gen.committed ? '🟢 并网' : '⚪ 解列'} · 启停${gen.startups ?? 0}次 · 启动费 ¥${spec.startupCost.toLocaleString('en-US')}`));
+      if (BLACKSTART_TYPES[gen.type]) rows.push(row('黑启动', '🔌 可作黑启动种子'));
       rows.push(row('排放', `${sim.effCo2(gen).toFixed(2)} t/MWh${gen.ccs ? ' 🌫CCS' : ''}`));
       rows.push(row('役龄 / 磨损', `${gen.age.toFixed(1)}天 / ${(sim.wear(gen) * 100).toFixed(0)}%`));
       if (sim.genOffline(gen) && !bus.underConstruction) {
@@ -488,7 +489,8 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('已供', `${l.served.toFixed(1)} MW`));
       rows.push(row('电价类别', `${clsName} ×${TARIFF_CLASS[l.profile].toFixed(2)}`));
       rows.push(row('当前电价', `¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
-      rows.push(row('状态', bus.blackout ? '⚠ 停电/欠供' : '正常'));
+      const ez = bus.energized ?? 1;
+      rows.push(row('状态', bus.blackout && ez > 0.05 && ez < 0.95 ? `🔌 黑启动恢复中 ${(ez * 100).toFixed(0)}%` : bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }
   } else if (bus.kind === 'substation') {
     rows.push(row('变压器', `${(bus.throughput ?? 0).toFixed(1)} / ${bus.rating ?? 0} MW`));
@@ -501,6 +503,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('类型', `${STORAGE[b.type].label}（${(b.energyCapacity / b.powerRating).toFixed(0)}h）`));
       rows.push(row('电量', `${b.soc.toFixed(0)} / ${b.energyCapacity} MWh (${((b.soc / b.energyCapacity) * 100).toFixed(0)}%)`));
       rows.push(row('功率', `${b.powerRating} MW · 效率 ${(b.roundTrip * 100).toFixed(0)}%`));
+      rows.push(row('黑启动', b.soc > 1 ? '🔌 可作黑启动种子' : '需充电后可黑启动'));
       rows.push(row('状态', b.output > 0.1 ? `放电 ${b.output.toFixed(1)}MW` : b.output < -0.1 ? `充电 ${(-b.output).toFixed(1)}MW` : '待机'));
     }
   }
