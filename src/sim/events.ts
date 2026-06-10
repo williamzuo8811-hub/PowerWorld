@@ -54,6 +54,9 @@ export function weightedChoice(weights: [WeatherKind, number][]): WeatherKind {
 export class EventSystem {
   active: ActiveEvent[] = [];
   nextAt = Infinity;
+  /** 天气预报：下一场事件的种类提前掷出并公示，让玩家能提前备战（充储能/并机组/检修避让） */
+  forecast: { kind: WeatherKind; at: number } | null = null;
+  private forecastWarned = false; // 临近预警（边沿触发）
 
   // 聚合后的全局修正（供仿真读取）
   demandFactor = 1;
@@ -62,17 +65,40 @@ export class EventSystem {
   current: WeatherKind = 'clear';
   label = LABEL.clear;
 
-  /** 安排第一场事件（开局后若干小时） */
+  /** 安排第一场事件（开局后若干小时）；预报在下个 update 结合季节生成 */
   schedule(clock: number): void {
     this.nextAt = clock + rnd(8, 16);
+    this.forecast = null;
+    this.forecastWarned = false;
+  }
+
+  /** 给 HUD 的预报文本：'🌡 热浪 ~5h' */
+  forecastLabel(clock: number): string | null {
+    if (!this.forecast || !Number.isFinite(this.forecast.at)) return null;
+    const hours = Math.max(0, this.forecast.at - clock);
+    return `${LABEL[this.forecast.kind]} ~${hours.toFixed(0)}h`;
+  }
+
+  private rollForecast(sim: Simulation): void {
+    const { summer, winter } = seasonIntensity(sim.yearPhase);
+    this.forecast = { kind: weightedChoice(weatherWeights(summer, winter)), at: this.nextAt };
+    this.forecastWarned = false;
   }
 
   update(sim: Simulation): void {
     const t = sim.clock;
+    // 生成预报：已排定下一场事件但还没掷出种类时，现在掷出（玩家可提前看到）
+    if (!this.forecast && Number.isFinite(this.nextAt)) this.rollForecast(sim);
+    // 临近预警：恶劣天气 3 小时内将至，提醒一次
+    if (this.forecast && !this.forecastWarned && this.forecast.kind !== 'clear' && this.forecast.at - t < 3 && this.forecast.at > t) {
+      this.forecastWarned = true;
+      sim.log('warn', `🛰 天气预报：${LABEL[this.forecast.kind]}约 ${Math.max(0, this.forecast.at - t).toFixed(1)} 小时后到达——提前充储能/并机组备战`);
+    }
     let guard = 0;
     while (t >= this.nextAt && guard++ < 8) {
       this.trigger(sim);
       this.nextAt += rnd(10, 24);
+      this.rollForecast(sim); // 下一场事件的新预报
     }
     // 过期事件移除
     this.active = this.active.filter((e) => e.endTime > t);
@@ -90,10 +116,13 @@ export class EventSystem {
     this.label = LABEL[this.current];
   }
 
-  /** 随机触发一场事件（权重随季节变化：夏偏热浪、冬偏寒潮） */
+  /** 触发一场事件：优先采用已公示的预报种类（预报兑现），否则现场按季节权重掷出 */
   private trigger(sim: Simulation): void {
-    const { summer, winter } = seasonIntensity(sim.yearPhase);
-    const kind = weightedChoice(weatherWeights(summer, winter));
+    let kind = this.forecast?.kind;
+    if (!kind) {
+      const { summer, winter } = seasonIntensity(sim.yearPhase);
+      kind = weightedChoice(weatherWeights(summer, winter));
+    }
     this.triggerKind(sim, kind);
   }
 

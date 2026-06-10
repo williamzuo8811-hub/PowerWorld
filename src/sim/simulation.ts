@@ -185,7 +185,7 @@ export interface SimSaveState {
   gameOver: boolean;
   win: boolean;
   grid: GridData;
-  events: { active: EventSystem['active']; nextAt: number };
+  events: { active: EventSystem['active']; nextAt: number; forecast?: EventSystem['forecast'] };
   tech: { unlocked: TechId[]; points: number };
   fuelPrice: Record<FuelType, number>;
   fuelContracts: Partial<Record<FuelType, FuelContract>>;
@@ -365,7 +365,7 @@ export class Simulation {
       goalDay: this.goalDay, goalReliability: this.goalReliability, carbonPriceMult: this.carbonPriceMult, sandbox: this.sandbox,
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
-      events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt },
+      events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt, forecast: this.events.forecast ? { ...this.events.forecast } : null },
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
       fuelPrice: { ...this.fuelPrice },
       fuelContracts: { ...this.fuelContracts },
@@ -408,6 +408,7 @@ export class Simulation {
     this.events = new EventSystem();
     this.events.active = d.events.active.map((e) => ({ ...e }));
     this.events.nextAt = d.events.nextAt;
+    this.events.forecast = d.events.forecast ? { ...d.events.forecast } : null; // 旧档无预报：update 时重掷
     this.events.update(this);
     this.tech = new TechState();
     this.tech.points = d.tech?.points ?? 0;
@@ -2005,6 +2006,7 @@ export class Simulation {
       co2: this.co2Rate,
       reliability: this.reliability,
       weather: this.events.label,
+      forecast: this.events.forecastLabel(this.clock),
       demandFactor: this.events.demandFactor,
       goalDay: this.goalDay,
       goalReliability: this.goalReliability,

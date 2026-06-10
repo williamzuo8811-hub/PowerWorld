@@ -124,6 +124,7 @@ export class Hud {
     add('cycle', '景气');
     add('season', '季节');
     add('weather', '天气');
+    add('forecast', '预报');
     add('rp', '研发点');
     add('grade', '评级');
     add('goal', '目标');
@@ -302,6 +303,7 @@ export class Hud {
     this.set('season', `${seasonIcon[s.season] ?? ''}${s.season} +${(s.seasonFactor * 100 - 100).toFixed(0)}%`,
       s.season === '夏' || s.season === '冬' ? 'freq-warn' : '');
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
+    this.set('forecast', s.forecast ?? '—', s.forecast && !s.forecast.startsWith('☀') ? 'freq-warn' : '');
     this.set('rp', `${s.researchPoints.toFixed(0)}`);
     this.set('grade', `${s.grade} · ${s.gradeScore.toFixed(0)}`,
       s.gradeScore >= 75 ? 'freq-ok' : s.gradeScore >= 45 ? 'freq-warn' : 'freq-bad');
