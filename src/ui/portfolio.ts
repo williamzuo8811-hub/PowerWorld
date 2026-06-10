@@ -5,12 +5,29 @@ function fmtK(n: number): string {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toString();
 }
 
+/** 清洁占比趋势迷你折线图（0..100 固定纵轴） */
+function cleanTrend(values: number[]): string {
+  if (values.length < 2) return '';
+  const w = 320, h = 42;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - (Math.max(0, Math.min(100, v)) / 100) * (h - 6) - 3;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const cur = values[values.length - 1];
+  return `<div style="color:var(--accent);font-size:11px;letter-spacing:1px;margin:12px 0 2px">📈 清洁占比趋势`
+    + `<span style="float:right;color:var(--text-dim);font-weight:400">当前 ${cur.toFixed(0)}%</span></div>`
+    + `<svg width="${w}" height="${h}" style="display:block;background:#0e1620;border:1px solid var(--panel-border);border-radius:6px">`
+    + `<polyline points="${pts}" fill="none" stroke="#4ade80" stroke-width="1.5"/></svg>`;
+}
+
 export interface PortfolioPanelOptions {
   categories: PortfolioCategory[];
   customerSatisfaction: number;
   companyStanding: number;
   marketContestation: number;
   lead: { icon: string; label: string; daysLeft: number } | null;
+  cleanHistory: number[]; // 清洁占比历史（%）
   activeFilter: string | null;
   onFilter: (key: string | null) => void; // 点击品类→设置地图高亮筛选（再次点击同项=清除）
   onClose: () => void;
@@ -66,6 +83,8 @@ export class PortfolioPanel {
       if (!dim) rowEl.onclick = () => o.onFilter(active ? null : c.key);
       panel.appendChild(rowEl);
     }
+
+    panel.insertAdjacentHTML('beforeend', cleanTrend(o.cleanHistory));
 
     const hint = document.createElement('p');
     hint.className = 'sub';

@@ -24,6 +24,18 @@ describe('历史走势采样', () => {
     expect(sim.history.length).toBe(HISTORY_MAX);
   });
 
+  it('样本含清洁占比（发电结构趋势）', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false;
+    sim.grid.addLoad(0, 0, 'industrial', 30, 'x', 0);
+    for (let i = 0; i < 600; i++) sim.tick(0.05, 600);
+    expect(sim.history.length).toBeGreaterThan(0);
+    for (const h of sim.history) {
+      expect(h.cleanShare).toBeGreaterThanOrEqual(0);
+      expect(h.cleanShare).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('存档保留历史', () => {
     const sim = new Simulation();
     for (let i = 0; i < 300; i++) sim.tick(0.05, 600);

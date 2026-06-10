@@ -65,6 +65,7 @@ export interface HistorySample {
   spot: number;
   netWorth: number;
   demand: number;
+  cleanShare: number; // 清洁电力占比 0..1（发电结构趋势）
 }
 
 /** 能源品类统计的一行（资产组合面板，呼应"能源品类"筛选器） */
@@ -1370,7 +1371,7 @@ export class Simulation {
 
     // —— 历史走势采样 ——
     if (this.clock >= this.nextSampleAt) {
-      this.history.push({ clock: this.clock, spot: this.spotPrice, netWorth: this.netWorth, demand: this.totalDemand });
+      this.history.push({ clock: this.clock, spot: this.spotPrice, netWorth: this.netWorth, demand: this.totalDemand, cleanShare: this.renewableShare });
       if (this.history.length > HISTORY_MAX) this.history.shift();
       this.nextSampleAt = this.clock + HISTORY_SAMPLE_HOURS;
     }
