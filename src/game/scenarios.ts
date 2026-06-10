@@ -119,6 +119,29 @@ export const SCENARIOS: Scenario[] = [
       sim.log('info', '【迎峰度夏】盛夏开局，制冷高峰 + 热浪——备足可信容量与储能，撑到第 18 天。');
     },
   },
+  {
+    id: 'keyaccount',
+    name: '⑥ 能源大客户',
+    brief: '服务高要求大客户：数据中心(最怕停电)、远郊矿区(长线易欠压)、石化基地(可中断)。备可靠电源/无功补偿/黑启动种子，撑过 14 天且可靠性≥91%。',
+    hint: '数据中心停电=SLA重罚→建冗余/储能/黑启动；远郊矿区长线远供→欠压→加电容器组或就近电源；石化可在高价时段被中断。',
+    goals: '高星级=高可靠(护住数据中心) + 盈利(大客户大单) + 清洁 + 口碑',
+    setup(sim) {
+      sim.money = 1_500_000;
+      sim.goalDay = 14;
+      sim.goalReliability = 0.91;
+      const g = sim.grid;
+      g.addLoad(15, 6, 'commercial', 22, '商务区', 0.004);
+      g.addLoad(17, 12, 'datacenter', 44, '云数据中心', 0.006); // 怕停电
+      g.addLoad(9, 15, 'petrochem', 60, '石化基地', 0.0025); // 可中断
+      g.addLoad(40, 4, 'mining', 50, '远郊矿区', 0.003); // 长线远供 → 易欠压
+      const coal = g.addPlant('coal', 6, 6).bus;
+      const gas = g.addPlant('gas', 8, 4).bus; // 黑启动种子
+      const sub = g.addSubstation(13, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.log('info', '【能源大客户】服务数据中心/矿区/石化——备可靠电源、无功补偿与黑启动种子。');
+    },
+  },
 ];
 
 // 新手教程：手把手学会核心操作
