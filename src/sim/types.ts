@@ -5,7 +5,7 @@
 export type BusKind = 'plant' | 'substation' | 'load' | 'storage';
 
 /** 机组类型 */
-export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear';
+export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'hydro' | 'biomass';
 
 /** 负荷画像（决定一天内的用电曲线）。后四类为可招商引资的"大客户" */
 export type LoadProfile = 'residential' | 'commercial' | 'industrial' | 'datacenter' | 'transport' | 'petrochem' | 'mining';
@@ -54,6 +54,7 @@ export interface Generator {
   dispatchable: boolean; // 是否可调度（火电/核电=是；风/光=否，靠天吃饭）
   availability: number; // 0..1，本 tick 可用出力系数（新能源由天气决定）
   age: number; // 役龄（游戏天，投运后累计）—— 老化用
+  siteFactor?: number; // 选址资源系数（风带/光照/临水，建厂时由地形决定；火电/核电为 1）
   outageUntil?: number; // 强迫停运结束时刻（累计仿真小时），其间离线
   ccs?: boolean; // 是否加装碳捕集（捕碳但边际成本上升）
   committed?: boolean; // 机组组合：是否已并网在线（用于启停成本/最小开停机）
@@ -129,6 +130,8 @@ export interface SimSnapshot {
   co2: number; // 当前碳排放强度 (吨/h)
   reliability: number; // 近期可靠性 0..1（供电率滑动平均）
   weather: string; // 当前天气/事件标签
+  forecast: string | null; // 天气预报（下一场事件 + 倒计时），无预报为 null
+  policy: string | null; // 进行中的政策事件标签（含剩余天数），无则 null
   demandFactor: number; // 事件造成的需求系数（>1 表示尖峰）
   goalDay: number; // 关卡目标：撑到第几天
   goalReliability: number; // 关卡目标：可靠性阈值

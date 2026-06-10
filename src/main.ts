@@ -11,12 +11,17 @@ import { HistoryPanel } from './ui/history';
 import { IRPPanel } from './ui/irp';
 import { PortfolioPanel } from './ui/portfolio';
 import { Sound } from './ui/sound';
+import { SettingsPanel, loadSettings, applyGlobalSettings, type GameSettings } from './ui/settings';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
 import { Tutorial } from './game/tutorial';
+import { Advisor } from './game/advisor';
 import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
-import { saveGame, loadGame, hasSave } from './game/save';
+import { saveGame, loadGame, listSaves, deleteSave, exportSave, importSave, type SlotId } from './game/save';
+import { recordScore, allBests, shareText, type ScoreRecord } from './game/leaderboard';
+import { dailySeed } from './game/scenarios';
+import { parseCustomScenario, exportCurrentAsScenario, listCustomScenarios, addCustomScenario, removeCustomScenario, toScenario } from './game/custom';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
@@ -25,9 +30,9 @@ import {
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
-  coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
+  coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear', hydro: 'hydro', biomass: 'biomass',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'backup', 'contract', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'backup', 'contract', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -44,30 +49,58 @@ const achievements = new Achievements();
 achievements.load();
 const sound = new Sound();
 const tutorial = new Tutorial();
+const advisor = new Advisor();
+const settingsPanel = new SettingsPanel();
+const settings: GameSettings = loadSettings();
+
+/** 把设置应用到各子系统（声音/渲染/全局样式） */
+function applySettings(s: GameSettings): void {
+  Object.assign(settings, s);
+  sound.setVolume(s.volume);
+  sound.setMusic(s.music);
+  renderer.colorblind = s.colorblind;
+  applyGlobalSettings(s);
+}
 let lastBadEvents = 0; // 上一帧的严重事件计数，用于触发报警音
 let wasGameOver = false; // 用于检测输赢瞬间
 
 let menuOpen = true; // 主菜单打开时暂停仿真与建造
 let panelOpen = false; // 研发/成就面板打开时暂停仿真与建造
 let currentScenarioId = SCENARIOS[0].id;
+let gameActive = false; // 是否有进行中的对局（菜单"返回对局"/"另存"用）
+let lastAutosaveDay = -1; // 上次自动存档的游戏天
+let currentDailySeed: number | undefined; // 每日挑战的日期种子（战绩归档用）
+let lastScore: ScoreRecord | null = null; // 最近一次通关战绩（分享用）
 
 // ——————————————————— 关卡 / 存档流程 ———————————————————
+/** 关卡 id → 固定地形种子（每关一张确定的地图；每日挑战在 setup 内用日期种子覆盖） */
+function terrainSeedFor(id: string): number {
+  let h = 7;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return (h % 9000) + 2;
+}
+
 function newGame(scenario: Scenario): void {
   sim.reset();
   renderer.categoryFilter = null;
+  sim.grid.setTerrainSeed(terrainSeedFor(scenario.id));
   scenario.setup(sim);
   currentScenarioId = scenario.id;
+  currentDailySeed = scenario.id === 'daily' ? dailySeed() : undefined;
+  lastAutosaveDay = sim.day;
+  advisor.reset();
   enterGame();
   if (scenario.id === 'tutorial') tutorial.start();
   else { tutorial.stop(); hud.setTutorial(null); }
   hud.setHint(scenario.hint);
 }
 
-function continueGame(): void {
-  const data = loadGame();
+function continueGame(slot: SlotId = 'quick'): void {
+  const data = loadGame(slot);
   if (!data) return;
   sim.deserialize(data.save);
   currentScenarioId = data.scenarioId;
+  lastAutosaveDay = sim.day;
   enterGame();
   tutorial.stop();
   hud.setTutorial(null);
@@ -83,34 +116,90 @@ function enterGame(): void {
   historyPanel.hide();
   irpPanel.hide();
   portfolioPanel.hide();
+  settingsPanel.hide();
   panelOpen = false;
+  renderer.refreshTerrain(); // 地形种子可能随关卡变化
+  renderer.fitView(); // 自动取景到电网范围
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
   hud.setSpeed(0);
   menu.hide();
   menuOpen = false;
+  gameActive = true;
   const ov = document.getElementById('overlay');
   if (ov) ov.style.display = 'none';
+}
+
+/** 下载存档为 JSON 文件 */
+function downloadSave(slot: SlotId): void {
+  const json = exportSave(slot);
+  if (!json) return;
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `powerworld-${slot}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function openMenu(): void {
   menuOpen = true;
   hud.setSpeed(0);
-  const data = loadGame();
-  const label = data
-    ? `${scenarioById(data.scenarioId)?.name ?? '关卡'} · 第${Math.floor((data.save.clock ?? 0) / 24) + 1}天`
-    : undefined;
   menu.show({
     scenarios: SCENARIOS,
-    hasSave: hasSave(),
-    saveLabel: label,
+    saves: listSaves(),
+    bests: allBests(),
+    scenarioName: (id) => scenarioById(id)?.name ?? '关卡',
+    gameActive: gameActive && !sim.gameOver,
     onStart: (s) => newGame(s),
-    onContinue: () => continueGame(),
+    onLoad: (slot) => continueGame(slot),
+    onDelete: (slot) => { deleteSave(slot); openMenu(); },
+    onExport: (slot) => downloadSave(slot),
+    onImport: (json) => { const ok = importSave(json, 'quick'); if (ok) openMenu(); return ok; },
+    onSaveTo: (slot) => { saveGame(sim, currentScenarioId, slot); openMenu(); },
+    onResume: () => { menu.hide(); menuOpen = false; },
+    customScenarios: listCustomScenarios().map((d) => ({ name: d.name, brief: d.brief ?? '', scenario: toScenario(d) })),
+    onDeleteCustom: (name) => { removeCustomScenario(name); openMenu(); },
+    onImportScenario: (json) => {
+      const r = parseCustomScenario(json);
+      if ('error' in r) return r.error;
+      addCustomScenario(r.data);
+      openMenu();
+      return null;
+    },
+    onExportCurrentScenario: () => {
+      const name = `我的关卡 ${new Date().toISOString().slice(5, 10)}`;
+      const data = exportCurrentAsScenario(sim, name);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `powerworld-scenario-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
   });
 }
 
 function doSave(): void {
-  flashHint(saveGame(sim, currentScenarioId) ? '已存档 💾' : '存档失败');
+  flashHint(saveGame(sim, currentScenarioId, 'quick') ? '已存档 💾' : '存档失败');
+}
+
+/** 每个游戏日自动存档一次（静默，菜单中可见/可载入；可在设置中关闭） */
+function autosaveTick(): void {
+  if (!settings.autosave || sim.gameOver || sim.day === lastAutosaveDay) return;
+  lastAutosaveDay = sim.day;
+  saveGame(sim, currentScenarioId, 'auto');
+}
+
+/** 打开设置面板 */
+function openSettings(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  settingsPanel.show({
+    settings,
+    onChange: (s) => applySettings(s),
+    onClose: () => { settingsPanel.hide(); panelOpen = false; },
+  });
 }
 
 /** 运行 N-1 冗余校核并把薄弱元件标注到画面 */
@@ -143,6 +232,7 @@ function openResearch(): void {
     techs: TECHS,
     unlocked: sim.tech.unlocked,
     points: sim.tech.points,
+    canUnlock: (id) => sim.tech.canUnlock(id),
     onUnlock: (id) => doUnlock(id),
     onClose: () => { research.hide(); panelOpen = false; },
   });
@@ -150,7 +240,7 @@ function openResearch(): void {
 
 function doUnlock(id: TechId): void {
   const t = TECHS.find((x) => x.id === id);
-  if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost) return;
+  if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost || !sim.tech.canUnlock(id)) return;
   sim.tech.points -= t.cost;
   sim.tech.unlocked.add(id);
   sound.unlock();
@@ -256,7 +346,7 @@ function openFinance(): void {
       regionalDemand: sim.regionalDemand,
       competitors: sim.competitors.map((c, i) => {
         const q = sim.acquisitionQuote(i)!;
-        return { name: c.name, capacity: c.capacity, marginalCost: c.marginalCost, acqTotal: q.total, acqRemedy: q.remedy, acqBlocked: q.blocked, postShare: q.postShare };
+        return { name: c.name, capacity: c.capacity, marginalCost: c.marginalCost, style: c.style, acqTotal: q.total, acqRemedy: q.remedy, acqBlocked: q.blocked, postShare: q.postShare };
       }),
       capacityPrice: sim.capacityPrice,
       capacityAdequacy: sim.capacityAdequacy,
@@ -265,7 +355,10 @@ function openFinance(): void {
       reserveReqMult: sim.reserveReqMult,
       flexPrice: sim.flexPrice,
       storageArbDay: sim.storageArbDay,
+      storageStrategy: sim.storageStrategy,
+      autoOps: { ...sim.autoOps },
       startupsTotal: sim.startupsTotal,
+      policy: sim.policy.label(sim.clock),
       capCommitMW: sim.capCommitments.reduce((s, c) => s + c.mw, 0),
       zoneNorth: sim.zoneNorthPrice,
       zoneSouth: sim.zoneSouthPrice,
@@ -283,6 +376,17 @@ function openFinance(): void {
     onToggleInsurance: () => { sim.insured = !sim.insured; sim.log('info', sim.insured ? '🛡 已投保设备保险' : '已退保'); sound.click(); openFinance(); },
     onToggleMarket: () => { sim.marketEnabled = !sim.marketEnabled; sim.log('info', sim.marketEnabled ? '🔌 已接入批发市场' : '已断开联络线'); sound.click(); openFinance(); },
     onToggleDR: () => { sim.demandResponse = !sim.demandResponse; sim.log('info', sim.demandResponse ? '📉 已启用需求响应' : '已退出需求响应'); sound.click(); openFinance(); },
+    onToggleStorageStrategy: () => {
+      sim.storageStrategy = sim.storageStrategy === 'arb' ? 'reg' : 'arb';
+      sim.log('info', sim.storageStrategy === 'arb' ? '💹 储能切换为专注套利（退出调频市场）' : '📡 储能切换为投标调频（套利捕获减半）');
+      sound.click(); openFinance();
+    },
+    onToggleAutoOps: (key) => {
+      sim.autoOps[key] = !sim.autoOps[key];
+      const names = { reclose: '自动重合闸', maintenance: '淡季自动检修', repay: '自动还款', precommit: '迎峰预并网' } as const;
+      sim.log('info', `🤖 ${names[key]}：${sim.autoOps[key] ? '已开启' : '已关闭'}`);
+      sound.click(); openFinance();
+    },
     onInterruptible: (mw, days) => {
       if (mw <= 0) { sim.interruptibleMW = 0; sim.interruptibleEndClock = 0; sim.log('info', '已解约可中断负荷'); sound.click(); }
       else if (sim.signInterruptible(mw, days)) sound.build(); else sound.error();
@@ -295,6 +399,7 @@ function openFinance(): void {
 /** 评估成就并弹出新解锁的提示 */
 function pollAchievements(): void {
   const techCount = sim.tech.unlocked.size;
+  const kaKinds = new Set([...sim.grid.loads.values()].filter((l) => KEY_ACCOUNTS[l.profile] && !sim.grid.buses.get(l.busId)?.underConstruction).map((l) => l.profile)).size;
   achievements.evaluate({
     peakServed: sim.peakServed,
     totalEnergyServed: sim.totalEnergyServed,
@@ -302,8 +407,15 @@ function pollAchievements(): void {
     reputation: sim.reputation,
     techCount,
     allTech: techCount >= ALL_TECH_COUNT,
-    won: sim.gameOver && sim.win,
+    won: sim.win,
     n1Secure: sim.n1Secure,
+    grade: sim.gradeScore().grade,
+    outageEnergyTotal: sim.outageEnergyTotal,
+    netWorth: sim.netWorth,
+    debt: sim.debt,
+    marketShare: sim.marketShare,
+    day: sim.day,
+    keyAccountKinds: kaKinds,
   });
   for (const a of achievements.drain()) { hud.toast(`🏆 成就解锁：${a.name}`); sound.unlock(); }
 }
@@ -399,12 +511,13 @@ function handleClick(clientX: number, clientY: number): void {
     case 'substation': {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
-      if (sim.spend(SUBSTATION_CAPEX)) {
+      const cost = sim.buildCostAt(p.x, p.y, SUBSTATION_CAPEX);
+      if (sim.spend(cost)) {
         const sub = sim.grid.addSubstation(p.x, p.y);
         startBuild(sub, SUBSTATION_BUILD_DAYS);
         invalidateN1();
         sound.build();
-        sim.log('info', `变电站开工（工期${SUBSTATION_BUILD_DAYS}天）`);
+        sim.log('info', `变电站开工 ¥${cost.toLocaleString('en-US')}${terrainNote(cost, SUBSTATION_CAPEX)}（工期${SUBSTATION_BUILD_DAYS}天）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -414,12 +527,13 @@ function handleClick(clientX: number, clientY: number): void {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       const spec = STORAGE[tool];
-      if (sim.spend(spec.capex)) {
+      const cost = sim.buildCostAt(p.x, p.y, spec.capex);
+      if (sim.spend(cost)) {
         const { bus: bbus } = sim.grid.addBattery(p.x, p.y, tool);
         startBuild(bbus, spec.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `${spec.label}开工 ${spec.powerRating}MW/${spec.energyCapacity}MWh（工期${spec.buildDays}天，需经变电站接入）`);
+        sim.log('info', `${spec.label}开工 ${spec.powerRating}MW/${spec.energyCapacity}MWh ¥${cost.toLocaleString('en-US')}${terrainNote(cost, spec.capex)}（工期${spec.buildDays}天，需经变电站接入）`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -475,6 +589,18 @@ function handleClick(clientX: number, clientY: number): void {
     }
     case 'bulldoze': {
       if (bus) {
+        // 在建工程：取消即全额退款（反悔/撤销，无需确认）
+        const cancel = sim.cancelRefund(bus.id);
+        if (cancel != null) {
+          sim.grid.removeBus(bus.id);
+          if (cancel > 0) sim.refund(cancel);
+          invalidateN1();
+          sound.build();
+          sim.log('info', `🏗 取消在建工程 ${bus.name}，全额退款 ¥${cancel.toLocaleString('en-US')}`);
+          return;
+        }
+        // 已投运资产：双击确认，防误拆
+        if (!confirmDemolish('bus', bus.id, `再次点击确认退役「${bus.name}」（按残值返还）`)) return;
         const salvage = sim.salvageValue(bus.id); // 退役前计算残值
         sim.grid.removeBus(bus.id);
         if (salvage > 0) sim.refund(salvage);
@@ -485,6 +611,16 @@ function handleClick(clientX: number, clientY: number): void {
       }
       const ln = renderer.nearestLine(tile.x, tile.y);
       if (ln) {
+        const cancel = sim.lineCancelRefund(ln);
+        if (cancel != null) {
+          sim.grid.removeLine(ln.id);
+          if (cancel > 0) sim.refund(cancel);
+          invalidateN1();
+          sound.build();
+          sim.log('info', `🏗 取消在建线路，全额退款 ¥${cancel.toLocaleString('en-US')}`);
+          return;
+        }
+        if (!confirmDemolish('line', ln.id, '再次点击确认拆除该线路（按残值返还）')) return;
         const s = sim.lineSalvage(ln);
         sim.grid.removeLine(ln.id);
         if (s > 0) sim.refund(s);
@@ -501,12 +637,14 @@ function handleClick(clientX: number, clientY: number): void {
       const p = snap(tile);
       if (renderer.nearestBus(p.x, p.y, 0.7)) { flashHint('此处已有设备'); sound.error(); return; }
       const spec = PLANTS[type];
-      if (sim.spend(spec.capex)) {
-        const { bus: pbus } = sim.grid.addPlant(type, p.x, p.y);
+      const cost = sim.buildCostAt(p.x, p.y, spec.capex);
+      if (sim.spend(cost)) {
+        const { bus: pbus, gen } = sim.grid.addPlant(type, p.x, p.y);
         startBuild(pbus, spec.buildDays);
         invalidateN1();
         sound.build();
-        sim.log('info', `${spec.label}电厂开工 (${spec.capacity}MW·工期${spec.buildDays}天)`);
+        const siteNote = gen.siteFactor != null ? `·资源 ${(gen.siteFactor * 100).toFixed(0)}%` : '';
+        sim.log('info', `${spec.label}电厂开工 (${spec.capacity}MW·¥${cost.toLocaleString('en-US')}${terrainNote(cost, spec.capex)}${siteNote}·工期${spec.buildDays}天)`);
       } else { flashHint('资金不足'); sound.error(); }
       return;
     }
@@ -517,6 +655,25 @@ let hintTimer = 0;
 function flashHint(text: string): void {
   hud.setHint(text);
   hintTimer = 1.6;
+}
+
+/** 地形抬价注记（造价 ≠ 基准时显示倍率） */
+function terrainNote(cost: number, base: number): string {
+  return cost > base + 0.5 ? `(地形×${(cost / base).toFixed(2)})` : '';
+}
+
+// 拆除二次确认：3 秒内再点同一目标才执行（在建工程取消除外）
+let pendingDemolish: { kind: 'bus' | 'line'; id: number; expire: number } | null = null;
+function confirmDemolish(kind: 'bus' | 'line', id: number, prompt: string): boolean {
+  const now = performance.now();
+  if (pendingDemolish && pendingDemolish.kind === kind && pendingDemolish.id === id && now < pendingDemolish.expire) {
+    pendingDemolish = null;
+    return true;
+  }
+  pendingDemolish = { kind, id, expire: now + 3000 };
+  flashHint(prompt);
+  sound.click();
+  return false;
 }
 
 function busInspectorHtml(bus: Bus): string {
@@ -532,6 +689,7 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('出力', `${gen.output.toFixed(1)} / ${gen.capacity} MW`));
       rows.push(row('边际成本(现)', `¥${sim.effMarginalCost(gen).toFixed(0)}/MWh`));
       rows.push(row('可调度', gen.dispatchable ? '是' : `否(可用${(gen.availability * 100).toFixed(0)}%)`));
+      if (gen.siteFactor != null) rows.push(row('选址资源', `${(gen.siteFactor * 100).toFixed(0)}%${gen.siteFactor >= 1.1 ? ' ✨优质场址' : gen.siteFactor < 0.9 ? ' ⚠贫资源区' : ''}`));
       if (gen.dispatchable) rows.push(row('机组状态', `${gen.committed ? '🟢 并网' : '⚪ 解列'} · 启停${gen.startups ?? 0}次 · 启动费 ¥${spec.startupCost.toLocaleString('en-US')}`));
       if (BLACKSTART_TYPES[gen.type]) rows.push(row('黑启动', '🔌 可作黑启动种子'));
       rows.push(row('排放', `${sim.effCo2(gen).toFixed(2)} t/MWh${gen.ccs ? ' 🌫CCS' : ''}`));
@@ -593,13 +751,36 @@ function row(k: string, v: string): string {
 
 function bindInput(): void {
   const c = renderer.canvas;
+  c.style.touchAction = 'none'; // 触屏：禁用浏览器默认手势，交给游戏处理
   // 首个手势解除浏览器音频自动播放限制
   window.addEventListener('pointerdown', () => sound.resume(), { once: true });
   window.addEventListener('keydown', () => sound.resume(), { once: true });
+  // 多点触控：记录活跃指针，双指捏合缩放
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinchDist = 0;
+  const pinchPair = () => {
+    const [a, b] = [...pointers.values()];
+    return { dist: Math.hypot(a.x - b.x, a.y - b.y), midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2 };
+  };
   c.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      dragging = false; moved = true; // 进入捏合：取消点击/拖拽语义
+      pinchDist = pinchPair().dist;
+      return;
+    }
     dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
   });
   window.addEventListener('pointermove', (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const p = pinchPair();
+      if (pinchDist > 0 && Math.abs(p.dist - pinchDist) > 1) {
+        renderer.zoomAt(p.midX, p.midY, p.dist / pinchDist);
+        pinchDist = p.dist;
+      }
+      return;
+    }
     const tile = renderer.screenToTile(e.clientX, e.clientY);
     renderer.cursorTile = tile;
     const hover = renderer.nearestBus(tile.x, tile.y);
@@ -612,9 +793,15 @@ function bindInput(): void {
       lastX = e.clientX; lastY = e.clientY;
     }
   });
+  const endPointer = (e: PointerEvent) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+  };
+  window.addEventListener('pointercancel', endPointer);
   window.addEventListener('pointerup', (e) => {
     if (dragging && !moved) handleClick(e.clientX, e.clientY);
     dragging = false;
+    endPointer(e);
   });
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -629,6 +816,7 @@ function bindInput(): void {
       if (renderer.categoryFilter) { renderer.categoryFilter = null; flashHint('已清除品类高亮'); }
       return;
     }
+    if (e.key === 'h' || e.key === 'H') { renderer.fitView(); return; }
     const n = parseInt(e.key, 10);
     if (!isNaN(n) && n >= 1 && n <= TOOL_ORDER.length) hud.setTool(TOOL_ORDER[n - 1]);
   });
@@ -649,6 +837,28 @@ async function start(): Promise<void> {
   hud.onIRP = openIRP;
   hud.onPortfolio = openPortfolio;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
+  hud.onSettings = openSettings;
+  hud.onShareScore = () => {
+    if (!lastScore) return;
+    const text = shareText(lastScore, scenarioById(lastScore.scenarioId)?.name ?? '关卡');
+    try {
+      navigator.clipboard?.writeText(text);
+    } catch {
+      /* 剪贴板不可用时静默 */
+    }
+  };
+  hud.onToolChange = (id) => {
+    renderer.setResourceOverlay(id === 'wind' || id === 'solar' || id === 'hydro' ? id : null);
+    if (id === 'wind' || id === 'solar' || id === 'hydro') flashHint('资源热力图：亮处=优质场址（出力更高）');
+  };
+  applySettings(settings); // 启动时应用持久化设置
+  hud.onContinueAfterWin = () => {
+    sim.gameOver = false;
+    sim.goalDay = Infinity; // 转入无尽经营：不再有通关日，但仍可破产
+    wasGameOver = false;
+    hud.setSpeed(1);
+    hud.toast('∞ 继续经营——目标已解除，城市继续成长，年报照常发布');
+  };
   hud.setSoundLabel(sound.muted);
   bindInput();
   openMenu(); // 开局先进主菜单选关
@@ -657,19 +867,43 @@ async function start(): Promise<void> {
     const dt = Math.min(0.05, renderer.app.ticker.deltaMS / 1000);
     if (!menuOpen && !panelOpen) {
       sim.tick(dt, hud.timeScale);
+      autosaveTick();
       hud.update(sim.snapshot(), sim.logs);
       pollAchievements();
       // 新手教程引导
       if (tutorial.active) hud.setTutorial(tutorial.update(sim));
       if (tutorial.takeCompleted()) { hud.setTutorial(null); hud.toast('🎓 教程完成！进入自由建造'); sound.win(); }
+      // 顾问提示：在玩家需要某个系统的时刻情境化教学
+      if (!tutorial.active) {
+        const tip = advisor.update(sim);
+        if (tip) { hud.toast(tip); sound.click(); }
+      }
       // 严重事件（跳闸/破产）触发报警音
       if (sim.badEventCount > lastBadEvents) sound.trip();
       lastBadEvents = sim.badEventCount;
-      // 输赢瞬间音效
-      if (sim.gameOver && !wasGameOver) (sim.win ? sound.win() : sound.lose());
+      // 输赢瞬间：音效 + 战绩归档（个人最佳/分享文本）
+      if (sim.gameOver && !wasGameOver) {
+        if (sim.win) {
+          sound.win();
+          const g = sim.gradeScore();
+          lastScore = {
+            scenarioId: currentScenarioId, seed: currentDailySeed, ts: Date.now(), day: sim.day,
+            score: g.score, grade: g.grade, reliability: sim.reliability,
+            clean: sim.renewableShare, marketShare: sim.marketShare, netWorth: sim.netWorth,
+          };
+          const { isBest, best } = recordScore(lastScore);
+          hud.overlayBestText = isBest
+            ? '🎉 个人新纪录！'
+            : `个人最佳：${best.grade}（${best.score.toFixed(0)} 分）· 本局 ${g.grade}（${g.score.toFixed(0)} 分）`;
+        } else {
+          sound.lose();
+        }
+      }
       wasGameOver = sim.gameOver;
     }
     renderer.clock = sim.clock;
+    renderer.hourOfDay = sim.hourOfDay;
+    renderer.weatherKind = sim.events.current;
     renderer.update(dt);
     if (hintTimer > 0) {
       hintTimer -= dt;

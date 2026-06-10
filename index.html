@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>电力世界 · PowerWorld</title>
     <style>
       :root {
@@ -42,6 +42,8 @@
       .freq-ok { color: var(--ok); }
       .freq-warn { color: var(--warn); }
       .freq-bad { color: var(--danger); }
+      /* 色盲友好配色：好=蓝、警=黄、坏=品红（避开红绿对比） */
+      body.colorblind { --ok: #38bdf8; --danger: #f472b6; --accent: #38bdf8; }
 
       /* 速度控制 */
       #speed { display: flex; gap: 4px; }
@@ -133,6 +135,22 @@
         padding: 11px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit; margin-bottom: 16px;
       }
       .menu-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      /* 存档区 */
+      .menu-saves { margin-bottom: 16px; display: flex; flex-direction: column; gap: 6px; }
+      .menu-sec-title { color: var(--text-dim); font-size: 11px; letter-spacing: 1px; }
+      .save-row { display: flex; gap: 6px; }
+      .save-load {
+        flex: 1; text-align: left; background: #15222e; color: var(--text); border: 1px solid var(--panel-border);
+        border-radius: 8px; padding: 8px 12px; cursor: pointer; font-family: inherit; font-size: 12px;
+      }
+      .save-load:hover { border-color: var(--accent); }
+      .save-load .save-ts { float: right; color: var(--text-dim); font-size: 11px; }
+      .save-mini {
+        background: #182431; color: var(--text); border: 1px solid var(--panel-border); border-radius: 8px;
+        padding: 6px 10px; cursor: pointer; font-family: inherit; font-size: 12px;
+      }
+      .save-mini:hover { border-color: var(--accent); }
+      .save-ts { color: var(--text-dim); font-size: 11px; }
       .menu-card {
         text-align: left; background: #141d28; color: var(--text); border: 1px solid var(--panel-border);
         border-radius: 10px; padding: 12px 14px; cursor: pointer; font-family: inherit;
@@ -151,6 +169,17 @@
         padding: 8px 16px; border-radius: 20px; font-size: 13px; animation: toastIn .25s ease;
       }
       @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; } }
+
+      /* 小屏 / 移动端适配：收窄面板、缩小字号、隐藏悬停检查器 */
+      @media (max-width: 760px) {
+        #topbar { height: 46px; gap: 8px; padding: 0 8px; font-size: 11px; }
+        #topbar .stat .v { font-size: 12px; }
+        #toolbar { width: 172px; max-height: 44vh; overflow-y: auto; padding: 6px; gap: 4px; left: 8px; bottom: 8px; }
+        #toolbar button { font-size: 10px; padding: 5px 6px; }
+        #log { width: 210px; max-height: 110px; font-size: 10px; right: 8px; bottom: 8px; }
+        #inspector { display: none !important; }
+        .menu-panel { padding: 16px; }
+      }
 
       /* 游戏结束遮罩 */
       #overlay {
@@ -180,7 +209,12 @@
       <h1 id="overlay-title"></h1>
       <div id="overlay-grade" style="font-size:40px;font-weight:700;letter-spacing:2px"></div>
       <p id="overlay-text"></p>
-      <button id="overlay-btn" onclick="location.reload()">再来一局</button>
+      <div id="overlay-best" style="color:var(--text-dim);font-size:13px"></div>
+      <div style="display:flex;gap:10px">
+        <button id="overlay-share" style="display:none;background:#182431;color:var(--text);border:1px solid var(--panel-border)">📋 复制成绩</button>
+        <button id="overlay-continue" style="display:none;background:#182431;color:var(--text);border:1px solid var(--panel-border)">∞ 继续经营</button>
+        <button id="overlay-btn" onclick="location.reload()">再来一局</button>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

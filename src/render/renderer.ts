@@ -7,16 +7,31 @@ import { PLANTS, VOLTAGE, STORAGE, KEY_ACCOUNTS } from '../config/components';
 
 const TILE = 30; // 每瓦片像素
 
+// 标签样式缓存（避免每帧 new TextStyle 的分配）
+const LABEL_STYLE = new TextStyle({ fontFamily: 'monospace', fontSize: 11, fill: 0xcfe3f2 });
+
+/** 煤电烟雾粒子 */
+interface Smoke {
+  x: number; y: number; // 世界像素
+  vx: number; vy: number;
+  age: number; // 0..1
+}
+
 export class Renderer {
   app = new Application();
   private world = new Container();
   private gridLayer = new Graphics();
+  private resourceLayer = new Graphics(); // 资源热力覆盖（选中风/光/水电工具时显示）
   private lineLayer = new Graphics();
   private flowLayer = new Graphics();
   private busLayer = new Graphics();
+  private smokeLayer = new Graphics();
   private labelLayer = new Container();
+  private ambientLayer = new Graphics(); // 屏幕空间：昼夜/天气色调滤镜
   private labels = new Map<number, Text>(); // busId -> Text
   private flowPhase = new Map<number, number>(); // lineId -> 0..1
+  private smokes: Smoke[] = [];
+  private lightningTimer = 0; // 风暴闪电计时
 
   // 相机
   private camX = 0;
@@ -32,6 +47,9 @@ export class Renderer {
   n1Subs = new Set<number>();
   categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
   clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
+  colorblind = false; // 色盲友好配色（负载色阶避开红绿对比）
+  hourOfDay = 12; // 当前一天中的小时（昼夜色调用，由外部每帧写入）
+  weatherKind = 'clear'; // 当前天气事件种类（天气滤镜用）
 
   constructor(private grid: Grid) {}
 
@@ -45,8 +63,9 @@ export class Renderer {
     });
     parent.appendChild(this.app.canvas);
 
-    this.world.addChild(this.gridLayer, this.lineLayer, this.flowLayer, this.busLayer, this.labelLayer);
+    this.world.addChild(this.gridLayer, this.resourceLayer, this.lineLayer, this.flowLayer, this.smokeLayer, this.busLayer, this.labelLayer);
     this.app.stage.addChild(this.world);
+    this.app.stage.addChild(this.ambientLayer); // 屏幕空间滤镜在最上层（不随相机移动）
 
     // 初始相机：让世界大致居中
     this.camX = 80;
@@ -78,6 +97,26 @@ export class Renderer {
     // 缩放后保持光标下的世界点不动
     this.camX += (after.x - before.x) * TILE * this.zoom;
     this.camY += (after.y - before.y) * TILE * this.zoom;
+    this.applyCamera();
+  }
+
+  /** 自动取景：缩放/平移相机让整张电网（含边距）适配屏幕 */
+  fitView(): void {
+    const buses = [...this.grid.buses.values()];
+    const w = this.app.screen.width;
+    const h = this.app.screen.height;
+    if (!buses.length) { this.camX = 80; this.camY = 90; this.zoom = 1; this.applyCamera(); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const b of buses) {
+      minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x);
+      minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y);
+    }
+    const pad = 4; // 边距（瓦片）
+    const bw = (maxX - minX + pad * 2) * TILE;
+    const bh = (maxY - minY + pad * 2) * TILE;
+    this.zoom = Math.max(0.4, Math.min(1.8, Math.min(w / Math.max(bw, 1), (h - 80) / Math.max(bh, 1))));
+    this.camX = w / 2 - ((minX + maxX) / 2) * TILE * this.zoom;
+    this.camY = (h + 52) / 2 - ((minY + maxY) / 2) * TILE * this.zoom; // 顶栏补偿
     this.applyCamera();
   }
 
@@ -123,9 +162,36 @@ export class Renderer {
   private drawBackgroundGrid(): void {
     const g = this.gridLayer;
     g.clear();
+    // 地形底图：水域/山地/森林用低饱和色块（资源图层让"选址"有了地理意义）
+    const TERRAIN_COLOR: Record<string, number> = { water: 0x0d1d33, hill: 0x1a212c, forest: 0x101d15 };
     for (let x = -2; x <= 60; x++) {
       for (let y = -2; y <= 36; y++) {
+        const kind = this.grid.terrain.kind(x, y);
+        const c = TERRAIN_COLOR[kind];
+        if (c != null) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color: c, alpha: 0.85 });
         g.circle(x * TILE, y * TILE, 1).fill({ color: 0x16212d, alpha: 0.8 });
+      }
+    }
+  }
+
+  /** 地形种子变化后（开新局/读档）重绘底图 */
+  refreshTerrain(): void {
+    this.drawBackgroundGrid();
+  }
+
+  /** 资源热力覆盖：选中风/光/水电建造工具时展示对应资源分布（亮=优质场址） */
+  setResourceOverlay(kind: 'wind' | 'solar' | 'hydro' | null): void {
+    const g = this.resourceLayer;
+    g.clear();
+    if (!kind) return;
+    const color = kind === 'wind' ? 0x4ade80 : kind === 'solar' ? 0xf2c94c : 0x38bdf8;
+    const range: Record<string, [number, number]> = { wind: [0.8, 1.2], solar: [0.85, 1.15], hydro: [0.85, 1.15] };
+    const [lo, hi] = range[kind];
+    for (let x = 0; x <= 58; x++) {
+      for (let y = 0; y <= 34; y++) {
+        const q = this.grid.terrain.siteQuality(kind, x, y);
+        const t = Math.max(0, Math.min(1, (q - lo) / (hi - lo)));
+        if (t > 0.05) g.rect(x * TILE - TILE / 2, y * TILE - TILE / 2, TILE, TILE).fill({ color, alpha: 0.04 + t * 0.22 });
       }
     }
   }
@@ -134,7 +200,66 @@ export class Renderer {
   update(dtSec: number): void {
     this.drawLines(dtSec);
     this.drawBuses();
+    this.updateSmoke(dtSec);
     this.syncLabels();
+    this.drawAmbient(dtSec);
+  }
+
+  /** 昼夜色调 + 天气滤镜（屏幕空间，轻量低饱和） */
+  private drawAmbient(dtSec: number): void {
+    const g = this.ambientLayer;
+    g.clear();
+    const w = this.app.screen.width, h = this.app.screen.height;
+    // 昼夜：夜里罩深蓝、黎明/黄昏带暖色
+    const hr = this.hourOfDay;
+    const dayness = Math.max(0, Math.min(1, (Math.cos(((hr - 13) / 24) * 2 * Math.PI) + 0.5) * 1.2)); // 13 点最亮
+    const nightAlpha = (1 - dayness) * 0.22;
+    if (nightAlpha > 0.01) g.rect(0, 0, w, h).fill({ color: 0x0a1228, alpha: nightAlpha });
+    const dusk = Math.max(0, 1 - Math.abs(hr - 6.5) / 1.5) + Math.max(0, 1 - Math.abs(hr - 18.5) / 1.5);
+    if (dusk > 0.02) g.rect(0, 0, w, h).fill({ color: 0xff9a4d, alpha: dusk * 0.05 });
+    // 天气滤镜
+    const tints: Record<string, [number, number]> = {
+      heatwave: [0xff7733, 0.06], coldsnap: [0x9cc8ff, 0.08], overcast: [0x6b7886, 0.12], calm: [0x8896a6, 0.05], storm: [0x4a5666, 0.16],
+    };
+    const t = tints[this.weatherKind];
+    if (t) g.rect(0, 0, w, h).fill({ color: t[0], alpha: t[1] });
+    // 风暴闪电：随机短促白闪
+    if (this.weatherKind === 'storm') {
+      this.lightningTimer -= dtSec;
+      if (this.lightningTimer <= 0) this.lightningTimer = 1.5 + Math.random() * 4;
+      if (this.lightningTimer < 0.1) g.rect(0, 0, w, h).fill({ color: 0xffffff, alpha: 0.18 });
+    }
+  }
+
+  /** 煤/燃气电厂烟雾粒子：出力越大烟越多（与"临近污染压口碑"机制视觉呼应） */
+  private updateSmoke(dtSec: number): void {
+    // 生成
+    for (const gen of this.grid.gens.values()) {
+      if (gen.output < 1) continue;
+      const co2Heavy = gen.type === 'coal' ? 1 : gen.type === 'gas' ? 0.35 : 0;
+      if (co2Heavy === 0) continue;
+      const bus = this.grid.buses.get(gen.busId);
+      if (!bus || bus.underConstruction) continue;
+      const rate = (gen.output / gen.capacity) * co2Heavy * 6; // 粒子/秒
+      if (Math.random() < rate * dtSec && this.smokes.length < 140) {
+        this.smokes.push({
+          x: bus.x * TILE + (Math.random() - 0.5) * 8,
+          y: bus.y * TILE - 12,
+          vx: (Math.random() - 0.2) * 6,
+          vy: -14 - Math.random() * 8,
+          age: 0,
+        });
+      }
+    }
+    // 推进 + 绘制
+    const g = this.smokeLayer;
+    g.clear();
+    this.smokes = this.smokes.filter((s) => (s.age += dtSec / 2.6) < 1);
+    for (const s of this.smokes) {
+      s.x += s.vx * dtSec;
+      s.y += s.vy * dtSec;
+      g.circle(s.x, s.y, 2 + s.age * 5).fill({ color: 0x8a949e, alpha: 0.16 * (1 - s.age) });
+    }
   }
 
   private drawLines(dtSec: number): void {
@@ -168,7 +293,7 @@ export class Renderer {
       }
       // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
-      const color = loadColor(load);
+      const color = loadColor(load, this.colorblind);
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
 
       // 流动粒子（潮流方向：正=from→to）
@@ -247,6 +372,21 @@ export class Renderer {
 
       if (bus.kind === 'plant') {
         g.rect(cx - r, cy - r, r * 2, r * 2).fill({ color, alpha }).stroke({ width: 1.5, color: 0x0b1016 });
+        // 风机叶片动画：转速 ∝ 当前风况可用度
+        if (gen0?.type === 'wind' && !bus.underConstruction) {
+          const speed = 0.5 + gen0.availability * 5;
+          const ang = (this.clock * speed) % (Math.PI * 2);
+          for (let k = 0; k < 3; k++) {
+            const a = ang + (k * 2 * Math.PI) / 3;
+            g.moveTo(cx, cy).lineTo(cx + Math.cos(a) * r * 0.85, cy + Math.sin(a) * r * 0.85)
+              .stroke({ width: 2, color: 0xeafff8, alpha: 0.9 * alpha });
+          }
+          g.circle(cx, cy, 2).fill({ color: 0xeafff8, alpha });
+        }
+        // 光伏正午高亮：板面反光随太阳角度
+        if (gen0?.type === 'solar' && !bus.underConstruction && gen0.availability > 0.05) {
+          g.rect(cx - r + 2, cy - r + 2, (r * 2 - 4) * gen0.availability, 3).fill({ color: 0xfff7cc, alpha: 0.8 * alpha });
+        }
       } else if (bus.kind === 'load') {
         // 用一个房子状的多边形表示负荷
         g.poly([cx - r, cy + r, cx - r, cy - r * 0.3, cx, cy - r, cx + r, cy - r * 0.3, cx + r, cy + r])
@@ -268,13 +408,12 @@ export class Renderer {
 
   /** 维护每个母线下方的文字标签（缓存复用，按需增删） */
   private syncLabels(): void {
-    const style = new TextStyle({ fontFamily: 'monospace', fontSize: 11, fill: 0xcfe3f2 });
     const alive = new Set<number>();
     for (const bus of this.grid.buses.values()) {
       alive.add(bus.id);
       let t = this.labels.get(bus.id);
       if (!t) {
-        t = new Text({ text: '', style });
+        t = new Text({ text: '', style: LABEL_STYLE.clone() });
         t.anchor.set(0.5, 0);
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
@@ -301,7 +440,14 @@ export class Renderer {
 }
 
 // —— 辅助绘制/着色 ——
-function loadColor(load: number): number {
+function loadColor(load: number, colorblind = false): number {
+  if (colorblind) {
+    // 色盲友好：蓝(轻载)→黄(中)→橙(重)→白(过载)，避开红绿对比
+    if (load < 0.6) return 0x38bdf8;
+    if (load < 0.85) return 0xf2c94c;
+    if (load < 1.0) return 0xf97316;
+    return 0xffffff;
+  }
   if (load < 0.6) return 0x38d39f; // 绿
   if (load < 0.85) return 0xf2c94c; // 黄
   if (load < 1.0) return 0xf2994a; // 橙
@@ -313,7 +459,7 @@ function busCategory(grid: Grid, bus: Bus): string | null {
   if (bus.kind === 'plant') {
     const g = grid.gensAtBus(bus.id)[0];
     if (!g) return null;
-    if (g.type === 'wind' || g.type === 'solar') return 'renewable';
+    if (g.type === 'wind' || g.type === 'solar' || g.type === 'hydro' || g.type === 'biomass') return 'renewable';
     if (g.type === 'nuclear') return 'nuclear';
     return 'thermal';
   }

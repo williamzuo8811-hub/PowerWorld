@@ -166,7 +166,109 @@ export const SCENARIOS: Scenario[] = [
       sim.log('info', '【商海争锋】强敌环伺——保供留客、做大市占、反挖对手，撑到第 16 天。');
     },
   },
+  {
+    id: 'fullyear',
+    name: '⑧ 周年大考',
+    brief: '完整经历春夏秋冬一整年（24 天）：盛夏制冷峰、深冬采暖峰与气价飙升、季节检修窗口、丰枯来水轮替。撑过一整年且可靠性≥90%。',
+    hint: '看「季节」与「预报」排兵布阵：换季淡季检修、迎峰前补容量、冬季少靠水电与燃气、夏季多晒光伏。',
+    goals: '高星级 = 跨全年四季的稳定可靠 + 盈利 + 清洁 + 口碑（长周期经营的试金石）',
+    setup(sim) {
+      sim.money = 1_600_000;
+      sim.goalDay = 24; // 一整年
+      sim.goalReliability = 0.9;
+      const g = sim.grid;
+      g.addLoad(15, 5, 'residential', 30, '城北居民', 0.0035);
+      g.addLoad(19, 12, 'commercial', 26, '中央商务区', 0.004);
+      g.addLoad(8, 13, 'industrial', 34, '工业走廊', 0.003);
+      g.addLoad(24, 8, 'residential', 22, '城东新区', 0.004);
+      const coal = g.addPlant('coal', 5, 6).bus;
+      const gas = g.addPlant('gas', 7, 4).bus;
+      const sub = g.addSubstation(12, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.log('info', '【周年大考】完整一年四季——盛夏与深冬是两道大关，提前看预报与迎峰预警。');
+    },
+  },
+  {
+    id: 'endless',
+    name: '∞ 无尽经营',
+    brief: '没有终点的生涯模式：城市持续成长、四季循环、对手演化、政策更迭。唯一的失败是破产。每年给出经营年报，看你能把电力帝国带到多远。',
+    hint: '无尽模式：无通关日，但会破产！稳健扩张、留足现金流，用年报检视长期经营曲线。',
+    goals: '长期目标：跨年稳定 S 级 · 市占主导 · 全面清洁化 · 科技点满',
+    setup(sim) {
+      sim.money = 950_000;
+      sim.goalDay = Infinity; // 无终点
+      sim.goalReliability = 0.9;
+      const g = sim.grid;
+      g.addLoad(14, 4, 'residential', 26, '老城居民', 0.0045);
+      g.addLoad(17, 12, 'commercial', 22, '商业街', 0.005);
+      g.addLoad(7, 14, 'industrial', 32, '工业园', 0.0038);
+      const coal = g.addPlant('coal', 5, 5).bus;
+      const sub = g.addSubstation(10, 8, '中心变电站');
+      g.addLine(coal.id, sub.id);
+      sim.log('info', '【无尽经营】城市会一直成长——唯一的失败是破产。祝你基业长青。');
+    },
+  },
 ];
+
+// —— 每日挑战：以"当天日期"为种子生成同一张图——今天所有玩家面对同一道题 ——
+/** mulberry32：小巧的确定性伪随机数发生器 */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 当天的日期种子（UTC，全球同一题面） */
+export function dailySeed(date = new Date()): number {
+  return date.getUTCFullYear() * 10000 + (date.getUTCMonth() + 1) * 100 + date.getUTCDate();
+}
+
+/** 用种子确定性生成每日挑战的题面（导出供测试） */
+export function setupDaily(sim: Simulation, seed: number): void {
+  const rnd = mulberry32(seed);
+  sim.grid.setTerrainSeed(seed); // 当日地形/资源图也由日期种子决定
+  const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
+  sim.money = 850_000 + Math.floor(rnd() * 5) * 100_000;
+  sim.goalDay = 12 + Math.floor(rnd() * 5); // 12~16 天
+  sim.goalReliability = 0.9;
+  sim.clock = Math.floor(rnd() * 24) * 24; // 随机开局季节
+  const g = sim.grid;
+  // 3~5 个城区：类型/位置/规模随机但当天确定
+  const n = 3 + Math.floor(rnd() * 3);
+  const profiles = ['residential', 'commercial', 'industrial'] as const;
+  for (let i = 0; i < n; i++) {
+    const p = pick([...profiles]);
+    const name = `${['城东', '城南', '城西', '城北', '新区'][i % 5]}${p === 'residential' ? '居民' : p === 'commercial' ? '商圈' : '工业'}`;
+    g.addLoad(8 + Math.floor(rnd() * 22), 3 + Math.floor(rnd() * 13), p, 18 + Math.floor(rnd() * 22), name, 0.003 + rnd() * 0.003);
+  }
+  // 起步电源：煤或气 + 中心变电站
+  const starter = pick(['coal', 'gas'] as const);
+  const plant = g.addPlant(starter, 4 + Math.floor(rnd() * 3), 4 + Math.floor(rnd() * 4)).bus;
+  const sub = g.addSubstation(12 + Math.floor(rnd() * 6), 7 + Math.floor(rnd() * 4), '中心变电站');
+  g.addLine(plant.id, sub.id);
+  // 当天的"风味"扰动：燃料起价 / 碳价倍率小幅随机
+  sim.fuelPrice.coal = 0.8 + rnd() * 0.5;
+  sim.fuelPrice.gas = 0.8 + rnd() * 0.7;
+  sim.carbonPriceMult = 0.9 + rnd() * 0.8;
+  sim.log('info', `【每日挑战 #${seed}】今天所有玩家同一张图——撑到第 ${sim.goalDay} 天、可靠性≥90%，比比谁的评级高！`);
+}
+
+SCENARIOS.push({
+  id: 'daily',
+  name: `📅 每日挑战`,
+  brief: '以今天日期为种子生成的随机图——全球玩家同一题面。城区布局/起步电源/开局季节/燃料行情每天换新，挑战高星级通关。',
+  hint: '题面每天 0 点(UTC)刷新：先看城区分布与开局季节，再定电源组合。',
+  goals: '同一张图拼评级：S 级是今日满分答卷',
+  setup(sim) {
+    setupDaily(sim, dailySeed());
+  },
+});
 
 // 新手教程：手把手学会核心操作
 SCENARIOS.push({
@@ -179,6 +281,7 @@ SCENARIOS.push({
     sim.money = 600_000;
     sim.goalDay = Infinity;
     sim.goalReliability = 1;
+    sim.tech.points = 60; // 送研发点：教程最后一步教解锁科技
     const g = sim.grid;
     g.addPlant('coal', 5, 8); // 免费电厂（待连接）
     g.addLoad(16, 8, 'residential', 24, '居民区', 0); // 待接入的城区

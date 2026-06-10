@@ -5,10 +5,12 @@ import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
   CAPACITOR_Q, CAPACITOR_CAPEX, BACKUP_CAPEX, CONTRACT_DAYS, CONTRACT_DISCOUNT, KEY_ACCOUNTS,
 } from '../config/components';
+import { t } from '../i18n';
+import type { StringKey } from '../i18n/strings';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen'
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'hydro' | 'biomass' | 'battery' | 'pumped' | 'hydrogen'
   | 'datacenter' | 'transport' | 'petrochem' | 'mining'
   | 'maintenance' | 'ccs' | 'capacitor' | 'backup' | 'contract' | 'bulldoze';
 
@@ -23,6 +25,8 @@ const TOOLS: ToolDef[] = [
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·工期${PLANTS.wind.buildDays}天·看风` },
   { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·工期${PLANTS.solar.buildDays}天·白天` },
   { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·工期${PLANTS.nuclear.buildDays}天·基荷` },
+  { id: 'hydro', label: `■ 水电 ${PLANTS.hydro.capacity}MW`, sub: `¥${fmt(PLANTS.hydro.capex)}·工期${PLANTS.hydro.buildDays}天·清洁可调·看来水` },
+  { id: 'biomass', label: `■ 生物质 ${PLANTS.biomass.capacity}MW`, sub: `¥${fmt(PLANTS.biomass.capex)}·工期${PLANTS.biomass.buildDays}天·清洁基荷` },
   { id: 'battery', label: `▰ 电池 ${STORAGE.battery.powerRating}MW`, sub: `¥${fmt(STORAGE.battery.capex)}·4h·工期${STORAGE.battery.buildDays}天` },
   { id: 'pumped', label: `▰ 抽蓄 ${STORAGE.pumped.powerRating}MW`, sub: `¥${fmt(STORAGE.pumped.capex)}·12h·工期${STORAGE.pumped.buildDays}天` },
   { id: 'hydrogen', label: `▰ 氢储 ${STORAGE.hydrogen.powerRating}MW`, sub: `¥${fmt(STORAGE.hydrogen.capex)}·60h·工期${STORAGE.hydrogen.buildDays}天` },
@@ -38,14 +42,14 @@ const TOOLS: ToolDef[] = [
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },
 ];
 
-// 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏
-const TOOL_GROUPS: { label: string; ids: ToolId[]; collapsed?: boolean }[] = [
-  { label: '电网', ids: ['line', 'substation', 'capacitor'] },
-  { label: '电源', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear'] },
-  { label: '储能', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
-  { label: '大客户', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
-  { label: '改造 / 合约', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },
-  { label: '其他', ids: ['inspect', 'bulldoze'] },
+// 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏（标签走 i18n 字符串表）
+const TOOL_GROUPS: { labelKey: StringKey; ids: ToolId[]; collapsed?: boolean }[] = [
+  { labelKey: 'grp_grid', ids: ['line', 'substation', 'capacitor'] },
+  { labelKey: 'grp_source', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass'] },
+  { labelKey: 'grp_storage', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
+  { labelKey: 'grp_key', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
+  { labelKey: 'grp_retrofit', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },
+  { labelKey: 'grp_misc', ids: ['inspect', 'bulldoze'] },
 ];
 const TOOL_BY_ID = new Map(TOOLS.map((t) => [t.id, t]));
 
@@ -62,6 +66,11 @@ export class Hud {
   onIRP?: () => void; // 长期规划压力测试面板按钮回调
   onPortfolio?: () => void; // 能源品类统计面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
+  onSettings?: () => void; // 设置面板回调
+  onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
+  onShareScore?: () => void; // 复制战绩文本回调
+  onToolChange?: (id: ToolId) => void; // 工具切换回调（资源覆盖联动）
+  overlayBestText: string | null = null; // 结束遮罩上的"个人最佳"说明（由 main 在胜利时设置）
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
 
@@ -85,7 +94,7 @@ export class Hud {
     this.buildTopbar();
     this.buildToolbar();
     this.logEl = document.getElementById('log')!;
-    this.logEl.innerHTML = `<div class="title">事件日志</div><div id="log-body"></div>`;
+    this.logEl.innerHTML = `<div class="title">${t('log_title')}</div><div id="log-body"></div>`;
     this.inspectorEl = document.getElementById('inspector')!;
     this.hintEl = document.getElementById('hint')!;
     this.tutorialEl = document.getElementById('tutorial')!;
@@ -99,34 +108,18 @@ export class Hud {
   private buildTopbar(): void {
     const bar = document.getElementById('topbar')!;
     bar.innerHTML = '';
-    const add = (key: string, label: string) => {
+    const add = (key: string) => {
       const wrap = document.createElement('div');
       wrap.className = 'stat';
-      wrap.innerHTML = `<span class="k">${label}</span><span class="v" id="stat-${key}">—</span>`;
+      wrap.title = t(`tip_${key}` as StringKey);
+      wrap.innerHTML = `<span class="k">${t(`stat_${key}` as StringKey)}</span><span class="v" id="stat-${key}">—</span>`;
       bar.appendChild(wrap);
       this.statVals.set(key, wrap.querySelector('.v')!);
     };
-    add('money', '资金');
-    add('networth', '净资产');
-    add('time', '时间');
-    add('freq', '频率');
-    add('volt', '电压');
-    add('balance', '发电 / 需求');
-    add('price', '现货电价');
-    add('loss', '线损');
-    add('reliab', '可靠性');
-    add('co2', '碳排');
-    add('green', '清洁占比');
-    add('rep', '口碑');
-    add('share', '市占');
-    add('commit', '机组');
-    add('resil', '韧性');
-    add('cycle', '景气');
-    add('season', '季节');
-    add('weather', '天气');
-    add('rp', '研发点');
-    add('grade', '评级');
-    add('goal', '目标');
+    for (const key of ['money', 'networth', 'time', 'freq', 'volt', 'balance', 'price', 'loss', 'reliab', 'co2',
+      'green', 'rep', 'share', 'commit', 'resil', 'cycle', 'season', 'weather', 'forecast', 'policy', 'rp', 'grade', 'goal']) {
+      add(key);
+    }
 
     const spacer = document.createElement('div');
     spacer.className = 'spacer';
@@ -148,28 +141,30 @@ export class Hud {
     const sys = document.createElement('div');
     sys.id = 'speed';
     const researchBtn = document.createElement('button');
-    researchBtn.textContent = '🔬'; researchBtn.title = '研发 / 科技树'; researchBtn.onclick = () => this.onResearch?.();
+    researchBtn.textContent = '🔬'; researchBtn.title = t('btn_research'); researchBtn.onclick = () => this.onResearch?.();
     const achvBtn = document.createElement('button');
-    achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
+    achvBtn.textContent = '🏆'; achvBtn.title = t('btn_achievements'); achvBtn.onclick = () => this.onAchievements?.();
     const econBtn = document.createElement('button');
-    econBtn.textContent = '💹'; econBtn.title = '投资对比（工期/度电成本/回本）'; econBtn.onclick = () => this.onEconomics?.();
+    econBtn.textContent = '💹'; econBtn.title = t('btn_economics'); econBtn.onclick = () => this.onEconomics?.();
     const finBtn = document.createElement('button');
-    finBtn.textContent = '📊'; finBtn.title = '财务报表 / 贷款'; finBtn.onclick = () => this.onFinance?.();
+    finBtn.textContent = '📊'; finBtn.title = t('btn_finance'); finBtn.onclick = () => this.onFinance?.();
     const histBtn = document.createElement('button');
-    histBtn.textContent = '📈'; histBtn.title = '市场 / 财务走势'; histBtn.onclick = () => this.onHistory?.();
+    histBtn.textContent = '📈'; histBtn.title = t('btn_history'); histBtn.onclick = () => this.onHistory?.();
     const irpBtn = document.createElement('button');
-    irpBtn.textContent = '🧭'; irpBtn.title = '长期规划压力测试（IRP）'; irpBtn.onclick = () => this.onIRP?.();
+    irpBtn.textContent = '🧭'; irpBtn.title = t('btn_irp'); irpBtn.onclick = () => this.onIRP?.();
     const portfolioBtn = document.createElement('button');
-    portfolioBtn.textContent = '🗂'; portfolioBtn.title = '能源品类统计（资产组合）'; portfolioBtn.onclick = () => this.onPortfolio?.();
+    portfolioBtn.textContent = '🗂'; portfolioBtn.title = t('btn_portfolio'); portfolioBtn.onclick = () => this.onPortfolio?.();
     const n1Btn = document.createElement('button');
-    n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
+    n1Btn.textContent = 'N-1'; n1Btn.title = t('btn_n1'); n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
-    soundBtn.textContent = '🔊'; soundBtn.title = '音效开关'; soundBtn.onclick = () => this.onToggleSound?.();
+    soundBtn.textContent = '🔊'; soundBtn.title = t('btn_sound'); soundBtn.onclick = () => this.onToggleSound?.();
     this.soundBtn = soundBtn;
+    const settingsBtn = document.createElement('button');
+    settingsBtn.textContent = '⚙'; settingsBtn.title = t('btn_settings'); settingsBtn.onclick = () => this.onSettings?.();
     const saveBtn = document.createElement('button');
-    saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
+    saveBtn.textContent = '💾'; saveBtn.title = t('btn_save'); saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
-    menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
+    menuBtn.textContent = '☰'; menuBtn.title = t('btn_menu'); menuBtn.onclick = () => this.onMenu?.();
     sys.appendChild(researchBtn);
     sys.appendChild(achvBtn);
     sys.appendChild(econBtn);
@@ -179,6 +174,7 @@ export class Hud {
     sys.appendChild(portfolioBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
+    sys.appendChild(settingsBtn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
     bar.appendChild(sys);
@@ -188,13 +184,13 @@ export class Hud {
 
   private buildToolbar(): void {
     const tb = document.getElementById('toolbar')!;
-    tb.innerHTML = '<div class="title">建造工具（数字键 1-9 · 点分类标题折叠）</div>';
+    tb.innerHTML = `<div class="title">${t('toolbar_title')}</div>`;
     this.toolBtns.clear();
     TOOL_GROUPS.forEach((grp, gi) => {
       const collapsed = this.collapsedGroups.has(gi);
       const header = document.createElement('div');
       header.className = 'tool-group';
-      header.textContent = `${collapsed ? '▸' : '▾'} ${grp.label}`;
+      header.textContent = `${collapsed ? '▸' : '▾'} ${t(grp.labelKey)}`;
       header.onclick = () => {
         if (this.collapsedGroups.has(gi)) this.collapsedGroups.delete(gi);
         else this.collapsedGroups.add(gi);
@@ -217,6 +213,7 @@ export class Hud {
 
   setTool(id: ToolId): void {
     this.currentTool = id;
+    this.onToolChange?.(id);
     // 若所选工具在折叠分类内，展开它以便看到高亮
     const gi = TOOL_GROUPS.findIndex((g) => g.ids.includes(id));
     if (gi >= 0 && this.collapsedGroups.has(gi)) {
@@ -302,10 +299,14 @@ export class Hud {
     this.set('season', `${seasonIcon[s.season] ?? ''}${s.season} +${(s.seasonFactor * 100 - 100).toFixed(0)}%`,
       s.season === '夏' || s.season === '冬' ? 'freq-warn' : '');
     this.set('weather', s.weather, s.demandFactor > 1.05 ? 'freq-warn' : '');
+    this.set('forecast', s.forecast ?? '—', s.forecast && !s.forecast.startsWith('☀') ? 'freq-warn' : '');
+    this.set('policy', s.policy ?? '常态', s.policy ? 'freq-warn' : '');
     this.set('rp', `${s.researchPoints.toFixed(0)}`);
     this.set('grade', `${s.grade} · ${s.gradeScore.toFixed(0)}`,
       s.gradeScore >= 75 ? 'freq-ok' : s.gradeScore >= 45 ? 'freq-warn' : 'freq-bad');
-    this.set('goal', s.sandbox ? '★ 沙盒模式' : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
+    this.set('goal', s.sandbox ? '★ 沙盒模式'
+      : !isFinite(s.goalDay) ? '∞ 无尽经营 · 别破产'
+        : `撑到第${s.goalDay}天·可靠性≥${(s.goalReliability * 100).toFixed(0)}%`);
 
     const body = document.getElementById('log-body');
     if (body) {
@@ -331,6 +332,24 @@ export class Hud {
     if (ov.style.display === 'flex') return;
     ov.style.display = 'flex';
     document.getElementById('overlay-title')!.textContent = s.win ? '🏆 通关！' : '💸 破产了';
+    // 胜利后可选择转入无尽模式继续经营
+    const cont = document.getElementById('overlay-continue') as HTMLButtonElement | null;
+    if (cont) {
+      cont.style.display = s.win ? 'inline-block' : 'none';
+      cont.onclick = () => { ov.style.display = 'none'; this.onContinueAfterWin?.(); };
+    }
+    // 复制战绩（仅胜利时）+ 个人最佳说明
+    const share = document.getElementById('overlay-share') as HTMLButtonElement | null;
+    if (share) {
+      share.style.display = s.win ? 'inline-block' : 'none';
+      share.onclick = () => {
+        this.onShareScore?.();
+        share.textContent = '✅ 已复制';
+        setTimeout(() => { share.textContent = '📋 复制成绩'; }, 1800);
+      };
+    }
+    const bestEl = document.getElementById('overlay-best');
+    if (bestEl) bestEl.textContent = s.win ? (this.overlayBestText ?? '') : '';
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };

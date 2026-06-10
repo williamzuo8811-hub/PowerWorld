@@ -52,8 +52,8 @@ describe('资产并购（吸收竞争对手为自有商船队）', () => {
     sim.money = 1_000_000_000;
     // 构造可控市场：自有装机 100MW（商船队注入），两家对手 A=100 / B=200
     sim.competitors.length = 0;
-    sim.competitors.push({ name: 'A', capacity: 100, marginalCost: 20, base: 100 });
-    sim.competitors.push({ name: 'B', capacity: 200, marginalCost: 30, base: 200 });
+    sim.competitors.push({ name: 'A', capacity: 100, marginalCost: 20, base: 100, mcBase: 20, style: 'coal' });
+    sim.competitors.push({ name: 'B', capacity: 200, marginalCost: 30, base: 200, mcBase: 30, style: 'coal' });
     sim.mergedCapacity.push({ mw: 100, marginalCost: 25 }); // 全网装机 = 100+100+200 = 400
 
     const qA = sim.acquisitionQuote(0)!; // 并 A：市占 (100+100)/400 = 0.50（补救区间）

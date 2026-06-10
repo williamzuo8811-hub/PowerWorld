@@ -3,15 +3,28 @@ import { Simulation } from './simulation';
 import { AS_PRICE_MIN, AS_PRICE_MAX, AS_REG_PRICE_BASE } from '../config/components';
 
 describe('辅助服务竞价出清', () => {
-  it('玩家增加快速容量(储能)拉低调频出清价', () => {
+  it('玩家增加快速容量(储能·投标调频策略)拉低调频出清价', () => {
     function regPrice(nBatteries: number): number {
       const sim = new Simulation();
       sim.forcedOutages = false;
+      sim.storageStrategy = 'reg'; // 储能须选择"投标调频"策略才计入调频供给
       for (let k = 0; k < nBatteries; k++) sim.grid.addBattery(k, 0, 'battery');
       sim.tick(0.05, 600);
       return sim.regPrice;
     }
     expect(regPrice(0)).toBeGreaterThan(regPrice(20)); // 大量储能 → 调频供给充裕 → 价低
+  });
+
+  it('储能选择"专注套利"策略时不计入调频供给', () => {
+    function regPrice(strategy: 'arb' | 'reg'): number {
+      const sim = new Simulation();
+      sim.forcedOutages = false;
+      sim.storageStrategy = strategy;
+      for (let k = 0; k < 20; k++) sim.grid.addBattery(k, 0, 'battery');
+      sim.tick(0.05, 600);
+      return sim.regPrice;
+    }
+    expect(regPrice('arb')).toBeGreaterThan(regPrice('reg')); // 不投标 → 供给少 → 价高
   });
 
   it('增加闲置可调容量拉低备用出清价', () => {
