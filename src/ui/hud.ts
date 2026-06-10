@@ -5,6 +5,8 @@ import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
   CAPACITOR_Q, CAPACITOR_CAPEX, BACKUP_CAPEX, CONTRACT_DAYS, CONTRACT_DISCOUNT, KEY_ACCOUNTS,
 } from '../config/components';
+import { t } from '../i18n';
+import type { StringKey } from '../i18n/strings';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
@@ -40,14 +42,14 @@ const TOOLS: ToolDef[] = [
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },
 ];
 
-// 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏
-const TOOL_GROUPS: { label: string; ids: ToolId[]; collapsed?: boolean }[] = [
-  { label: '电网', ids: ['line', 'substation', 'capacitor'] },
-  { label: '电源', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass'] },
-  { label: '储能', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
-  { label: '大客户', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
-  { label: '改造 / 合约', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },
-  { label: '其他', ids: ['inspect', 'bulldoze'] },
+// 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏（标签走 i18n 字符串表）
+const TOOL_GROUPS: { labelKey: StringKey; ids: ToolId[]; collapsed?: boolean }[] = [
+  { labelKey: 'grp_grid', ids: ['line', 'substation', 'capacitor'] },
+  { labelKey: 'grp_source', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass'] },
+  { labelKey: 'grp_storage', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
+  { labelKey: 'grp_key', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
+  { labelKey: 'grp_retrofit', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },
+  { labelKey: 'grp_misc', ids: ['inspect', 'bulldoze'] },
 ];
 const TOOL_BY_ID = new Map(TOOLS.map((t) => [t.id, t]));
 
@@ -92,7 +94,7 @@ export class Hud {
     this.buildTopbar();
     this.buildToolbar();
     this.logEl = document.getElementById('log')!;
-    this.logEl.innerHTML = `<div class="title">事件日志</div><div id="log-body"></div>`;
+    this.logEl.innerHTML = `<div class="title">${t('log_title')}</div><div id="log-body"></div>`;
     this.inspectorEl = document.getElementById('inspector')!;
     this.hintEl = document.getElementById('hint')!;
     this.tutorialEl = document.getElementById('tutorial')!;
@@ -106,37 +108,18 @@ export class Hud {
   private buildTopbar(): void {
     const bar = document.getElementById('topbar')!;
     bar.innerHTML = '';
-    const add = (key: string, label: string, tip = '') => {
+    const add = (key: string) => {
       const wrap = document.createElement('div');
       wrap.className = 'stat';
-      if (tip) wrap.title = tip;
-      wrap.innerHTML = `<span class="k">${label}</span><span class="v" id="stat-${key}">—</span>`;
+      wrap.title = t(`tip_${key}` as StringKey);
+      wrap.innerHTML = `<span class="k">${t(`stat_${key}` as StringKey)}</span><span class="v" id="stat-${key}">—</span>`;
       bar.appendChild(wrap);
       this.statVals.set(key, wrap.querySelector('.v')!);
     };
-    add('money', '资金', '可支配现金。建造、燃料、运维、利息从这里扣；归零即破产（沙盒除外）。');
-    add('networth', '净资产', '净资产 = 现金 + 资产账面价值 − 负债。综合评级的"财务"维度看它。');
-    add('time', '时间', '游戏内时间。1x 速度下约 60 秒 = 1 天；一年 = 24 天（四季各约 6 天）。');
-    add('freq', '频率', '系统频率：50Hz = 供需平衡。发电不足频率下跌，低于 49Hz 触发低频减载（甩负荷停电）。');
-    add('volt', '电压', '主网电压（标幺值）。<0.95pu 欠压 = 无功不足（长线远供常见）——加电容器组或就近建电源。');
-    add('balance', '发电 / 需求', '当前总发电 vs 总需求 (MW)。长期发电跟不上需求 → 频率下跌、停电罚款。');
-    add('price', '现货电价', '随稀缺（备用率）与燃料波动的现货电价。峰时价格尖峰是调峰机组与储能的利润来源。');
-    add('loss', '线损', '输电损耗 ≈ R·I²。距离越远、线路越满、电压越低损耗越大——这是升压输电的意义。');
-    add('reliab', '可靠性', '供电充足率的滑动平均。低于关卡目标线则无法通关；也影响信用评级与大客户满意度。');
-    add('co2', '碳排', '当前碳排放速率。超过免费配额基准的部分要花钱买配额；还会压低口碑与 ESG。');
-    add('green', '清洁占比', '近零碳电源（风/光/核/水/生物质/深度CCS + 储能放电）的发电占比。综合评级维度之一。');
-    add('rep', '口碑', '公众形象 0-100：停电、碳强度、临近居民的火电污染都会压口碑；口碑高低改变等效电价 ±15%。');
-    add('share', '市占', '你在区域批发市场出清中的发电份额。市占越高，招商越容易、对手挖角越难。');
-    add('commit', '机组', '已并网/可调机组数。并网要付启动费且受最小开停机时间约束（机组组合）。');
-    add('resil', '韧性', '黑启动能力：有燃气/水电/带电储能作"种子"，全黑后约 15 分钟恢复；没有则需约 2 小时。');
-    add('cycle', '景气', '宏观经济周期：繁荣需求 +15%、衰退 −15%。衰退期建设、繁荣期收割是经典打法。');
-    add('season', '季节', '四季年度循环：盛夏制冷峰/深冬采暖峰；光伏夏强冬弱、风电冬强夏弱、水电夏丰冬枯。');
-    add('weather', '天气', '当前天气事件：热浪/寒潮抬需求，无风/阴雨压新能源，风暴损毁线路。');
-    add('forecast', '预报', '下一场天气事件的预报与倒计时——提前充储能、并机组、避开检修窗口。');
-    add('policy', '政策', '进行中的政策事件（绿色补贴/环保督查/加息/信贷紧缩/邻区短缺/经济火热），提前 24h 公示。');
-    add('rp', '研发点', '随送达电量积累的研发点，用于在 🔬 科技树解锁五条分支的增益。');
-    add('grade', '评级', '综合星级 S/A/B/C/D = 可靠性40% + 财务25% + 清洁20% + 口碑15%，实时更新。');
-    add('goal', '目标', '关卡通关条件。无尽模式没有终点——唯一的失败是破产。');
+    for (const key of ['money', 'networth', 'time', 'freq', 'volt', 'balance', 'price', 'loss', 'reliab', 'co2',
+      'green', 'rep', 'share', 'commit', 'resil', 'cycle', 'season', 'weather', 'forecast', 'policy', 'rp', 'grade', 'goal']) {
+      add(key);
+    }
 
     const spacer = document.createElement('div');
     spacer.className = 'spacer';
@@ -158,30 +141,30 @@ export class Hud {
     const sys = document.createElement('div');
     sys.id = 'speed';
     const researchBtn = document.createElement('button');
-    researchBtn.textContent = '🔬'; researchBtn.title = '研发 / 科技树'; researchBtn.onclick = () => this.onResearch?.();
+    researchBtn.textContent = '🔬'; researchBtn.title = t('btn_research'); researchBtn.onclick = () => this.onResearch?.();
     const achvBtn = document.createElement('button');
-    achvBtn.textContent = '🏆'; achvBtn.title = '成就'; achvBtn.onclick = () => this.onAchievements?.();
+    achvBtn.textContent = '🏆'; achvBtn.title = t('btn_achievements'); achvBtn.onclick = () => this.onAchievements?.();
     const econBtn = document.createElement('button');
-    econBtn.textContent = '💹'; econBtn.title = '投资对比（工期/度电成本/回本）'; econBtn.onclick = () => this.onEconomics?.();
+    econBtn.textContent = '💹'; econBtn.title = t('btn_economics'); econBtn.onclick = () => this.onEconomics?.();
     const finBtn = document.createElement('button');
-    finBtn.textContent = '📊'; finBtn.title = '财务报表 / 贷款'; finBtn.onclick = () => this.onFinance?.();
+    finBtn.textContent = '📊'; finBtn.title = t('btn_finance'); finBtn.onclick = () => this.onFinance?.();
     const histBtn = document.createElement('button');
-    histBtn.textContent = '📈'; histBtn.title = '市场 / 财务走势'; histBtn.onclick = () => this.onHistory?.();
+    histBtn.textContent = '📈'; histBtn.title = t('btn_history'); histBtn.onclick = () => this.onHistory?.();
     const irpBtn = document.createElement('button');
-    irpBtn.textContent = '🧭'; irpBtn.title = '长期规划压力测试（IRP）'; irpBtn.onclick = () => this.onIRP?.();
+    irpBtn.textContent = '🧭'; irpBtn.title = t('btn_irp'); irpBtn.onclick = () => this.onIRP?.();
     const portfolioBtn = document.createElement('button');
-    portfolioBtn.textContent = '🗂'; portfolioBtn.title = '能源品类统计（资产组合）'; portfolioBtn.onclick = () => this.onPortfolio?.();
+    portfolioBtn.textContent = '🗂'; portfolioBtn.title = t('btn_portfolio'); portfolioBtn.onclick = () => this.onPortfolio?.();
     const n1Btn = document.createElement('button');
-    n1Btn.textContent = 'N-1'; n1Btn.title = 'N-1 冗余校核'; n1Btn.onclick = () => this.onN1?.();
+    n1Btn.textContent = 'N-1'; n1Btn.title = t('btn_n1'); n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
-    soundBtn.textContent = '🔊'; soundBtn.title = '音效开关'; soundBtn.onclick = () => this.onToggleSound?.();
+    soundBtn.textContent = '🔊'; soundBtn.title = t('btn_sound'); soundBtn.onclick = () => this.onToggleSound?.();
     this.soundBtn = soundBtn;
     const settingsBtn = document.createElement('button');
-    settingsBtn.textContent = '⚙'; settingsBtn.title = '设置（音量/音乐/配色/缩放/快捷键）'; settingsBtn.onclick = () => this.onSettings?.();
+    settingsBtn.textContent = '⚙'; settingsBtn.title = t('btn_settings'); settingsBtn.onclick = () => this.onSettings?.();
     const saveBtn = document.createElement('button');
-    saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
+    saveBtn.textContent = '💾'; saveBtn.title = t('btn_save'); saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
-    menuBtn.textContent = '☰'; menuBtn.title = '菜单 / 关卡'; menuBtn.onclick = () => this.onMenu?.();
+    menuBtn.textContent = '☰'; menuBtn.title = t('btn_menu'); menuBtn.onclick = () => this.onMenu?.();
     sys.appendChild(researchBtn);
     sys.appendChild(achvBtn);
     sys.appendChild(econBtn);
@@ -201,13 +184,13 @@ export class Hud {
 
   private buildToolbar(): void {
     const tb = document.getElementById('toolbar')!;
-    tb.innerHTML = '<div class="title">建造工具（数字键 1-9 · 点分类标题折叠）</div>';
+    tb.innerHTML = `<div class="title">${t('toolbar_title')}</div>`;
     this.toolBtns.clear();
     TOOL_GROUPS.forEach((grp, gi) => {
       const collapsed = this.collapsedGroups.has(gi);
       const header = document.createElement('div');
       header.className = 'tool-group';
-      header.textContent = `${collapsed ? '▸' : '▾'} ${grp.label}`;
+      header.textContent = `${collapsed ? '▸' : '▾'} ${t(grp.labelKey)}`;
       header.onclick = () => {
         if (this.collapsedGroups.has(gi)) this.collapsedGroups.delete(gi);
         else this.collapsedGroups.add(gi);

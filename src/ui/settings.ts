@@ -1,5 +1,6 @@
-// 设置面板：音量/背景音乐/色盲配色/UI 缩放/自动存档 + 快捷键一览（复用 #panel）。
+// 设置面板：音量/背景音乐/色盲配色/UI 缩放/自动存档/语言 + 快捷键一览（复用 #panel）。
 // 设置持久化到 localStorage，启动时由 main 读取并应用。
+import { t, getLocale, setLocale, type Locale } from '../i18n';
 
 export interface GameSettings {
   volume: number; // 音效音量 0..1
@@ -37,13 +38,13 @@ export function applyGlobalSettings(s: GameSettings): void {
   (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale === 1 ? '' : String(s.uiScale);
 }
 
-const KEYMAP: [string, string][] = [
-  ['空格', '暂停 / 继续'],
-  ['1-9', '快速切换建造工具'],
-  ['Esc', '取消拉线 / 清除品类高亮'],
-  ['滚轮', '缩放地图'],
-  ['拖拽', '平移地图'],
-  ['H', '回到全图视角（适配电网范围）'],
+const KEYMAP: [string, () => string][] = [
+  ['Space', () => t('key_space')],
+  ['1-9', () => t('key_nums')],
+  ['Esc', () => t('key_esc')],
+  ['Wheel', () => t('key_wheel')],
+  ['Drag', () => t('key_drag')],
+  ['H', () => t('key_home')],
 ];
 
 export interface SettingsPanelOptions {
@@ -64,7 +65,7 @@ export class SettingsPanel {
     this.el.innerHTML = '';
     const panel = document.createElement('div');
     panel.className = 'menu-panel';
-    panel.innerHTML = `<h1>⚙ 设置</h1><p class="sub">音频 · 显示 · 存档 · 快捷键</p>`;
+    panel.innerHTML = `<h1>${t('set_title')}</h1><p class="sub">${t('set_sub')}</p>`;
 
     const emit = () => { saveSettings(s); applyGlobalSettings(s); o.onChange(s); };
 
@@ -85,12 +86,12 @@ export class SettingsPanel {
     vol.min = '0'; vol.max = '100'; vol.value = String(Math.round(s.volume * 100));
     vol.style.width = '180px';
     vol.oninput = () => { s.volume = parseInt(vol.value, 10) / 100; emit(); };
-    panel.appendChild(rowEl(`🔊 音效音量`, vol));
+    panel.appendChild(rowEl(t('set_volume'), vol));
 
     const toggle = (value: boolean, fn: (v: boolean) => void): HTMLButtonElement => {
       const b = document.createElement('button');
       const paint = (v: boolean) => {
-        b.textContent = v ? '开' : '关';
+        b.textContent = v ? t('set_on') : t('set_off');
         b.style.cssText = `background:${v ? 'var(--accent)' : '#182431'};color:${v ? '#04211a' : 'var(--text)'};border:1px solid var(--panel-border);border-radius:6px;padding:6px 18px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:700`;
       };
       paint(value);
@@ -99,9 +100,26 @@ export class SettingsPanel {
       return b;
     };
 
-    panel.appendChild(rowEl('🎵 氛围背景音乐（程序化合成）', toggle(s.music, (v) => { s.music = v; emit(); })));
-    panel.appendChild(rowEl('🎨 色盲友好配色（负载/状态色避开红绿）', toggle(s.colorblind, (v) => { s.colorblind = v; emit(); })));
-    panel.appendChild(rowEl('💾 自动存档（每游戏日，存入"自动存档"槽）', toggle(s.autosave, (v) => { s.autosave = v; emit(); })));
+    panel.appendChild(rowEl(t('set_music'), toggle(s.music, (v) => { s.music = v; emit(); })));
+    panel.appendChild(rowEl(t('set_colorblind'), toggle(s.colorblind, (v) => { s.colorblind = v; emit(); })));
+    panel.appendChild(rowEl(t('set_autosave'), toggle(s.autosave, (v) => { s.autosave = v; emit(); })));
+
+    // 语言切换（重新载入后生效；当前覆盖界面框架文案）
+    const langWrap = document.createElement('div');
+    langWrap.style.cssText = 'display:flex;gap:6px';
+    for (const [code, label] of [['zh', '中文'], ['en', 'English']] as [Locale, string][]) {
+      const b = document.createElement('button');
+      const on = getLocale() === code;
+      b.textContent = label;
+      b.style.cssText = `background:${on ? 'var(--accent)' : '#182431'};color:${on ? '#04211a' : 'var(--text)'};border:1px solid var(--panel-border);border-radius:6px;padding:6px 14px;cursor:pointer;font-family:inherit;font-size:12px`;
+      b.onclick = () => { setLocale(code); this.show(o); };
+      langWrap.appendChild(b);
+    }
+    panel.appendChild(rowEl(t('set_lang'), langWrap));
+    const langNote = document.createElement('div');
+    langNote.style.cssText = 'color:var(--text-dim);font-size:11px;padding:4px 0 0';
+    langNote.textContent = t('set_lang_note');
+    panel.appendChild(langNote);
 
     // UI 缩放
     const scaleWrap = document.createElement('div');
@@ -117,23 +135,23 @@ export class SettingsPanel {
       b.onclick = () => { s.uiScale = sc; emit(); this.show({ ...o, settings: s }); };
       scaleWrap.appendChild(b);
     }
-    panel.appendChild(rowEl('🖥 界面缩放', scaleWrap));
+    panel.appendChild(rowEl(t('set_uiscale'), scaleWrap));
 
     // 快捷键一览
     const head = document.createElement('div');
     head.className = 'menu-sec-title';
     head.style.margin = '16px 0 6px';
-    head.textContent = '⌨ 快捷键';
+    head.textContent = t('set_keys');
     panel.appendChild(head);
     const km = document.createElement('div');
     km.style.cssText = 'font-size:12px;line-height:1.9';
-    km.innerHTML = KEYMAP.map(([k, v]) => `<div style="display:flex;justify-content:space-between"><b style="color:var(--accent)">${k}</b><span style="color:var(--text-dim)">${v}</span></div>`).join('');
+    km.innerHTML = KEYMAP.map(([k, v]) => `<div style="display:flex;justify-content:space-between"><b style="color:var(--accent)">${k}</b><span style="color:var(--text-dim)">${v()}</span></div>`).join('');
     panel.appendChild(km);
 
     const close = document.createElement('button');
     close.className = 'menu-continue';
     close.style.marginTop = '16px';
-    close.textContent = '关闭';
+    close.textContent = t('set_close');
     close.onclick = () => o.onClose();
     panel.appendChild(close);
 
