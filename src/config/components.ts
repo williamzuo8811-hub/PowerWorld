@@ -123,6 +123,10 @@ export const MAINT_PEAK_FACTOR = 1.4; // 旺季检修成本系数（+40%）
 export const INSURANCE_RATE_PER_DAY = 0.0008; // 日保费 = 资产账面价值 × 此值
 export const INSURANCE_COVERAGE = 0.8; // 理赔覆盖比例（自付 20%）
 export const STORM_DAMAGE = 9_000; // 风暴损毁线路的维修成本
+// 季节性极端天气：夏季偏热浪/雷暴、冬季偏寒潮/无风/阴雨，旺季事件更强
+export const WEATHER_HEAT_SUMMER_BOOST = 4; // 夏季热浪权重增益
+export const WEATHER_COLD_WINTER_BOOST = 4; // 冬季寒潮权重增益
+export const WEATHER_SEASON_INTENSITY = 0.3; // 旺季热浪/寒潮的额外需求强度
 
 // —— 贷款 / 融资 ——
 // 工期长、capex 高 → 前期现金流紧张。举债可摊平，但要付利息；信用额度随资产规模上升。

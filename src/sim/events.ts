@@ -1,7 +1,10 @@
 // 天气与危机事件系统：给电网注入外部冲击，让储能/冗余/调峰的投资有了意义。
 // 事件改变全局需求系数、风/光出力上限，或直接损毁线路。
 import type { Simulation } from './simulation';
-import { STORM_DAMAGE } from '../config/components';
+import { seasonIntensity } from './profiles';
+import {
+  STORM_DAMAGE, WEATHER_HEAT_SUMMER_BOOST, WEATHER_COLD_WINTER_BOOST, WEATHER_SEASON_INTENSITY,
+} from '../config/components';
 
 export type WeatherKind = 'clear' | 'heatwave' | 'coldsnap' | 'calm' | 'overcast' | 'storm';
 
@@ -25,6 +28,27 @@ interface ActiveEvent {
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 function choice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/** 季节性天气权重：夏季偏热浪/雷暴，冬季偏寒潮/无风/阴雨。纯函数，便于测试。 */
+export function weatherWeights(summer: number, winter: number): [WeatherKind, number][] {
+  return [
+    ['heatwave', 1 + WEATHER_HEAT_SUMMER_BOOST * summer],
+    ['coldsnap', 1 + WEATHER_COLD_WINTER_BOOST * winter],
+    ['calm', 1.5 + 1.5 * winter], // 冬季静稳无风更常见
+    ['overcast', 1.5 + 1.0 * winter], // 冬季阴雨压制光伏
+    ['storm', 0.8 + 1.2 * summer], // 夏季对流雷暴更多
+  ];
+}
+
+export function weightedChoice(weights: [WeatherKind, number][]): WeatherKind {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  let r = Math.random() * total;
+  for (const [k, w] of weights) {
+    r -= w;
+    if (r <= 0) return k;
+  }
+  return weights[weights.length - 1][0];
 }
 
 export class EventSystem {
@@ -66,24 +90,24 @@ export class EventSystem {
     this.label = LABEL[this.current];
   }
 
-  /** 随机触发一场事件（storm 权重略低） */
+  /** 随机触发一场事件（权重随季节变化：夏偏热浪、冬偏寒潮） */
   private trigger(sim: Simulation): void {
-    const kind = choice<WeatherKind>([
-      'heatwave', 'heatwave', 'coldsnap', 'coldsnap', 'calm', 'calm', 'overcast', 'overcast', 'storm',
-    ]);
+    const { summer, winter } = seasonIntensity(sim.yearPhase);
+    const kind = weightedChoice(weatherWeights(summer, winter));
     this.triggerKind(sim, kind);
   }
 
-  /** 触发指定事件（随机也走这里，便于测试直接调用） */
+  /** 触发指定事件（随机也走这里，便于测试直接调用）；热浪/寒潮强度随季节放大 */
   triggerKind(sim: Simulation, kind: WeatherKind): void {
     const t = sim.clock;
+    const { summer, winter } = seasonIntensity(sim.yearPhase);
     switch (kind) {
       case 'heatwave':
-        this.active.push({ kind, endTime: t + rnd(5, 10), demandFactor: rnd(1.3, 1.6), windCap: 1, solarCap: 1 });
+        this.active.push({ kind, endTime: t + rnd(5, 10), demandFactor: rnd(1.3, 1.6) + WEATHER_SEASON_INTENSITY * summer, windCap: 1, solarCap: 1 });
         sim.log('warn', '🌡 热浪来袭：空调负荷激增，备好调峰电源！');
         break;
       case 'coldsnap':
-        this.active.push({ kind, endTime: t + rnd(5, 10), demandFactor: rnd(1.35, 1.65), windCap: 1, solarCap: 1 });
+        this.active.push({ kind, endTime: t + rnd(5, 10), demandFactor: rnd(1.35, 1.65) + WEATHER_SEASON_INTENSITY * winter, windCap: 1, solarCap: 1 });
         sim.log('warn', '❄ 寒潮来袭：取暖负荷激增，注意供需平衡！');
         break;
       case 'calm':
