@@ -83,6 +83,8 @@ export interface Load {
   served: number; // 本 tick 实际供电 (MW)
   growthPerHour: number; // 每仿真小时的复合增长率
   satisfaction?: number; // 客户满意度 0..1（供电充足率的滑动平均）—— 大客户流失判定
+  churnTimer?: number; // 低满意累积时长（仿真小时）—— 超阈值则流失
+  backup?: boolean; // 是否自备应急电源（UPS/柴发），兜底部分负荷、缓解停电
 }
 
 /** 线路（图的边）。可以是输电线，也可以是配电线，区别只在电压/容量/造价。 */

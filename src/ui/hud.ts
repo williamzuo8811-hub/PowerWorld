@@ -3,14 +3,14 @@
 import type { SimSnapshot, LogEntry } from '../sim/types';
 import {
   PLANTS, SUBSTATION_CAPEX, SUBSTATION_BUILD_DAYS, STORAGE, VOLTAGE, TIME_SCALES, FREQ_NOMINAL,
-  CAPACITOR_Q, CAPACITOR_CAPEX, KEY_ACCOUNTS,
+  CAPACITOR_Q, CAPACITOR_CAPEX, BACKUP_CAPEX, KEY_ACCOUNTS,
 } from '../config/components';
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
   | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen'
   | 'datacenter' | 'transport' | 'petrochem' | 'mining'
-  | 'maintenance' | 'ccs' | 'capacitor' | 'bulldoze';
+  | 'maintenance' | 'ccs' | 'capacitor' | 'backup' | 'bulldoze';
 
 interface ToolDef { id: ToolId; label: string; sub: string; }
 
@@ -33,6 +33,7 @@ const TOOLS: ToolDef[] = [
   { id: 'maintenance', label: '🛠 计划检修', sub: '点电厂大修·降役龄/故障率' },
   { id: 'ccs', label: '🌫 碳捕集', sub: '点火电改造·捕碳但成本升' },
   { id: 'capacitor', label: `⚡ 电容器组 ${CAPACITOR_Q}MVAr`, sub: `点变电站·¥${fmt(CAPACITOR_CAPEX)}·补无功支撑电压` },
+  { id: 'backup', label: '🔋 自备应急电源', sub: `点大客户·¥${fmt(BACKUP_CAPEX)}·停电兜底防流失` },
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },
 ];
 

@@ -390,6 +390,13 @@ export interface KeyAccountSpec {
   desc: string;
 }
 export const SAT_TIME_CONSTANT = 6; // 客户满意度 EMA 时间常数（小时）
+// —— 大客户流失与自备应急 ——
+export const CHURN_THRESHOLD = 0.55; // 满意度持续低于此累积流失风险
+export const CHURN_DAYS = 3; // 持续低满意达此天数 → 大客户流失（撤离）
+export const CHURN_RECOVER = 2; // 恢复满意时流失计时回落倍率
+export const CHURN_REP_HIT = 5; // 大客户流失的口碑打击
+export const BACKUP_FRACTION = 0.6; // 自备应急电源（UPS/柴发）可兜底的负荷比例（高于流失阈值→护客户）
+export const BACKUP_CAPEX = 90_000; // 自备应急电源造价
 export const KEY_ACCOUNTS: Record<string, KeyAccountSpec> = {
   datacenter: { label: '数据中心', profile: 'datacenter', baseDemand: 48, growthPerHour: 0.006, connectionCapex: 180_000, buildDays: 2, color: 0xec4899, icon: '💻', desc: '24/7极平高负载·溢价·停电=SLA重罚（要可靠）' },
   transport: { label: '大交通枢纽', profile: 'transport', baseDemand: 40, growthPerHour: 0.005, connectionCapex: 140_000, buildDays: 2, color: 0x60a5fa, icon: '🚄', desc: '轨交/机场/港口·通勤双峰+牵引尖峰（需灵活性）' },

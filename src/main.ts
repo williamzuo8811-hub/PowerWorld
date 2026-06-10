@@ -27,7 +27,7 @@ import {
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
   coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'backup', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);
@@ -439,6 +439,12 @@ function handleClick(clientX: number, clientY: number): void {
       else { flashHint('无法加装（非变电站/已装/资金不足）'); sound.error(); }
       return;
     }
+    case 'backup': {
+      if (!bus || bus.kind !== 'load') { flashHint('请点击一个大客户加装'); return; }
+      if (sim.addBackup(bus.id)) sound.build();
+      else { flashHint('无法加装（非大客户/已装/资金不足）'); sound.error(); }
+      return;
+    }
     case 'bulldoze': {
       if (bus) {
         const salvage = sim.salvageValue(bus.id); // 退役前计算残值
@@ -524,7 +530,10 @@ function busInspectorHtml(bus: Bus): string {
       rows.push(row('电价系数', `×${TARIFF_CLASS[l.profile].toFixed(2)} · ¥${(sim.spotPrice * TARIFF_CLASS[l.profile]).toFixed(0)}/MWh`));
       const rw = RELIABILITY_WEIGHT[l.profile];
       if (rw > 1) rows.push(row('保供要求', `SLA ×${rw.toFixed(1)}（停电罚款更重）`));
-      if (KEY_ACCOUNTS[l.profile]) rows.push(row('满意度', `${((l.satisfaction ?? 1) * 100).toFixed(0)}%`));
+      if (KEY_ACCOUNTS[l.profile]) {
+        rows.push(row('满意度', `${((l.satisfaction ?? 1) * 100).toFixed(0)}%${(l.satisfaction ?? 1) < 0.55 ? ' ⚠流失风险' : ''}`));
+        rows.push(row('自备应急', l.backup ? '🔋 已加装（停电兜底）' : '未加装（可用应急电源工具）'));
+      }
       const ez = bus.energized ?? 1;
       rows.push(row('状态', bus.blackout && ez > 0.05 && ez < 0.95 ? `🔌 黑启动恢复中 ${(ez * 100).toFixed(0)}%` : bus.blackout ? '⚠ 停电/欠供' : '正常'));
     }

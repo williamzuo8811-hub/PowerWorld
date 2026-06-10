@@ -17,9 +17,11 @@ import {
   MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR,
   INSURANCE_RATE_PER_DAY, INSURANCE_COVERAGE,
 } from '../config/components';
-import type { Generator, Line, LoadProfile } from './types';
+import type { Generator, Line, Load, LoadProfile } from './types';
 import {
-  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
+  START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT,
+  CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, BACKUP_FRACTION, BACKUP_CAPEX,
+  UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
@@ -779,6 +781,19 @@ export class Simulation {
     return true;
   }
 
+  /** 给大客户加装自备应急电源（UPS/柴发）：停电时兜底部分负荷，护住满意度、防流失 */
+  addBackup(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'load' || bus.underConstruction) return false;
+    const l = this.grid.loadsAtBus(busId)[0];
+    if (!l || l.backup || !KEY_ACCOUNTS[l.profile]) return false; // 仅大客户、未加装
+    if (this.money < BACKUP_CAPEX) return false;
+    this.money -= BACKUP_CAPEX;
+    l.backup = true;
+    this.log('good', `🔋 ${bus.name} 加装自备应急电源（¥${BACKUP_CAPEX.toLocaleString('en-US')}）：停电时兜底 ${(BACKUP_FRACTION * 100).toFixed(0)}% 负荷`);
+    return true;
+  }
+
   /** 给变电站加装电容器组（无功补偿，支撑电压、降欠压线损） */
   addCapacitor(busId: number): boolean {
     const bus = this.grid.buses.get(busId);
@@ -1103,19 +1118,34 @@ export class Simulation {
     let slaPenalty = 0; // 关键大客户（数据中心等）失负荷的额外 SLA 罚款
     const aSat = clamp(dtHours / SAT_TIME_CONSTANT, 0, 1);
     let satSum = 0, satW = 0; // 大客户加权满意度
+    const churned: Load[] = [];
     for (const l of this.grid.loads.values()) {
       classServed[l.profile] += l.served;
       tariffWeighted += l.served * TARIFF_CLASS[l.profile];
+      if (this.grid.buses.get(l.busId)?.underConstruction) continue;
+      // 自备应急电源兜底部分负荷（仅作用于满意度与 SLA，不增加电网售电）
+      const backupCover = l.backup ? l.demand * BACKUP_FRACTION : 0;
+      const effUnserved = Math.max(0, l.demand - l.served - backupCover);
       const w = RELIABILITY_WEIGHT[l.profile];
-      if (w > 1) slaPenalty += Math.max(0, l.demand - l.served) * (w - 1) * UNSERVED_PENALTY * dtHours;
-      // 客户满意度：供电充足率 EMA（在建客户不计）
-      if (!this.grid.buses.get(l.busId)?.underConstruction) {
-        const svc = l.demand > 0.01 ? clamp(l.served / l.demand, 0, 1) : 1;
-        l.satisfaction = (l.satisfaction ?? 1) * (1 - aSat) + svc * aSat;
-        if (KEY_ACCOUNTS[l.profile]) { satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand; }
+      if (w > 1) slaPenalty += effUnserved * (w - 1) * UNSERVED_PENALTY * dtHours;
+      // 客户满意度：供电充足率（含自备兜底）EMA
+      const svc = l.demand > 0.01 ? clamp((l.served + backupCover) / l.demand, 0, 1) : 1;
+      l.satisfaction = (l.satisfaction ?? 1) * (1 - aSat) + svc * aSat;
+      if (KEY_ACCOUNTS[l.profile]) {
+        satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand;
+        // 流失计时：长期低满意 → 大客户撤离
+        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours;
+        else l.churnTimer = Math.max(0, (l.churnTimer ?? 0) - dtHours * CHURN_RECOVER);
+        if ((l.churnTimer ?? 0) >= CHURN_DAYS * 24) churned.push(l);
       }
     }
     this.customerSatisfaction = satW > 0 ? satSum / satW : 1;
+    for (const l of churned) {
+      const name = this.grid.buses.get(l.busId)?.name ?? '大客户';
+      this.log('bad', `📉 大客户「${name}」因长期供电不足而流失（损失 ${l.baseDemand.toFixed(0)}MW 售电）`);
+      this.grid.removeBus(l.busId);
+      this.reputation = Math.max(0, this.reputation - CHURN_REP_HIT);
+    }
     revenue = tariffWeighted * this.spotPrice * dtHours;
     penalty += slaPenalty;
 
