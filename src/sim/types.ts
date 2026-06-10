@@ -25,6 +25,8 @@ export interface Bus {
   y: number;
   /** 本 tick 是否处于停电（所在孤岛无电源 / 被甩负荷） */
   blackout: boolean;
+  /** 能量化程度 0..1：全黑后逐步恢复，黑启动资源加速恢复（停电恢复 / 冷负荷启动） */
+  energized?: number;
   // —— 建设工期（电厂/变电站/储能）——
   underConstruction?: boolean; // 在建中：已付 capex 但尚未投运
   commissionAt?: number; // 投运时刻（累计仿真小时）

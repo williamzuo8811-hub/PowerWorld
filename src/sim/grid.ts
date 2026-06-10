@@ -57,7 +57,7 @@ export class Grid {
   }
 
   addBus(kind: BusKind, x: number, y: number, name: string): Bus {
-    const bus: Bus = { id: this.id(), name, kind, x, y, blackout: false };
+    const bus: Bus = { id: this.id(), name, kind, x, y, blackout: false, energized: 1 };
     this.buses.set(bus.id, bus);
     return bus;
   }

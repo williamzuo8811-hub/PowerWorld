@@ -376,6 +376,15 @@ export const FREQ_SHED_THRESHOLD = 49.0; // 低于此频率触发低频减载
 export const TRIP_DELAY = 22; // 持续过载多少仿真秒后跳闸
 export const TIME_SCALES = [0, 1440, 2880, 5760]; // 暂停 / 1x / 2x / 4x（仿真秒 / 真实秒），1x 下约 60 真实秒 = 1 天
 
+// —— 黑启动与停电恢复（全黑后逐步恢复，黑启动资源加速；软恢复，永不永久卡死）——
+export const BLACKSTART_TYPES: Record<PlantType, boolean> = {
+  gas: true, // 燃气机组可自启动，充当黑启动种子
+  nuclear: false, coal: false, wind: false, solar: false, // 需外部电源启动辅机/缺乏调频
+};
+export const RESTORE_FAST_RATE = 4.0; // 有黑启动资源时每小时恢复的能量化比例（≈15 分钟全恢复）
+export const RESTORE_SLOW_RATE = 0.5; // 无黑启动资源时（靠外部联络/人工）的恢复速率（≈2 小时）
+export const BLACKOUT_DROP_RATE = 30; // 全黑时能量化骤降速率（≈瞬时）
+
 // —— 胜负目标（MVP 关卡：把小镇带到繁荣） ——
 export const WIN_DAY = 12; // 撑过第 12 天即获胜
 export const WIN_RELIABILITY = 0.92; // 且可靠性需达标

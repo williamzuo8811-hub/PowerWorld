@@ -25,6 +25,7 @@ import {
   FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY,
   MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY,
   GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION,
+  BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE,
   POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT,
   REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, HEDGE_FEE_PER_MW_DAY, OPTION_PREMIUM_RATE,
   INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY,
@@ -1401,11 +1402,36 @@ export class Simulation {
     const freq = freqFromBalance(supply + marketImport, consumption);
     const shedding = freq < FREQ_SHED_THRESHOLD || islandDead;
 
-    // 分配实际供电到各负荷，并标记停电
+    // —— 黑启动与停电恢复：仅对"已建有电源"的孤岛适用（区分故障全黑 vs 绿地待接入）——
+    // 全黑时能量化骤降；恢复速率取决于岛内是否有黑启动资源（燃气/储能）。
+    let hasBuiltGen = false;
+    for (const id of busIds) {
+      const b = this.grid.buses.get(id);
+      if (b && (b.kind === 'plant' || b.kind === 'storage') && !b.underConstruction) { hasBuiltGen = true; break; }
+    }
+    if (hasBuiltGen) {
+      const supplying = supply > 0.01;
+      let hasBlackStart = false;
+      for (const g of gens) if (BLACKSTART_TYPES[g.type]) { hasBlackStart = true; break; }
+      if (!hasBlackStart) for (const b of batteries) if (b.soc > 1) { hasBlackStart = true; break; }
+      for (const id of busIds) {
+        const b = this.grid.buses.get(id);
+        if (!b) continue;
+        const cur = b.energized ?? 1;
+        const target = supplying ? 1 : 0;
+        const rate = target < cur ? BLACKOUT_DROP_RATE : (hasBlackStart ? RESTORE_FAST_RATE : RESTORE_SLOW_RATE);
+        b.energized = clamp(cur + Math.sign(target - cur) * rate * dtHours, 0, 1);
+      }
+    }
+
+    // 分配实际供电到各负荷（受供需比 × 恢复程度限制），并标记停电
+    let servedDelivered = 0;
     for (const l of loads) {
-      l.served = l.demand * ratio;
       const bus = this.grid.buses.get(l.busId);
-      if (bus) bus.blackout = ratio < 0.999;
+      const ez = bus?.energized ?? 1;
+      l.served = l.demand * ratio * ez;
+      servedDelivered += l.served;
+      if (bus) bus.blackout = ratio * ez < 0.999;
     }
     if (islandDead) for (const id of busIds) { const b = this.grid.buses.get(id); if (b) b.blackout = true; }
     if (shedding && !islandDead && ratio < 0.95) {
@@ -1450,7 +1476,7 @@ export class Simulation {
       co2 += g.output * this.effCo2(g);
     }
 
-    return { gen: totalGen, demand, served, loss: lossSum, fuelCost, co2, marketImport, curtailed, startupCost };
+    return { gen: totalGen, demand, served: servedDelivered, loss: lossSum, fuelCost, co2, marketImport, curtailed, startupCost };
   }
 
   /** 更新公众形象与清洁电力占比 */
