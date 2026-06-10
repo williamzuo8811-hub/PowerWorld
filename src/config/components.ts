@@ -190,6 +190,23 @@ export const ZONE_SOUTH_AMP = 11;
 // 输电权(FTR)：金融合约，付远期价差权利金，收实际南北价差(拥堵租金)
 export const FTR_MARKUP = 1.05; // 权利金相对当前价差的溢价
 
+// —— 政策与剧情事件（监管/宏观冲击，提前 24h 公示）——
+export const POLICY_FIRST_DAY = 5; // 首个政策事件出现的天
+export const POLICY_INTERVAL_DAYS = 7; // 政策事件平均间隔（天）
+export const POLICY_ANNOUNCE_HOURS = 24; // 提前公示时长（小时）
+export const POLICY_FX = {
+  minDays: 2, maxDays: 4.5, // 政策持续时长范围（天）
+  subsidyRecMult: 1.6, // 绿色补贴窗口：绿证价 ×
+  inspectionCarbonMult: 1.3, // 环保督查：碳价 ×
+  inspectionCoalCap: 0.7, // 环保督查：燃煤出力上限（占容量）
+  rateHikeAdder: 0.003, // 加息周期：日利率 +
+  crunchRateAdder: 0.004, // 信贷紧缩：日利率 +
+  crunchCreditFactor: 0.55, // 信贷紧缩：信用额度 ×
+  shortageExportMult: 1.8, // 邻区短缺：外送电价 ×
+  shortageImportCapFactor: 0.3, // 邻区短缺：进口容量 ×
+  boomDemandMult: 1.15, // 经济火热：区域需求 ×
+};
+
 // —— 经济周期（景气循环）——
 // 宏观繁荣/衰退周期性振荡，影响用电需求（进而影响电价/稀缺）。
 export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）

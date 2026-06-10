@@ -4,6 +4,7 @@ import type { SimSnapshot, LogEntry } from './types';
 import { Grid, type GridData } from './grid';
 import { solveDC } from './powerflow';
 import { EventSystem } from './events';
+import { PolicyState } from './policy';
 import { TechState } from './tech';
 import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
@@ -187,6 +188,7 @@ export interface SimSaveState {
   win: boolean;
   grid: GridData;
   events: { active: EventSystem['active']; nextAt: number; forecast?: EventSystem['forecast'] };
+  policy?: { current: PolicyState['current']; pending: PolicyState['pending']; nextAt: number; announced: boolean };
   tech: { unlocked: TechId[]; points: number };
   fuelPrice: Record<FuelType, number>;
   fuelContracts: Partial<Record<FuelType, FuelContract>>;
@@ -231,6 +233,7 @@ export class Simulation {
   carbonPriceMult = 1; // 碳价倍率（关卡可调，如"碳中和转型"加压）
   sandbox = false; // 沙盒模式：无输赢、无破产
   events = new EventSystem();
+  policy = new PolicyState();
   tech = new TechState();
   fuelPrice: Record<FuelType, number> = { coal: 1, gas: 1, uranium: 1 }; // 燃料价格指数
   fuelContracts: Partial<Record<FuelType, FuelContract>> = {}; // 活跃燃料长约
@@ -312,6 +315,7 @@ export class Simulation {
     this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
     this.events = new EventSystem();
     this.events.schedule(0);
+    this.policy = new PolicyState();
     this.tech = new TechState();
     this.fuelPrice = { coal: 1, gas: 1, uranium: 1 };
     this.fuelContracts = {};
@@ -367,6 +371,11 @@ export class Simulation {
       gameOver: this.gameOver, win: this.win,
       grid: this.grid.serialize(),
       events: { active: this.events.active.map((e) => ({ ...e })), nextAt: this.events.nextAt, forecast: this.events.forecast ? { ...this.events.forecast } : null },
+      policy: {
+        current: this.policy.current ? { ...this.policy.current } : null,
+        pending: this.policy.pending ? { ...this.policy.pending } : null,
+        nextAt: this.policy.nextAt, announced: this.policy.announced,
+      },
       tech: { unlocked: [...this.tech.unlocked], points: this.tech.points },
       fuelPrice: { ...this.fuelPrice },
       fuelContracts: { ...this.fuelContracts },
@@ -411,6 +420,15 @@ export class Simulation {
     this.events.nextAt = d.events.nextAt;
     this.events.forecast = d.events.forecast ? { ...d.events.forecast } : null; // 旧档无预报：update 时重掷
     this.events.update(this);
+    this.policy = new PolicyState();
+    if (d.policy) {
+      this.policy.current = d.policy.current ? { ...d.policy.current } : null;
+      this.policy.pending = d.policy.pending ? { ...d.policy.pending } : null;
+      this.policy.nextAt = d.policy.nextAt;
+      this.policy.announced = d.policy.announced;
+    } else {
+      this.policy.nextAt = this.clock + 3 * 24; // 旧档：3 天后开始政策事件
+    }
     this.tech = new TechState();
     this.tech.points = d.tech?.points ?? 0;
     for (const id of d.tech?.unlocked ?? []) this.tech.unlocked.add(id);
@@ -448,15 +466,15 @@ export class Simulation {
     return this.clock % 24;
   }
   get carbonPrice(): number {
-    return (CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day) * this.carbonPriceMult;
+    return (CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day) * this.carbonPriceMult * this.policy.carbonMult;
   }
   /** 当前免费排放基准强度 (t/MWh)，随时间收紧；政策研究中心科技放宽基准 */
   get benchmarkIntensity(): number {
     return Math.max(CARBON_BENCH_MIN, CARBON_BENCH_START - CARBON_BENCH_DECLINE_PER_DAY * this.day) * this.tech.benchmarkFactor;
   }
-  /** 当前绿证价 ¥/MWh，随政策退坡；政策研究中心科技抬升 */
+  /** 当前绿证价 ¥/MWh，随政策退坡；政策研究中心科技与绿色补贴窗口抬升 */
   get recPrice(): number {
-    return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day) * this.tech.recFactor;
+    return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day) * this.tech.recFactor * this.policy.recMult;
   }
   /** 经济周期正弦相位（-1..1） */
   private get cyclePhase(): number {
@@ -543,7 +561,11 @@ export class Simulation {
     const m = (demandMultiplier(this.hourOfDay, 'residential')
       + demandMultiplier(this.hourOfDay, 'commercial')
       + demandMultiplier(this.hourOfDay, 'industrial')) / 3;
-    return REGIONAL_BASE_DEMAND * m * this.cycleFactor * this.seasonDemandFactor;
+    return REGIONAL_BASE_DEMAND * m * this.cycleFactor * this.seasonDemandFactor * this.policy.regionalDemandMult;
+  }
+  /** 联络线有效进口容量：邻区短缺时被压缩 */
+  get effImportCapacity(): number {
+    return INTERCONNECTOR_CAPACITY * this.policy.importCapFactor;
   }
   /** 区域市场出清：你与竞争对手按报价排序，对区域需求出清 */
   private marketClearing(): { clearingCost: number; playerDispatched: number; shortfall: number } {
@@ -659,9 +681,9 @@ export class Simulation {
     if (s >= 25) return 'CCC';
     return 'D';
   }
-  /** 信用额度 = (基础额度 + 资产抵押) × 评级系数(0.5~1.5) */
+  /** 信用额度 = (基础额度 + 资产抵押) × 评级系数(0.5~1.5) × 信贷环境（紧缩时压缩） */
   get creditLimit(): number {
-    return (LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC) * (0.5 + this.creditScore / 100);
+    return (LOAN_BASE_CREDIT + this.assetValue * LOAN_CREDIT_ASSET_FRAC) * (0.5 + this.creditScore / 100) * this.policy.creditLimitFactor;
   }
   get debtRatio(): number {
     return this.creditLimit > 0 ? this.debt / this.creditLimit : 0;
@@ -683,9 +705,9 @@ export class Simulation {
     if (s >= 40) return 'C';
     return 'D';
   }
-  /** 日利率：基础 + 评级风险溢价 − ESG 绿色折扣 − 风险管理科技折扣 */
+  /** 日利率：基础 + 评级风险溢价 + 政策加息/紧缩 − ESG 绿色折扣 − 风险管理科技折扣 */
   get loanDailyRate(): number {
-    const base = LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN;
+    const base = LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN + this.policy.loanRateAdder;
     return Math.max(0.001, base - (this.esgScore / 100) * ESG_RATE_DISCOUNT - this.tech.loanRateDiscount);
   }
   /** 净资产 = 现金 + 资产 − 负债 */
@@ -968,9 +990,10 @@ export class Simulation {
     this.clock += dtHours;
     this.claimCoveredTick = 0; // 重置本 tick 保险理赔累计
 
-    // —— 天气：风况慢变随机游走 + 天气/危机事件 ——
+    // —— 天气：风况慢变随机游走 + 天气/危机事件 + 政策事件 ——
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
     this.events.update(this);
+    this.policy.update(this);
 
     // —— 工程投运：到期的在建资产投入运行 ——
     for (const bus of this.grid.buses.values()) {
@@ -1036,6 +1059,8 @@ export class Simulation {
         g.availability = clamp(a, 0, 1);
       } else if (g.type === 'hydro') {
         g.availability = this.hydroAvailability; // 来水决定水电可用出力（夏丰冬枯）
+      } else if (g.type === 'coal') {
+        g.availability = this.policy.coalCap; // 环保督查：燃煤限产
       }
     }
 
@@ -1345,9 +1370,9 @@ export class Simulation {
     const premiumCost = this.insurancePremiumPerDay * omDayFrac;
     this.marketImportMW = aggMarketImport;
     const importCost = aggMarketImport * this.avgSpot * IMPORT_MARKUP * dtHours;
-    // 外送：被弃的过剩（清洁）电量按出清价卖入批发市场（受联络线容量与过网折扣限制）
+    // 外送：被弃的过剩（清洁）电量按出清价卖入批发市场（受联络线容量与过网折扣限制；邻区短缺时溢价）
     this.marketExportMW = this.marketEnabled ? Math.min(aggCurtailed, INTERCONNECTOR_CAPACITY) : 0;
-    const exportIncome = this.marketExportMW * this.marketClearingPrice * EXPORT_WHEEL * dtHours;
+    const exportIncome = this.marketExportMW * this.marketClearingPrice * EXPORT_WHEEL * this.policy.exportPriceMult * dtHours;
     // 跨区套利：买便宜区、卖昂贵区，赚价差减过网费（受交易容量限制）
     const arbProfit = Math.max(0, this.zoneSpread - ZONE_WHEEL_FEE);
     this.zoneArbMW = this.marketEnabled && arbProfit > 0 ? ZONE_TRADE_CAPACITY : 0;
@@ -1555,10 +1580,10 @@ export class Simulation {
 
     const totalGen = supply; // 含储能放电的总电源
     const localServed = Math.min(demand, supply - chargeSum); // 本地电源可供
-    // 不足部分向批发市场购电补缺（受联络线容量限制）
+    // 不足部分向批发市场购电补缺（受联络线容量限制；邻区短缺时进口被压缩）
     let marketImport = 0;
     if (this.marketEnabled && localServed < demand - 0.01) {
-      marketImport = Math.min(demand - localServed, INTERCONNECTOR_CAPACITY);
+      marketImport = Math.min(demand - localServed, this.effImportCapacity);
     }
     const served = localServed + marketImport;
     const ratio = demand > 0 ? served / demand : 1;
@@ -2038,6 +2063,7 @@ export class Simulation {
       reliability: this.reliability,
       weather: this.events.label,
       forecast: this.events.forecastLabel(this.clock),
+      policy: this.policy.label(this.clock),
       demandFactor: this.events.demandFactor,
       goalDay: this.goalDay,
       goalReliability: this.goalReliability,
