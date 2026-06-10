@@ -30,6 +30,7 @@ export class Renderer {
   // N-1 校核标注的薄弱元件
   n1Lines = new Set<number>();
   n1Subs = new Set<number>();
+  categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
   clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
 
   constructor(private grid: Grid) {}
@@ -141,6 +142,8 @@ export class Renderer {
     const fg = this.flowLayer;
     lg.clear();
     fg.clear();
+    // 品类筛选：选中非"电网"品类时淡化线路
+    const lineDim = this.categoryFilter && this.categoryFilter !== 'grid' ? 0.16 : 1;
 
     for (const ln of this.grid.lines.values()) {
       const a = this.grid.buses.get(ln.from);
@@ -164,9 +167,9 @@ export class Renderer {
         lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 8, color: 0xf2c94c, alpha: 0.32 });
       }
       // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
-      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 });
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
       const color = loadColor(load);
-      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 });
+      lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
 
       // 流动粒子（潮流方向：正=from→to）
       if (Math.abs(ln.flow) > 0.5) {
@@ -202,7 +205,11 @@ export class Renderer {
       const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
       const ez = bus.energized ?? 1;
       // 在建/检修半透明；负荷按能量化程度变暗（停电恢复中逐步点亮）
-      const alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : (bus.kind === 'load' ? 0.35 + 0.65 * ez : 1);
+      let alpha = bus.underConstruction ? 0.3 : inOutage ? 0.5 : (bus.kind === 'load' ? 0.35 + 0.65 * ez : 1);
+      // 能源品类筛选：匹配品类高亮，其余淡化
+      const matchFilter = !this.categoryFilter || busCategory(this.grid, bus) === this.categoryFilter;
+      if (!matchFilter) alpha *= 0.13;
+      if (this.categoryFilter && matchFilter) g.circle(cx, cy, r + 6).stroke({ width: 2, color: 0xffffff, alpha: 0.7 });
 
       // 建设中黄环
       if (bus.underConstruction) g.circle(cx, cy, r + 5).stroke({ width: 2, color: 0xf2c94c, alpha: 0.85 });
@@ -299,6 +306,23 @@ function loadColor(load: number): number {
   if (load < 0.85) return 0xf2c94c; // 黄
   if (load < 1.0) return 0xf2994a; // 橙
   return 0xef5d60; // 红（过载）
+}
+
+/** 母线所属能源品类（与品类面板的 key 对应，用于地图筛选高亮） */
+function busCategory(grid: Grid, bus: Bus): string | null {
+  if (bus.kind === 'plant') {
+    const g = grid.gensAtBus(bus.id)[0];
+    if (!g) return null;
+    if (g.type === 'wind' || g.type === 'solar') return 'renewable';
+    if (g.type === 'nuclear') return 'nuclear';
+    return 'thermal';
+  }
+  if (bus.kind === 'substation') return 'grid';
+  if (bus.kind === 'storage') return 'storage';
+  const l = grid.loadsAtBus(bus.id)[0];
+  if (!l) return null;
+  if (l.profile === 'residential' || l.profile === 'commercial' || l.profile === 'industrial') return 'ci';
+  return l.profile;
 }
 
 function busColor(grid: Grid, bus: Bus): number {

@@ -54,6 +54,7 @@ let currentScenarioId = SCENARIOS[0].id;
 // ——————————————————— 关卡 / 存档流程 ———————————————————
 function newGame(scenario: Scenario): void {
   sim.reset();
+  renderer.categoryFilter = null;
   scenario.setup(sim);
   currentScenarioId = scenario.id;
   enterGame();
@@ -175,7 +176,19 @@ function openIRP(): void {
 function openPortfolio(): void {
   panelOpen = true;
   hud.setSpeed(0);
-  portfolioPanel.show({ categories: sim.portfolio(), customerSatisfaction: sim.customerSatisfaction, onClose: () => { portfolioPanel.hide(); panelOpen = false; } });
+  portfolioPanel.show({
+    categories: sim.portfolio(),
+    customerSatisfaction: sim.customerSatisfaction,
+    activeFilter: renderer.categoryFilter,
+    onFilter: (key) => {
+      renderer.categoryFilter = key;
+      portfolioPanel.hide();
+      panelOpen = false;
+      sound.click();
+      flashHint(key ? `品类高亮：点 🗂 切换 · Esc 清除` : '已清除品类高亮');
+    },
+    onClose: () => { portfolioPanel.hide(); panelOpen = false; },
+  });
 }
 
 /** 打开成就面板 */
@@ -594,7 +607,11 @@ function bindInput(): void {
   window.addEventListener('keydown', (e) => {
     if (menuOpen || panelOpen) return;
     if (e.code === 'Space') { e.preventDefault(); hud.togglePause(); return; }
-    if (e.code === 'Escape') { setPending(null); hud.setHint(null); return; }
+    if (e.code === 'Escape') {
+      setPending(null); hud.setHint(null);
+      if (renderer.categoryFilter) { renderer.categoryFilter = null; flashHint('已清除品类高亮'); }
+      return;
+    }
     const n = parseInt(e.key, 10);
     if (!isNaN(n) && n >= 1 && n <= TOOL_ORDER.length) hud.setTool(TOOL_ORDER[n - 1]);
   });
