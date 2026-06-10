@@ -70,6 +70,24 @@ describe('大客户竞价招商', () => {
     expect(sim.keyAccountAcquireCost('mining')).toBe(normalMine); // 矿业不受影响
   });
 
+  it('竞争力高则下一个招商机会更早', () => {
+    function nextInterval(rep: number, reliab: number, sat: number): number {
+      const orig = Math.random;
+      Math.random = () => 0; // 去掉抖动项
+      try {
+        const sim = new Simulation();
+        sim.reputation = rep; sim.reliability = reliab; sim.customerSatisfaction = sat;
+        sim.events.nextAt = Infinity; sim.sandbox = true;
+        sim.nextLeadAt = 0; // 首拍立即触发机会（此时口碑尚未漂移）
+        sim.tick(3600, 1);
+        return sim.nextLeadAt - sim.clock; // 距下个机会的间隔
+      } finally { Math.random = orig; }
+    }
+    const strong = nextInterval(95, 1, 1);
+    const weak = nextInterval(40, 0.6, 0.5);
+    expect(strong).toBeLessThan(weak); // 竞争力高 → 下个机会更早
+  });
+
   it('招商机会到点出现并可存档', () => {
     const sim = new Simulation();
     sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;

@@ -1154,9 +1154,18 @@ export class Simulation {
       if (KEY_ACCOUNTS[l.profile]) {
         satSum += l.satisfaction * l.baseDemand; satW += l.baseDemand;
         // 流失/挖角计时：长期低满意累积，竞争越激烈对手挖角越快
-        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours * (1 + POACH_CONTEST_K * contestation);
-        else l.churnTimer = Math.max(0, (l.churnTimer ?? 0) - dtHours * CHURN_RECOVER);
-        if ((l.churnTimer ?? 0) >= CHURN_DAYS * 24) churned.push(l);
+        const rate = 1 + POACH_CONTEST_K * contestation;
+        if (l.satisfaction < CHURN_THRESHOLD) l.churnTimer = (l.churnTimer ?? 0) + dtHours * rate;
+        else { l.churnTimer = Math.max(0, (l.churnTimer ?? 0) - dtHours * CHURN_RECOVER); if ((l.churnTimer ?? 0) <= 0) l.churnWarned = false; }
+        const timer = l.churnTimer ?? 0;
+        const limit = CHURN_DAYS * 24;
+        if (timer >= limit * 0.5 && !l.churnWarned && timer < limit) {
+          const daysLeft = (limit - timer) / Math.max(rate, 0.01) / 24;
+          const name = this.grid.buses.get(l.busId)?.name ?? '大客户';
+          this.log('warn', `⚠ 大客户「${name}」满意度告急（${(l.satisfaction * 100).toFixed(0)}%），约 ${daysLeft.toFixed(1)} 天后将被挖走——尽快保供/加装应急电源`);
+          l.churnWarned = true;
+        }
+        if (timer >= limit) churned.push(l);
       }
     }
     this.customerSatisfaction = satW > 0 ? satSum / satW : 1;
@@ -1677,7 +1686,9 @@ export class Simulation {
       const profiles: LoadProfile[] = ['datacenter', 'transport', 'petrochem', 'mining'];
       const p = profiles[Math.floor(Math.random() * profiles.length)];
       this.keyAccountLead = { profile: p, endClock: this.clock + LEAD_WINDOW_DAYS * 24 };
-      this.nextLeadAt = this.clock + LEAD_INTERVAL_DAYS * 24 + Math.random() * 48;
+      // 竞争力越高，招商机会越频繁（奖励优质运营商）
+      const intervalFactor = clamp(1.6 - this.companyStanding, 0.7, 1.6);
+      this.nextLeadAt = this.clock + LEAD_INTERVAL_DAYS * 24 * intervalFactor + Math.random() * 48;
       const spec = KEY_ACCOUNTS[p];
       this.log('good', `🎯 招商机会：${spec.icon}${spec.label}正在选址，${LEAD_WINDOW_DAYS}天内接入享 ${(LEAD_DISCOUNT * 10).toFixed(0)}折接入费！`);
     }

@@ -84,6 +84,7 @@ export interface Load {
   growthPerHour: number; // 每仿真小时的复合增长率
   satisfaction?: number; // 客户满意度 0..1（供电充足率的滑动平均）—— 大客户流失判定
   churnTimer?: number; // 低满意累积时长（仿真小时）—— 超阈值则流失
+  churnWarned?: boolean; // 是否已发过挖角预警（边沿触发，恢复后重置）
   backup?: boolean; // 是否自备应急电源（UPS/柴发），兜底部分负荷、缓解停电
 }
 

@@ -73,6 +73,15 @@ describe('大客户流失与自备应急', () => {
     expect(topAfter).toBeGreaterThan(topBefore); // 对手因挖角增强
   });
 
+  it('满意度告急时发出挖角预警（流失前）', () => {
+    const sim = new Simulation();
+    sim.forcedOutages = false; sim.events.nextAt = Infinity; sim.sandbox = true;
+    sim.grid.addLoad(0, 0, 'datacenter', 40, '云数据中心', 0); // 持续欠供
+    // 推进到达预警线但尚未流失
+    for (let i = 0; i < 30; i++) sim.tick(3600, 1);
+    expect(sim.logs.some((l) => l.level === 'warn' && l.msg.includes('满意度告急'))).toBe(true);
+  });
+
   it('自备应急电源纳入存档', () => {
     const sim = new Simulation();
     sim.money = 10_000_000;
