@@ -1,4 +1,4 @@
-// 地理资源图层：确定性值噪声生成的地形与资源禀赋。
+// 地理资源图层：确定性多倍频值噪声（fBm）生成的地形与资源禀赋。
 // 让"选址"成为真实决策：风带/光照分区决定风光出力质量，山地/水域抬高建设造价；
 // 同一种子永远生成同一张图（每日挑战/关卡可复现，存档可恢复）。
 export type TerrainKind = 'plain' | 'forest' | 'hill' | 'water';
@@ -15,6 +15,11 @@ export const TERRAIN_BUILD_FACTOR: Record<TerrainKind, number> = {
 const WIND_MIN = 0.8, WIND_MAX = 1.2;
 const SOLAR_MIN = 0.85, SOLAR_MAX = 1.15;
 const HYDRO_MIN = 0.85, HYDRO_MAX = 1.15;
+
+// 地貌阈值（基于 fBm 海拔/湿度场）
+const WATER_LEVEL = 0.34; // 海拔低于此为水域
+const HILL_LEVEL = 0.68; // 海拔高于此为山地
+const FOREST_MOISTURE = 0.6; // 中海拔且湿度高于此为森林
 
 /** 整数坐标确定性哈希 → [0,1) */
 function hash2(ix: number, iy: number, seed: number): number {
@@ -38,16 +43,32 @@ function valueNoise(x: number, y: number, scale: number, seed: number): number {
   return (v00 * (1 - fx) + v10 * fx) * (1 - fy) + (v01 * (1 - fx) + v11 * fx) * fy;
 }
 
+/** 多倍频分形噪声（fBm）：大尺度定地貌骨架、小尺度添海岸线细节 → 连贯自然的地块形状 */
+function fbm(x: number, y: number, scale: number, seed: number): number {
+  return valueNoise(x, y, scale, seed) * 0.55
+    + valueNoise(x, y, scale / 2.1, seed + 17) * 0.3
+    + valueNoise(x, y, scale / 4.3, seed + 39) * 0.15;
+}
+
 export class Terrain {
   constructor(public seed = 1) {}
 
-  /** 地形种类：大尺度噪声分水域/山地/森林/平原 */
+  /** 海拔场 0..1（连续，渲染用它做水深/山体明暗） */
+  elevation(x: number, y: number): number {
+    return fbm(x, y, 13, this.seed * 7 + 1);
+  }
+
+  /** 湿度场 0..1（决定森林分布） */
+  moisture(x: number, y: number): number {
+    return fbm(x, y, 9, this.seed * 7 + 2);
+  }
+
+  /** 地形种类：由连续海拔/湿度场分层（支持小数坐标 → 海岸线平滑） */
   kind(x: number, y: number): TerrainKind {
-    const n = valueNoise(x, y, 9, this.seed * 7 + 1);
-    if (n < 0.18) return 'water';
-    if (n > 0.78) return 'hill';
-    const f = valueNoise(x, y, 5, this.seed * 7 + 2);
-    if (f > 0.72) return 'forest';
+    const e = this.elevation(x, y);
+    if (e < WATER_LEVEL) return 'water';
+    if (e > HILL_LEVEL) return 'hill';
+    if (this.moisture(x, y) > FOREST_MOISTURE) return 'forest';
     return 'plain';
   }
 
