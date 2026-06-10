@@ -330,6 +330,7 @@ function openFinance(): void {
       flexPrice: sim.flexPrice,
       storageArbDay: sim.storageArbDay,
       storageStrategy: sim.storageStrategy,
+      autoOps: { ...sim.autoOps },
       startupsTotal: sim.startupsTotal,
       policy: sim.policy.label(sim.clock),
       capCommitMW: sim.capCommitments.reduce((s, c) => s + c.mw, 0),
@@ -352,6 +353,12 @@ function openFinance(): void {
     onToggleStorageStrategy: () => {
       sim.storageStrategy = sim.storageStrategy === 'arb' ? 'reg' : 'arb';
       sim.log('info', sim.storageStrategy === 'arb' ? '💹 储能切换为专注套利（退出调频市场）' : '📡 储能切换为投标调频（套利捕获减半）');
+      sound.click(); openFinance();
+    },
+    onToggleAutoOps: (key) => {
+      sim.autoOps[key] = !sim.autoOps[key];
+      const names = { reclose: '自动重合闸', maintenance: '淡季自动检修', repay: '自动还款', precommit: '迎峰预并网' } as const;
+      sim.log('info', `🤖 ${names[key]}：${sim.autoOps[key] ? '已开启' : '已关闭'}`);
       sound.click(); openFinance();
     },
     onInterruptible: (mw, days) => {

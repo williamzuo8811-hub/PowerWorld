@@ -38,6 +38,7 @@ export interface FinanceData {
   flexPrice: number;
   storageArbDay: number;
   storageStrategy: 'arb' | 'reg';
+  autoOps: { reclose: boolean; maintenance: boolean; repay: boolean; precommit: boolean };
   startupsTotal: number;
   capCommitMW: number;
   zoneNorth: number;
@@ -70,6 +71,7 @@ export interface FinancePanelOptions {
   onToggleMarket: () => void;
   onToggleDR: () => void;
   onToggleStorageStrategy: () => void;
+  onToggleAutoOps: (key: 'reclose' | 'maintenance' | 'repay' | 'precommit') => void;
   onInterruptible: (mw: number, days: number) => void;
   onClose: () => void;
 }
@@ -333,6 +335,27 @@ export class FinancePanel {
       drBtns.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
       mkBtn(drBtns, d.demandResponse ? '退出需求响应' : '启用需求响应', true, () => o.onToggleDR());
       t.appendChild(drBtns);
+
+      // 自动运维 / 联合调度助理
+      t.insertAdjacentHTML('beforeend', section('🤖 自动运维 / 联合调度助理（逐项开关）'));
+      const opsDefs: { key: 'reclose' | 'maintenance' | 'repay' | 'precommit'; label: string; hint: string }[] = [
+        { key: 'reclose', label: '自动重合闸', hint: '跳闸线路/变压器约 60 秒后自动恢复（慢于自愈科技）' },
+        { key: 'maintenance', label: '淡季自动检修', hint: '换季窗口对高磨损机组自动安排大修（现金充裕时，每天最多一台）' },
+        { key: 'repay', label: '自动还款', hint: '现金高于 ¥300k 底线时自动偿还贷款，省利息' },
+        { key: 'precommit', label: '迎峰预并网', hint: '晚峰前自动并网慢启动机组，避免爬坡赶不上（付启动费）' },
+      ];
+      const opsWrap = document.createElement('div');
+      opsWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px';
+      for (const def of opsDefs) {
+        const on = d.autoOps[def.key];
+        const b = document.createElement('button');
+        b.textContent = `${on ? '✅' : '⬜'} ${def.label}`;
+        b.title = def.hint;
+        b.style.cssText = `background:${on ? 'rgba(56,211,159,0.18)' : '#182431'};color:var(--text);border:1px solid ${on ? 'var(--accent)' : 'var(--panel-border)'};border-radius:6px;padding:7px 11px;cursor:pointer;font-family:inherit;font-size:12px`;
+        b.onclick = () => o.onToggleAutoOps(def.key);
+        opsWrap.appendChild(b);
+      }
+      t.appendChild(opsWrap);
 
       // 可中断负荷合同
       t.insertAdjacentHTML('beforeend', section(`可中断负荷合同（持有 ${d.interruptibleMW.toFixed(0)}MW · 可用费 ¥${d.interruptibleRate.toFixed(1)}/MW·天 · 作备用/容量资源）`));

@@ -190,6 +190,13 @@ export const ZONE_SOUTH_AMP = 11;
 // 输电权(FTR)：金融合约，付远期价差权利金，收实际南北价差(拥堵租金)
 export const FTR_MARKUP = 1.05; // 权利金相对当前价差的溢价
 
+// —— 自动运维 / 联合调度助理（可逐项开关的运营自动化）——
+export const AUTOOPS_RECLOSE_DELAY = 60; // 自动重合闸延时（仿真秒）——比自愈科技(25s/10s)慢，科技仍有价值
+export const AUTOOPS_WEAR_THRESHOLD = 0.65; // 自动检修触发磨损阈值
+export const AUTOOPS_MAINT_CASH_MULT = 3; // 自动检修要求现金 ≥ 检修费 × 此值
+export const AUTOOPS_CASH_FLOOR = 300_000; // 自动还款保留的现金底线
+export const AUTOOPS_PRECOMMIT_TARGET = 0.95; // 迎峰预并网的容量目标（占预估晚峰，余量留给储能/新能源）
+
 // —— 政策与剧情事件（监管/宏观冲击，提前 24h 公示）——
 export const POLICY_FIRST_DAY = 5; // 首个政策事件出现的天
 export const POLICY_INTERVAL_DAYS = 7; // 政策事件平均间隔（天）

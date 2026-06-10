@@ -62,6 +62,7 @@ import {
   COMP_GREEN_EXPAND_MULT, COMP_GREEN_RETIRE_MULT, COMP_PEAKER_WAR_SHARE, COMP_PEAKER_WAR_FLOOR,
   COMP_PEAKER_ADJUST_RATE, COMP_LEAD_SNATCH_CHANCE, COMP_LEAD_SNATCH_FRACTION,
   BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR,
+  AUTOOPS_RECLOSE_DELAY, AUTOOPS_WEAR_THRESHOLD, AUTOOPS_MAINT_CASH_MULT, AUTOOPS_CASH_FLOOR, AUTOOPS_PRECOMMIT_TARGET,
   type CompetitorSpec,
 } from '../config/components';
 
@@ -170,6 +171,15 @@ export interface SimSaveState {
   nextSampleAt: number;
   competitors?: Competitor[]; // 对手状态（容量/报价随局演化，需随档保存）
   storageStrategy?: 'arb' | 'reg';
+  autoOps?: AutoOps;
+}
+
+/** 自动运维 / 联合调度助理的开关组 */
+export interface AutoOps {
+  reclose: boolean; // 自动重合闸（线路+变压器，60s 延时；慢于自愈科技）
+  maintenance: boolean; // 淡季自动检修（磨损高+换季+现金充裕时安排大修）
+  repay: boolean; // 自动还款（现金高于底线时偿还贷款，省利息）
+  precommit: boolean; // 迎峰预并网（晚峰前自动并网慢启动机组——联合调度）
 }
 
 export class Simulation {
@@ -228,6 +238,9 @@ export class Simulation {
   interruptibleEndClock = 0; // 可中断合同到期时刻（仿真小时）
   /** 储能商业策略：'arb'=专注套利（不投调频）；'reg'=投标调频（套利捕获减半）——同一容量不能两头吃 */
   storageStrategy: 'arb' | 'reg' = 'arb';
+  /** 自动运维 / 联合调度助理（默认全关，玩家逐项开启） */
+  autoOps: AutoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
+  private lastOpsDay = -1; // 自动检修/还款的"每日一次"节流
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   private lastYearIdx = 0; // 已结算年报的年序号（年度边界触发经营年报）
   history: HistorySample[] = []; // 历史走势采样
@@ -316,6 +329,8 @@ export class Simulation {
     this.interruptibleMW = 0;
     this.interruptibleEndClock = 0;
     this.storageStrategy = 'arb';
+    this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
+    this.lastOpsDay = -1;
     this.lastSeason = '';
     this.lastYearIdx = 0;
     this.history = [];
@@ -364,6 +379,7 @@ export class Simulation {
       nextSampleAt: this.nextSampleAt,
       competitors: this.competitors.map((c) => ({ ...c })),
       storageStrategy: this.storageStrategy,
+      autoOps: { ...this.autoOps },
     };
   }
 
@@ -424,6 +440,8 @@ export class Simulation {
       ? d.competitors.map((c) => ({ ...c, mcBase: c.mcBase ?? c.marginalCost, style: c.style ?? 'coal' }))
       : COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
     this.storageStrategy = d.storageStrategy ?? 'arb';
+    this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false, ...(d.autoOps ?? {}) };
+    this.lastOpsDay = this.day;
     this.lastYearIdx = Math.floor(this.day / SEASON_YEAR_DAYS); // 读档不重发既往年报
   }
 
@@ -987,6 +1005,61 @@ export class Simulation {
     return Math.round(baseCapex * this.grid.terrain.buildFactor(x, y));
   }
 
+  /** 自动运维助理：晚峰预并网（每 tick）+ 每日一次的淡季检修/自动还款 */
+  private runAutoOps(): void {
+    if (this.autoOps.precommit) this.precommitForPeak();
+    if (this.day === this.lastOpsDay) return;
+    this.lastOpsDay = this.day;
+    // 淡季自动检修：换季窗口 + 磨损高 + 现金充裕 → 每天最多安排一台（避免同时离线）
+    if (this.autoOps.maintenance && this.seasonMaintFactor < 1.0) {
+      for (const g of this.grid.gens.values()) {
+        if (this.wear(g) < AUTOOPS_WEAR_THRESHOLD || this.genOffline(g)) continue;
+        const cost = this.maintenanceCost(g.busId);
+        if (cost != null && this.money > cost * AUTOOPS_MAINT_CASH_MULT) {
+          if (this.scheduleMaintenance(g.busId)) break;
+        }
+      }
+    }
+    // 自动还款：现金高于底线时偿还贷款（少付利息）
+    if (this.autoOps.repay && this.debt > 0 && this.money > AUTOOPS_CASH_FLOOR + 10_000) {
+      const x = Math.min(this.debt, this.money - AUTOOPS_CASH_FLOOR);
+      if (x > 1_000) this.repay(x);
+    }
+  }
+
+  /** 联合调度：15~19 点之间确保并网容量覆盖预估晚峰（慢启动机组提前并网，避免爬坡赶不上） */
+  private precommitForPeak(): void {
+    const h = this.hourOfDay;
+    if (h < 15 || h >= 19) return;
+    let peak = 0;
+    for (const l of this.grid.loads.values()) {
+      if (this.grid.buses.get(l.busId)?.underConstruction) continue;
+      peak += l.baseDemand * demandMultiplier(20, l.profile); // 以 20 点典型晚峰估计
+    }
+    peak *= this.cycleFactor * this.seasonDemandFactor * this.events.demandFactor * this.tech.demandFactor;
+    if (peak <= 0) return;
+    let committedCap = 0;
+    const offline: Generator[] = [];
+    for (const g of this.grid.gens.values()) {
+      if (!g.dispatchable || this.genOffline(g)) continue;
+      if (g.committed) committedCap += g.capacity * g.availability;
+      else if (this.clock >= (g.commitLockUntil ?? 0)) offline.push(g);
+    }
+    const target = peak * AUTOOPS_PRECOMMIT_TARGET; // 余量留给储能/新能源
+    if (committedCap >= target) return;
+    offline.sort((a, b) => this.effMarginalCost(a) - this.effMarginalCost(b));
+    for (const g of offline) {
+      if (committedCap >= target) break;
+      const spec = PLANTS[g.type];
+      g.committed = true;
+      g.commitLockUntil = this.clock + spec.minUpHours;
+      g.startups = (g.startups ?? 0) + 1;
+      this.money -= spec.startupCost;
+      committedCap += g.capacity * g.availability;
+      this.log('info', `🤖 联合调度：晚峰前预并网「${this.grid.buses.get(g.busId)?.name ?? spec.label}」（预估晚峰 ${peak.toFixed(0)}MW）`);
+    }
+  }
+
   canAfford(amount: number): boolean {
     return this.money >= amount;
   }
@@ -1043,6 +1116,9 @@ export class Simulation {
 
     // —— 限时招商机会调度 ——
     this.checkKeyAccountLead();
+
+    // —— 自动运维 / 联合调度助理 ——
+    this.runAutoOps();
 
     // —— 机组老化 + 强迫停运 ——
     const dtDays = dtHours / 24;
@@ -1132,12 +1208,14 @@ export class Simulation {
 
     // —— 过载保护 / 连锁跳闸（含自动重合闸科技；自愈 2.0 延长耐受/缩短重合）——
     const tripDelay = TRIP_DELAY * this.tech.tripDelayFactor;
+    // 重合闸延时：自愈科技最快，其次自动运维助理（60s），都没有则需手动
+    const recloseDelay = this.tech.autoReclose ? this.tech.autoRecloseDelay : (this.autoOps.reclose ? AUTOOPS_RECLOSE_DELAY : Infinity);
     for (const ln of this.grid.lines.values()) {
       if (ln.tripped) {
-        // 电网自愈：跳闸线路冷却一段时间后自动重合闸
-        if (this.tech.autoReclose) {
+        // 电网自愈/自动运维：跳闸线路冷却一段时间后自动重合闸
+        if (Number.isFinite(recloseDelay)) {
           ln.overloadTimer += dtSim;
-          if (ln.overloadTimer >= this.tech.autoRecloseDelay) {
+          if (ln.overloadTimer >= recloseDelay) {
             ln.tripped = false;
             ln.overloadTimer = 0;
           }
@@ -1158,9 +1236,20 @@ export class Simulation {
       }
     }
 
-    // —— 变电站变压器过载保护 ——
+    // —— 变电站变压器过载保护（自动运维助理可自动恢复跳闸变压器）——
     for (const bus of this.grid.buses.values()) {
-      if (bus.kind !== 'substation' || bus.rating == null || bus.transformerTripped) continue;
+      if (bus.kind !== 'substation' || bus.rating == null) continue;
+      if (bus.transformerTripped) {
+        if (this.autoOps.reclose) {
+          bus.transformerTimer = (bus.transformerTimer ?? 0) + dtSim;
+          if (bus.transformerTimer >= AUTOOPS_RECLOSE_DELAY) {
+            bus.transformerTripped = false;
+            bus.transformerTimer = 0;
+            this.log('info', `🤖 自动运维：变电站「${bus.name}」变压器已自动恢复`);
+          }
+        }
+        continue;
+      }
       const effRating = bus.rating * this.tech.transformerRatingFactor; // 大容量变压器科技
       const over = (bus.throughput ?? 0) - effRating;
       if (over > 0.5) {
