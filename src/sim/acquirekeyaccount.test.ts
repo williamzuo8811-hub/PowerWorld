@@ -63,7 +63,7 @@ describe('大客户竞价招商', () => {
     const sim = withStanding(80, 1, 1);
     const normalDC = sim.keyAccountAcquireCost('datacenter');
     const normalMine = sim.keyAccountAcquireCost('mining');
-    sim.keyAccountLead = { profile: 'datacenter', endClock: sim.clock + 1000 };
+    sim.keyAccountLead = { profile: 'datacenter', endClock: sim.clock + 1000, poach: false };
     expect(sim.keyAccountLeadActive('datacenter')).toBe(true);
     expect(sim.keyAccountLeadActive('mining')).toBe(false);
     expect(sim.keyAccountAcquireCost('datacenter')).toBeLessThan(normalDC); // 数据中心打折

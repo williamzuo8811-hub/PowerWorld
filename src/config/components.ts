@@ -403,6 +403,11 @@ export const LEAD_FIRST_DAY = 4; // 首个招商机会出现的天
 export const LEAD_INTERVAL_DAYS = 6; // 招商机会间隔（天）
 export const LEAD_WINDOW_DAYS = 3; // 招商窗口时长（天）
 export const LEAD_DISCOUNT = 0.6; // 窗口期内接入费折扣
+// —— 反向挖角：竞争力高时，有机会从较弱对手手中赢得现成大客户 ——
+export const POACH_WIN_STANDING = 0.65; // 触发反向挖角机会所需的最低竞争力
+export const POACH_WIN_CHANCE = 0.45; // 满足条件时招商机会为"竞品客户"的概率
+export const POACH_WIN_MIN_COMP = 120; // 可被挖的对手最低容量 (MW)
+export const POACH_WIN_FRACTION = 0.6; // 赢得竞品客户时对手缩减的容量比例（×该品类规模）
 // —— 大客户流失与自备应急 ——
 export const CHURN_THRESHOLD = 0.55; // 满意度持续低于此累积流失风险
 export const CHURN_DAYS = 3; // 持续低满意达此天数 → 大客户流失（撤离）

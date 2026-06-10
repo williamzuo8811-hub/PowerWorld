@@ -23,6 +23,7 @@ import {
   CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, BACKUP_CAPEX,
   ACQ_STANDING_MIN, ACQ_FACTOR_BASE, ACQ_FACTOR_SPAN, ACQ_FACTOR_MIN, ACQ_FACTOR_MAX, ACQ_COMP_K, ACQ_COMP_MAX,
   LEAD_FIRST_DAY, LEAD_INTERVAL_DAYS, LEAD_WINDOW_DAYS, LEAD_DISCOUNT,
+  POACH_WIN_STANDING, POACH_WIN_CHANCE, POACH_WIN_MIN_COMP, POACH_WIN_FRACTION,
   UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY,
   CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN,
   REC_START, REC_DECLINE_PER_DAY, REC_MIN,
@@ -171,7 +172,7 @@ export interface SimSaveState {
   frequency: number;
   reliability: number;
   reputation: number;
-  keyAccountLead: { profile: LoadProfile; endClock: number } | null;
+  keyAccountLead: { profile: LoadProfile; endClock: number; poach: boolean } | null;
   nextLeadAt: number;
   renewableShare: number;
   windBase: number;
@@ -212,7 +213,7 @@ export class Simulation {
   reliability = 1; // 供电率滑动平均 0..1
   reputation = 70; // 公众形象 0..100
   customerSatisfaction = 1; // 大客户加权满意度 0..1
-  keyAccountLead: { profile: LoadProfile; endClock: number } | null = null; // 当前限时招商机会
+  keyAccountLead: { profile: LoadProfile; endClock: number; poach: boolean } | null = null; // 当前限时招商机会（poach=可从对手赢得的竞品客户）
   nextLeadAt = LEAD_FIRST_DAY * 24; // 下个招商机会出现时刻
   renewableShare = 1; // 清洁电力占比 0..1（EMA）
   peakServed = 0; // 历史峰值供电 (MW) —— 成就用
@@ -391,7 +392,7 @@ export class Simulation {
     this.frequency = d.frequency;
     this.reliability = d.reliability;
     this.reputation = d.reputation ?? 70;
-    this.keyAccountLead = d.keyAccountLead ? { ...d.keyAccountLead } : null;
+    this.keyAccountLead = d.keyAccountLead ? { profile: d.keyAccountLead.profile, endClock: d.keyAccountLead.endClock, poach: d.keyAccountLead.poach ?? false } : null;
     this.nextLeadAt = d.nextLeadAt ?? LEAD_FIRST_DAY * 24;
     this.renewableShare = d.renewableShare ?? 1;
     this.windBase = d.windBase;
@@ -1679,18 +1680,36 @@ export class Simulation {
     return !!this.keyAccountLead && this.keyAccountLead.profile === profile && this.clock < this.keyAccountLead.endClock;
   }
 
+  /** 大客户接入成功后调用：消费当前匹配机会；若为竞品客户则削弱最强对手（反向挖角） */
+  onKeyAccountAcquired(profile: LoadProfile): void {
+    const lead = this.keyAccountLead;
+    if (!lead || lead.profile !== profile || this.clock >= lead.endClock) return;
+    if (lead.poach && this.competitors.length > 0) {
+      const top = this.competitors.reduce((a, b) => (b.capacity > a.capacity ? b : a));
+      const shrink = (KEY_ACCOUNTS[profile]?.baseDemand ?? 0) * POACH_WIN_FRACTION;
+      top.capacity = Math.max(top.base * COMPETITOR_CAP_MIN_FRAC, top.capacity - shrink);
+      this.log('good', `🏆 从对手「${top.name}」赢得${KEY_ACCOUNTS[profile].label}！对手容量 −${shrink.toFixed(0)}MW`);
+    }
+    this.keyAccountLead = null; // 机会已用掉
+  }
+
   /** 限时招商机会调度：到点出现、过期清除 */
   private checkKeyAccountLead(): void {
     if (this.keyAccountLead && this.clock >= this.keyAccountLead.endClock) this.keyAccountLead = null;
     if (this.clock >= this.nextLeadAt) {
       const profiles: LoadProfile[] = ['datacenter', 'transport', 'petrochem', 'mining'];
       const p = profiles[Math.floor(Math.random() * profiles.length)];
-      this.keyAccountLead = { profile: p, endClock: this.clock + LEAD_WINDOW_DAYS * 24 };
+      // 反向挖角：竞争力高且有较强对手时，机会可能是"竞品客户"（接入即从对手赢得）
+      const topComp = this.competitors.length ? Math.max(...this.competitors.map((c) => c.capacity)) : 0;
+      const poach = this.companyStanding > POACH_WIN_STANDING && topComp > POACH_WIN_MIN_COMP && Math.random() < POACH_WIN_CHANCE;
+      this.keyAccountLead = { profile: p, endClock: this.clock + LEAD_WINDOW_DAYS * 24, poach };
       // 竞争力越高，招商机会越频繁（奖励优质运营商）
       const intervalFactor = clamp(1.6 - this.companyStanding, 0.7, 1.6);
       this.nextLeadAt = this.clock + LEAD_INTERVAL_DAYS * 24 * intervalFactor + Math.random() * 48;
       const spec = KEY_ACCOUNTS[p];
-      this.log('good', `🎯 招商机会：${spec.icon}${spec.label}正在选址，${LEAD_WINDOW_DAYS}天内接入享 ${(LEAD_DISCOUNT * 10).toFixed(0)}折接入费！`);
+      this.log('good', poach
+        ? `🎯 竞品客户机会：${spec.icon}${spec.label}对现服务商不满，${LEAD_WINDOW_DAYS}天内接入可从对手赢得（并削弱对手）！`
+        : `🎯 招商机会：${spec.icon}${spec.label}正在选址，${LEAD_WINDOW_DAYS}天内接入享 ${(LEAD_DISCOUNT * 10).toFixed(0)}折接入费！`);
     }
   }
 

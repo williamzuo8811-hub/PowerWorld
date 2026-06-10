@@ -181,7 +181,7 @@ function openPortfolio(): void {
     customerSatisfaction: sim.customerSatisfaction,
     companyStanding: sim.companyStanding,
     marketContestation: sim.marketContestation,
-    lead: sim.keyAccountLead ? { icon: KEY_ACCOUNTS[sim.keyAccountLead.profile].icon, label: KEY_ACCOUNTS[sim.keyAccountLead.profile].label, daysLeft: Math.max(0, (sim.keyAccountLead.endClock - sim.clock) / 24) } : null,
+    lead: sim.keyAccountLead ? { icon: KEY_ACCOUNTS[sim.keyAccountLead.profile].icon, label: KEY_ACCOUNTS[sim.keyAccountLead.profile].label, daysLeft: Math.max(0, (sim.keyAccountLead.endClock - sim.clock) / 24), poach: sim.keyAccountLead.poach } : null,
     cleanHistory: sim.history.map((h) => h.cleanShare * 100),
     activeFilter: renderer.categoryFilter,
     onFilter: (key) => {
@@ -434,6 +434,7 @@ function handleClick(clientX: number, clientY: number): void {
       if (sim.spend(acqCost)) {
         const { bus: lbus } = sim.grid.addLoad(p.x, p.y, spec.profile, spec.baseDemand, spec.label, spec.growthPerHour);
         startBuild(lbus, spec.buildDays);
+        sim.onKeyAccountAcquired(spec.profile); // 消费招商机会/反向挖角
         invalidateN1();
         sound.build();
         const factor = acqCost / spec.connectionCapex;
