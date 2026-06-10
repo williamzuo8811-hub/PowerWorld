@@ -59,7 +59,10 @@ describe('能源品类资产组合', () => {
     for (let i = 0; i < 30; i++) sim.tick(0.05, 600); // 让火电出力
     const thermal = sim.portfolio().find((c) => c.key === 'thermal')!;
     expect(thermal.share).toBeGreaterThan(0.9); // 全靠火电 → 发电占比≈100%
+    expect(thermal.co2Rate).toBeGreaterThan(0); // 火电有碳排
     const grid = sim.portfolio().find((c) => c.key === 'grid')!;
     expect(grid.share).toBe(0); // 电网类无占比条
+    const ci = sim.portfolio().find((c) => c.key === 'ci')!;
+    expect(ci.revenueRate).toBeGreaterThan(0); // 工商业负荷有售电收入
   });
 });

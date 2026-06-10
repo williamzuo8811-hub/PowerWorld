@@ -1,6 +1,10 @@
 // 能源品类统计面板（资产组合）：按品类汇总当前资产，点击品类→地图高亮（呼应"能源品类"筛选器）。
 import type { PortfolioCategory } from '../sim/simulation';
 
+function fmtK(n: number): string {
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : Math.round(n).toString();
+}
+
 export interface PortfolioPanelOptions {
   categories: PortfolioCategory[];
   customerSatisfaction: number;
@@ -42,9 +46,14 @@ export class PortfolioPanel {
       const bar = c.share > 0.001
         ? `<div style="height:4px;background:#182431;border-radius:2px;margin-top:3px;overflow:hidden"><div style="width:${Math.min(100, c.share * 100).toFixed(0)}%;height:100%;background:${hex}"></div></div>`
         : '';
+      const econ = c.revenueRate > 1
+        ? `<span style="color:var(--accent)"> · 售电 ¥${fmtK(c.revenueRate)}/h</span>`
+        : c.co2Rate > 0.05
+          ? `<span style="color:#f2994a"> · 碳 ${c.co2Rate.toFixed(1)} t/h</span>`
+          : '';
       rowEl.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${hex};flex:none"></span>`
         + `<span style="font-size:16px;width:22px;text-align:center">${c.icon}</span>`
-        + `<div style="flex:1;min-width:0"><div style="font-size:13px">${c.label}${active ? ' ·已高亮' : ''}</div><div style="font-size:11px;color:var(--text-dim)">${c.value}</div>${bar}</div>`
+        + `<div style="flex:1;min-width:0"><div style="font-size:13px">${c.label}${active ? ' ·已高亮' : ''}</div><div style="font-size:11px;color:var(--text-dim)">${c.value}${econ}</div>${bar}</div>`
         + `<b style="font-size:18px;min-width:34px;text-align:right">${c.count}</b>`;
       if (!dim) rowEl.onclick = () => o.onFilter(active ? null : c.key);
       panel.appendChild(rowEl);
