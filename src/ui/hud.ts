@@ -38,6 +38,17 @@ const TOOLS: ToolDef[] = [
   { id: 'bulldoze', label: '✕ 拆除', sub: '退役设备 / 线路(返残值)' },
 ];
 
+// 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏
+const TOOL_GROUPS: { label: string; ids: ToolId[]; collapsed?: boolean }[] = [
+  { label: '电网', ids: ['line', 'substation', 'capacitor'] },
+  { label: '电源', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear'] },
+  { label: '储能', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
+  { label: '大客户', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
+  { label: '改造 / 合约', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },
+  { label: '其他', ids: ['inspect', 'bulldoze'] },
+];
+const TOOL_BY_ID = new Map(TOOLS.map((t) => [t.id, t]));
+
 export class Hud {
   currentTool: ToolId = 'line';
   onSave?: () => void; // 存档按钮回调
@@ -56,6 +67,7 @@ export class Hud {
 
   private statVals = new Map<string, HTMLElement>();
   private toolBtns = new Map<ToolId, HTMLButtonElement>();
+  private collapsedGroups = new Set<number>(TOOL_GROUPS.map((g, i) => (g.collapsed ? i : -1)).filter((i) => i >= 0));
   private speedBtns: HTMLButtonElement[] = [];
   private logEl!: HTMLElement;
   private inspectorEl!: HTMLElement;
@@ -176,20 +188,43 @@ export class Hud {
 
   private buildToolbar(): void {
     const tb = document.getElementById('toolbar')!;
-    tb.innerHTML = '<div class="title">建造工具（按数字键 1-9 快速切换）</div>';
-    TOOLS.forEach((t) => {
-      const b = document.createElement('button');
-      b.innerHTML = `${t.label}<span class="cost">${t.sub}</span>`;
-      b.onclick = () => this.setTool(t.id);
-      tb.appendChild(b);
-      this.toolBtns.set(t.id, b);
+    tb.innerHTML = '<div class="title">建造工具（数字键 1-9 · 点分类标题折叠）</div>';
+    this.toolBtns.clear();
+    TOOL_GROUPS.forEach((grp, gi) => {
+      const collapsed = this.collapsedGroups.has(gi);
+      const header = document.createElement('div');
+      header.className = 'tool-group';
+      header.textContent = `${collapsed ? '▸' : '▾'} ${grp.label}`;
+      header.onclick = () => {
+        if (this.collapsedGroups.has(gi)) this.collapsedGroups.delete(gi);
+        else this.collapsedGroups.add(gi);
+        this.buildToolbar();
+      };
+      tb.appendChild(header);
+      if (collapsed) return;
+      for (const id of grp.ids) {
+        const t = TOOL_BY_ID.get(id);
+        if (!t) continue;
+        const b = document.createElement('button');
+        b.innerHTML = `${t.label}<span class="cost">${t.sub}</span>`;
+        b.onclick = () => this.setTool(id);
+        tb.appendChild(b);
+        this.toolBtns.set(id, b);
+      }
     });
     this.refreshToolButtons();
   }
 
   setTool(id: ToolId): void {
     this.currentTool = id;
-    this.refreshToolButtons();
+    // 若所选工具在折叠分类内，展开它以便看到高亮
+    const gi = TOOL_GROUPS.findIndex((g) => g.ids.includes(id));
+    if (gi >= 0 && this.collapsedGroups.has(gi)) {
+      this.collapsedGroups.delete(gi);
+      this.buildToolbar();
+    } else {
+      this.refreshToolButtons();
+    }
   }
   setSpeed(i: number): void {
     this.speedIndex = Math.max(0, Math.min(TIME_SCALES.length - 1, i));
