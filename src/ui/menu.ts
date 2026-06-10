@@ -16,6 +16,11 @@ export interface MenuOptions {
   onImport: (json: string) => boolean;
   onSaveTo?: (slot: SlotId) => void; // 把当前对局存到指定槽位
   onResume?: () => void; // 返回当前对局
+  // —— 自定义关卡（Mod）——
+  customScenarios?: { name: string; brief: string; scenario: Scenario }[];
+  onDeleteCustom?: (name: string) => void;
+  onImportScenario?: (json: string) => string | null; // 返回错误信息或 null
+  onExportCurrentScenario?: () => void; // 把当前局面导出为关卡文件
 }
 
 export class Menu {
@@ -114,6 +119,69 @@ export class Menu {
       impRow.appendChild(impBtn);
       impRow.appendChild(fileInput);
       sec.appendChild(impRow);
+      panel.appendChild(sec);
+    }
+
+    // —— 自定义关卡区（导入/导出/游玩/删除）——
+    const customs = opts.customScenarios ?? [];
+    if (customs.length || opts.onImportScenario || (opts.gameActive && opts.onExportCurrentScenario)) {
+      const sec = document.createElement('div');
+      sec.className = 'menu-saves';
+      sec.innerHTML = `<div class="menu-sec-title">🛠 自定义关卡（搭好局面导出分享，对方导入即玩）</div>`;
+      for (const c of customs) {
+        const row = document.createElement('div');
+        row.className = 'save-row';
+        const play = document.createElement('button');
+        play.className = 'save-load';
+        play.innerHTML = `▶ ${c.name} <span class="save-ts">${c.brief}</span>`;
+        play.onclick = () => opts.onStart(c.scenario);
+        const del = document.createElement('button');
+        del.className = 'save-mini';
+        del.title = '删除此自定义关卡';
+        del.textContent = '✕';
+        del.onclick = () => {
+          if (del.dataset.confirm === '1') opts.onDeleteCustom?.(c.name);
+          else { del.dataset.confirm = '1'; del.textContent = '确认?'; setTimeout(() => { del.dataset.confirm = ''; del.textContent = '✕'; }, 2000); }
+        };
+        row.appendChild(play);
+        row.appendChild(del);
+        sec.appendChild(row);
+      }
+      const ctlRow = document.createElement('div');
+      ctlRow.className = 'save-row';
+      if (opts.onImportScenario) {
+        const impBtn = document.createElement('button');
+        impBtn.className = 'save-mini';
+        impBtn.style.flex = '1';
+        impBtn.textContent = '📂 导入关卡文件（JSON）';
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.json,application/json';
+        fileInput.style.display = 'none';
+        fileInput.onchange = () => {
+          const f = fileInput.files?.[0];
+          if (!f) return;
+          f.text().then((text) => {
+            const err = opts.onImportScenario!(text);
+            if (err) {
+              impBtn.textContent = `⚠ ${err}`;
+              setTimeout(() => { impBtn.textContent = '📂 导入关卡文件（JSON）'; }, 2500);
+            }
+          });
+        };
+        impBtn.onclick = () => fileInput.click();
+        ctlRow.appendChild(impBtn);
+        ctlRow.appendChild(fileInput);
+      }
+      if (opts.gameActive && opts.onExportCurrentScenario) {
+        const expBtn = document.createElement('button');
+        expBtn.className = 'save-mini';
+        expBtn.style.flex = '1';
+        expBtn.textContent = '⬇ 把当前局面导出为关卡';
+        expBtn.onclick = () => opts.onExportCurrentScenario!();
+        ctlRow.appendChild(expBtn);
+      }
+      if (ctlRow.children.length) sec.appendChild(ctlRow);
       panel.appendChild(sec);
     }
 

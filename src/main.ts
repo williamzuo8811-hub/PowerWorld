@@ -21,6 +21,7 @@ import { SCENARIOS, scenarioById, type Scenario } from './game/scenarios';
 import { saveGame, loadGame, listSaves, deleteSave, exportSave, importSave, type SlotId } from './game/save';
 import { recordScore, allBests, shareText, type ScoreRecord } from './game/leaderboard';
 import { dailySeed } from './game/scenarios';
+import { parseCustomScenario, exportCurrentAsScenario, listCustomScenarios, addCustomScenario, removeCustomScenario, toScenario } from './game/custom';
 import { TECHS, type TechId } from './config/tech';
 import type { Bus } from './sim/types';
 import {
@@ -157,6 +158,25 @@ function openMenu(): void {
     onImport: (json) => { const ok = importSave(json, 'quick'); if (ok) openMenu(); return ok; },
     onSaveTo: (slot) => { saveGame(sim, currentScenarioId, slot); openMenu(); },
     onResume: () => { menu.hide(); menuOpen = false; },
+    customScenarios: listCustomScenarios().map((d) => ({ name: d.name, brief: d.brief ?? '', scenario: toScenario(d) })),
+    onDeleteCustom: (name) => { removeCustomScenario(name); openMenu(); },
+    onImportScenario: (json) => {
+      const r = parseCustomScenario(json);
+      if ('error' in r) return r.error;
+      addCustomScenario(r.data);
+      openMenu();
+      return null;
+    },
+    onExportCurrentScenario: () => {
+      const name = `我的关卡 ${new Date().toISOString().slice(5, 10)}`;
+      const data = exportCurrentAsScenario(sim, name);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `powerworld-scenario-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
   });
 }
 
