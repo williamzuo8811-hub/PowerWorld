@@ -58,6 +58,22 @@ export interface HistorySample {
   demand: number;
 }
 
+/** 扩容投资建议（IRP） */
+export interface ExpansionAdvice {
+  gapMW: number; // 约束情景下需补充的可信容量 (MW)，≤0 表示充裕
+  bindingScenario: string; // 约束情景（备用率最低者）名称
+  deficitDay: number; // 基准增长下备用率跌破 0 的日（Infinity=短期不发生）
+  curDay: number; // 当前日（便于 UI 计算剩余天数）
+  option: { // 推荐的最低成本补强方案（按每可信 MW 造价择优）
+    label: string;
+    units: number; // 需新建的机组/储能数量
+    firmPerUnit: number; // 单台可信容量贡献 (MW)
+    capex: number; // 总投资 (¥)
+    buildDays: number; // 工期（天）
+    startByDay: number; // 建议开工日（赤字日 − 工期）
+  } | null;
+}
+
 /** 压力测试单情景结果（IRP） */
 export interface StressResult {
   id: string;
@@ -1396,6 +1412,56 @@ export class Simulation {
 
       return { id: sc.id, name: sc.name, peakDemand: peak, firmSupply: firm, reserveMargin: margin, verdict, dailyNet };
     });
+  }
+
+  /**
+   * 扩容投资建议（IRP）：在压力测试基础上，给出补强约束情景缺口的最低成本方案，
+   * 并按基准需求增长推算「赤字日」与「建议开工日」（须扣除工期前置时间）。纯分析。
+   */
+  recommendExpansion(scenarios: StressScenarioSpec[] = IRP_SCENARIOS): ExpansionAdvice {
+    const results = this.stressTest(scenarios);
+    const binding = results.reduce((a, b) => (b.reserveMargin < a.reserveMargin ? b : a));
+    const gap = binding.reserveMargin < 0 ? -binding.reserveMargin * binding.peakDemand : 0;
+
+    // 候选补强：可调机组 + 储能，按"每可信 MW 造价"择优
+    type Cand = { label: string; firmPerUnit: number; capexPerUnit: number; buildDays: number };
+    const cands: Cand[] = [];
+    for (const [t, s] of Object.entries(PLANTS)) {
+      if (!s.dispatchable) continue;
+      const firm = s.capacity * (CAPACITY_CREDIT as Record<string, number>)[t];
+      if (firm > 0) cands.push({ label: s.label, firmPerUnit: firm, capexPerUnit: s.capex, buildDays: s.buildDays });
+    }
+    for (const s of Object.values(STORAGE)) {
+      const firm = s.powerRating * s.capacityCredit;
+      if (firm > 0) cands.push({ label: s.label, firmPerUnit: firm, capexPerUnit: s.capex, buildDays: s.buildDays });
+    }
+    cands.sort((a, b) => a.capexPerUnit / a.firmPerUnit - b.capexPerUnit / b.firmPerUnit);
+    const best = cands[0];
+
+    // 基准增长下备用率跌破 0 的赤字日
+    let wsum = 0, gsum = 0;
+    for (const load of this.grid.loads.values()) { wsum += load.baseDemand; gsum += load.baseDemand * load.growthPerHour; }
+    const ghHour = wsum > 0 ? gsum / wsum : 0;
+    const dgDay = Math.pow(1 + ghHour, 24) - 1;
+    const base = results.find((r) => r.id === 'base')!;
+    let deficitDay = Infinity;
+    if (base.peakDemand > 0 && base.firmSupply <= base.peakDemand) deficitDay = this.day;
+    else if (base.peakDemand > 0 && dgDay > 1e-9) deficitDay = this.day + Math.log(base.firmSupply / base.peakDemand) / Math.log(1 + dgDay);
+
+    let option: ExpansionAdvice['option'] = null;
+    if (gap > 0 && best) {
+      const units = Math.ceil(gap / best.firmPerUnit);
+      const anchor = Number.isFinite(deficitDay) ? deficitDay : this.day;
+      option = {
+        label: best.label,
+        units,
+        firmPerUnit: best.firmPerUnit,
+        capex: units * best.capexPerUnit,
+        buildDays: best.buildDays,
+        startByDay: anchor - best.buildDays,
+      };
+    }
+    return { gapMW: gap, bindingScenario: binding.name, deficitDay, curDay: this.day, option };
   }
 
   snapshot(): SimSnapshot {

@@ -60,7 +60,45 @@ describe('长期规划压力测试（IRP）', () => {
     const moneyBefore = sim.money;
     const clockBefore = sim.clock;
     sim.stressTest();
+    sim.recommendExpansion();
     expect(sim.money).toBe(moneyBefore);
     expect(sim.clock).toBe(clockBefore);
+  });
+
+  it('充裕机队无补强缺口', () => {
+    const sim = withLoad();
+    for (let k = 0; k < 8; k++) sim.grid.addPlant('coal', k, 1); // 大量可调容量
+    const adv = sim.recommendExpansion();
+    expect(adv.gapMW).toBe(0);
+    expect(adv.option).toBeNull();
+  });
+
+  it('容量不足时推荐每可信MW最省的方案（燃气）并给出工期与开工时点', () => {
+    const sim = withLoad();
+    sim.grid.addPlant('gas', 0, 1); // 仅少量可调容量 → 约束情景缺口
+    const adv = sim.recommendExpansion();
+    expect(adv.gapMW).toBeGreaterThan(0);
+    expect(adv.option).not.toBeNull();
+    expect(adv.option!.label).toBe('燃气'); // 每可信 MW 造价最低
+    expect(adv.option!.units).toBeGreaterThanOrEqual(1);
+    expect(adv.option!.capex).toBeGreaterThan(0);
+    expect(adv.option!.buildDays).toBeGreaterThan(0);
+    // 补强容量应足以覆盖缺口
+    expect(adv.option!.units * adv.option!.firmPerUnit).toBeGreaterThanOrEqual(adv.gapMW);
+  });
+
+  it('正增长负荷给出有限赤字日，零增长则不发生', () => {
+    const grow = new Simulation();
+    grow.grid.addLoad(0, 0, 'residential', 100, '城区', 0.002); // 正增长
+    for (let k = 0; k < 5; k++) grow.grid.addPlant('coal', k, 1); // 当前充裕
+    const a1 = grow.recommendExpansion();
+    expect(Number.isFinite(a1.deficitDay)).toBe(true);
+    expect(a1.deficitDay).toBeGreaterThan(grow.day);
+
+    const flat = new Simulation();
+    flat.grid.addLoad(0, 0, 'residential', 100, '城区', 0); // 零增长
+    for (let k = 0; k < 5; k++) flat.grid.addPlant('coal', k, 1);
+    const a2 = flat.recommendExpansion();
+    expect(Number.isFinite(a2.deficitDay)).toBe(false);
   });
 });
