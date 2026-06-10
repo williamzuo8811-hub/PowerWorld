@@ -16,6 +16,7 @@ import {
   REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS,
   MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR,
   INSURANCE_RATE_PER_DAY, INSURANCE_COVERAGE,
+  HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
 } from '../config/components';
 import type { Generator, Line, Load, LoadProfile } from './types';
 import {
@@ -489,6 +490,11 @@ export class Simulation {
     const s = seasonIntensity(this.yearPhase);
     return clamp(1 + SEASON_WIND_AMP * (s.winter - s.summer), 0, 2);
   }
+  /** 水电来水可用系数（夏丰冬枯）：决定水电当期最大出力 */
+  get hydroAvailability(): number {
+    const s = seasonIntensity(this.yearPhase);
+    return clamp(HYDRO_AVAIL_BASE + HYDRO_SUMMER_BOOST * s.summer - HYDRO_WINTER_DROP * s.winter, 0.2, 1);
+  }
   /** 季节标签 */
   get seasonLabel(): string {
     const p = this.yearPhase;
@@ -547,7 +553,7 @@ export class Simulation {
     for (const m of this.mergedCapacity) blocks.push({ mw: m.mw, cost: m.marginalCost, player: true }); // 商船队=自有
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
-      if (g.dispatchable) blocks.push({ mw: g.capacity, cost: this.effMarginalCost(g), player: true });
+      if (g.dispatchable) blocks.push({ mw: g.capacity * g.availability, cost: this.effMarginalCost(g), player: true }); // 水电按来水折减
       else blocks.push({ mw: g.capacity * g.availability, cost: 0.5, player: true });
     }
     blocks.sort((a, b) => a.cost - b.cost);
@@ -1028,6 +1034,8 @@ export class Simulation {
         if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
         a *= this.tech.renewAvailFactor; // 功率预测 AI：预测准 → 有效出力略升
         g.availability = clamp(a, 0, 1);
+      } else if (g.type === 'hydro') {
+        g.availability = this.hydroAvailability; // 来水决定水电可用出力（夏丰冬枯）
       }
     }
 
@@ -1116,7 +1124,7 @@ export class Simulation {
     let availCap = 0;
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
-      availCap += g.dispatchable ? g.capacity : g.capacity * g.availability;
+      availCap += g.capacity * g.availability; // 可调机组 availability=1（水电按来水折减）
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
@@ -1271,7 +1279,8 @@ export class Simulation {
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
       if (g.type === 'gas') regCap += g.capacity * AS_GAS_REG_FACTOR;
-      if (g.dispatchable) reserveCap += Math.max(0, g.capacity - g.output);
+      if (g.type === 'hydro') regCap += g.capacity * g.availability * AS_HYDRO_REG_FACTOR; // 水电快速可调
+      if (g.dispatchable) reserveCap += Math.max(0, g.capacity * g.availability - g.output);
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
@@ -1300,6 +1309,7 @@ export class Simulation {
     for (const g of this.grid.gens.values()) {
       if (this.genOffline(g)) continue;
       if (g.type === 'gas') flexCap += g.capacity;
+      if (g.type === 'hydro') flexCap += g.capacity * g.availability; // 水电=经典灵活性资源
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
@@ -1452,7 +1462,7 @@ export class Simulation {
     const desired = new Map<number, number>();
     let rem = remaining;
     for (const g of merit) {
-      const give = clamp(rem, 0, g.capacity);
+      const give = clamp(rem, 0, g.capacity * g.availability); // 水电按来水折减可用出力
       desired.set(g.id, give);
       rem -= give;
     }
@@ -1488,7 +1498,7 @@ export class Simulation {
       const step = this.effRamp(g) * dtSim;
       if (g.output < want) g.output = Math.min(want, g.output + step);
       else g.output = Math.max(want, g.output - step);
-      g.output = clamp(g.output, 0, g.capacity);
+      g.output = clamp(g.output, 0, g.capacity * g.availability);
     }
     // 新能源先按可用出力发满
     for (const g of gens) if (!g.dispatchable) g.output = availMax.get(g.id) ?? 0;
@@ -1653,9 +1663,10 @@ export class Simulation {
 
   /** 更新公众形象与清洁电力占比 */
   private updateReputation(aggGen: number, aggServed: number, aggDemand: number, co2Rate: number, dtHours: number): void {
-    // 清洁电力占比 = (新能源出力 + 储能放电) / 总电源
+    // 清洁电力占比 = (近零碳电源出力 + 储能放电) / 总电源。
+    // 近零碳：风/光/核/水/生物质，以及深度脱碳改造后的火电（有效排放 < 0.05 t/MWh）。
     let cleanGen = 0;
-    for (const g of this.grid.gens.values()) if (!g.dispatchable) cleanGen += g.output;
+    for (const g of this.grid.gens.values()) if (this.effCo2(g) < 0.05) cleanGen += g.output;
     for (const b of this.grid.batteries.values()) cleanGen += Math.max(0, b.output);
     const instClean = aggGen > 0.5 ? clamp(cleanGen / aggGen, 0, 1) : this.renewableShare;
     const aClean = clamp(dtHours / 6, 0, 1);
@@ -1982,7 +1993,7 @@ export class Simulation {
     const loads = [...this.grid.loads.values()];
     const cap = (arr: { capacity: number }[]) => arr.reduce((s, g) => s + g.capacity, 0);
     const dem = (arr: { baseDemand: number }[]) => arr.reduce((s, l) => s + l.baseDemand, 0);
-    const renew = gens.filter((g) => g.type === 'wind' || g.type === 'solar');
+    const renew = gens.filter((g) => g.type === 'wind' || g.type === 'solar' || g.type === 'hydro' || g.type === 'biomass');
     const thermal = gens.filter((g) => g.type === 'coal' || g.type === 'gas');
     const nuke = gens.filter((g) => g.type === 'nuclear');
     const subs = [...this.grid.buses.values()].filter((b) => b.kind === 'substation');

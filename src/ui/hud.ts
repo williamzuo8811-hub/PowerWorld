@@ -8,7 +8,7 @@ import {
 
 export type ToolId =
   | 'inspect' | 'line' | 'substation'
-  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'battery' | 'pumped' | 'hydrogen'
+  | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'hydro' | 'biomass' | 'battery' | 'pumped' | 'hydrogen'
   | 'datacenter' | 'transport' | 'petrochem' | 'mining'
   | 'maintenance' | 'ccs' | 'capacitor' | 'backup' | 'contract' | 'bulldoze';
 
@@ -23,6 +23,8 @@ const TOOLS: ToolDef[] = [
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·工期${PLANTS.wind.buildDays}天·看风` },
   { id: 'solar', label: '■ 光伏 30MW', sub: `¥${fmt(PLANTS.solar.capex)}·工期${PLANTS.solar.buildDays}天·白天` },
   { id: 'nuclear', label: '■ 核电 120MW', sub: `¥${fmt(PLANTS.nuclear.capex)}·工期${PLANTS.nuclear.buildDays}天·基荷` },
+  { id: 'hydro', label: `■ 水电 ${PLANTS.hydro.capacity}MW`, sub: `¥${fmt(PLANTS.hydro.capex)}·工期${PLANTS.hydro.buildDays}天·清洁可调·看来水` },
+  { id: 'biomass', label: `■ 生物质 ${PLANTS.biomass.capacity}MW`, sub: `¥${fmt(PLANTS.biomass.capex)}·工期${PLANTS.biomass.buildDays}天·清洁基荷` },
   { id: 'battery', label: `▰ 电池 ${STORAGE.battery.powerRating}MW`, sub: `¥${fmt(STORAGE.battery.capex)}·4h·工期${STORAGE.battery.buildDays}天` },
   { id: 'pumped', label: `▰ 抽蓄 ${STORAGE.pumped.powerRating}MW`, sub: `¥${fmt(STORAGE.pumped.capex)}·12h·工期${STORAGE.pumped.buildDays}天` },
   { id: 'hydrogen', label: `▰ 氢储 ${STORAGE.hydrogen.powerRating}MW`, sub: `¥${fmt(STORAGE.hydrogen.capex)}·60h·工期${STORAGE.hydrogen.buildDays}天` },
@@ -41,7 +43,7 @@ const TOOLS: ToolDef[] = [
 // 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏
 const TOOL_GROUPS: { label: string; ids: ToolId[]; collapsed?: boolean }[] = [
   { label: '电网', ids: ['line', 'substation', 'capacitor'] },
-  { label: '电源', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear'] },
+  { label: '电源', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass'] },
   { label: '储能', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
   { label: '大客户', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
   { label: '改造 / 合约', ids: ['ccs', 'backup', 'contract', 'maintenance'], collapsed: true },

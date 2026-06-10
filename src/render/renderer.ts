@@ -313,7 +313,7 @@ function busCategory(grid: Grid, bus: Bus): string | null {
   if (bus.kind === 'plant') {
     const g = grid.gensAtBus(bus.id)[0];
     if (!g) return null;
-    if (g.type === 'wind' || g.type === 'solar') return 'renewable';
+    if (g.type === 'wind' || g.type === 'solar' || g.type === 'hydro' || g.type === 'biomass') return 'renewable';
     if (g.type === 'nuclear') return 'nuclear';
     return 'thermal';
   }

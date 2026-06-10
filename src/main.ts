@@ -25,9 +25,9 @@ import {
 } from './config/components';
 
 const PLANT_TOOLS: Record<string, keyof typeof PLANTS> = {
-  coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear',
+  coal: 'coal', gas: 'gas', wind: 'wind', solar: 'solar', nuclear: 'nuclear', hydro: 'hydro', biomass: 'biomass',
 };
-const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'backup', 'contract', 'bulldoze'];
+const TOOL_ORDER: ToolId[] = ['inspect', 'line', 'substation', 'coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass', 'battery', 'pumped', 'hydrogen', 'datacenter', 'transport', 'petrochem', 'mining', 'maintenance', 'ccs', 'capacitor', 'backup', 'contract', 'bulldoze'];
 
 const sim = new Simulation();
 const renderer = new Renderer(sim.grid);

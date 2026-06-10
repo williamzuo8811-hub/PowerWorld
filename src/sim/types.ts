@@ -5,7 +5,7 @@
 export type BusKind = 'plant' | 'substation' | 'load' | 'storage';
 
 /** 机组类型 */
-export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear';
+export type PlantType = 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'hydro' | 'biomass';
 
 /** 负荷画像（决定一天内的用电曲线）。后四类为可招商引资的"大客户" */
 export type LoadProfile = 'residential' | 'commercial' | 'industrial' | 'datacenter' | 'transport' | 'petrochem' | 'mining';
