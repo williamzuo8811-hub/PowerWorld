@@ -169,6 +169,7 @@ function openResearch(): void {
     techs: TECHS,
     unlocked: sim.tech.unlocked,
     points: sim.tech.points,
+    canUnlock: (id) => sim.tech.canUnlock(id),
     onUnlock: (id) => doUnlock(id),
     onClose: () => { research.hide(); panelOpen = false; },
   });
@@ -176,7 +177,7 @@ function openResearch(): void {
 
 function doUnlock(id: TechId): void {
   const t = TECHS.find((x) => x.id === id);
-  if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost) return;
+  if (!t || sim.tech.unlocked.has(id) || sim.tech.points < t.cost || !sim.tech.canUnlock(id)) return;
   sim.tech.points -= t.cost;
   sim.tech.unlocked.add(id);
   sound.unlock();

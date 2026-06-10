@@ -5,7 +5,7 @@ import { Grid, type GridData } from './grid';
 import { solveDC } from './powerflow';
 import { EventSystem } from './events';
 import { TechState } from './tech';
-import { RP_PER_MWH, TECH_FX, type TechId } from '../config/tech';
+import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
   PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY,
@@ -449,13 +449,13 @@ export class Simulation {
   get carbonPrice(): number {
     return (CARBON_PRICE_START + CARBON_PRICE_GROWTH_PER_DAY * this.day) * this.carbonPriceMult;
   }
-  /** 当前免费排放基准强度 (t/MWh)，随时间收紧 */
+  /** 当前免费排放基准强度 (t/MWh)，随时间收紧；政策研究中心科技放宽基准 */
   get benchmarkIntensity(): number {
-    return Math.max(CARBON_BENCH_MIN, CARBON_BENCH_START - CARBON_BENCH_DECLINE_PER_DAY * this.day);
+    return Math.max(CARBON_BENCH_MIN, CARBON_BENCH_START - CARBON_BENCH_DECLINE_PER_DAY * this.day) * this.tech.benchmarkFactor;
   }
-  /** 当前绿证价 ¥/MWh，随政策退坡 */
+  /** 当前绿证价 ¥/MWh，随政策退坡；政策研究中心科技抬升 */
   get recPrice(): number {
-    return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day);
+    return Math.max(REC_MIN, REC_START - REC_DECLINE_PER_DAY * this.day) * this.tech.recFactor;
   }
   /** 经济周期正弦相位（-1..1） */
   private get cyclePhase(): number {
@@ -677,18 +677,18 @@ export class Simulation {
     if (s >= 40) return 'C';
     return 'D';
   }
-  /** 日利率：基础 + 评级风险溢价 − ESG 绿色折扣 */
+  /** 日利率：基础 + 评级风险溢价 − ESG 绿色折扣 − 风险管理科技折扣 */
   get loanDailyRate(): number {
     const base = LOAN_BASE_DAILY_RATE + (1 - this.creditScore / 100) * RATING_RATE_SPAN;
-    return Math.max(0.001, base - (this.esgScore / 100) * ESG_RATE_DISCOUNT);
+    return Math.max(0.001, base - (this.esgScore / 100) * ESG_RATE_DISCOUNT - this.tech.loanRateDiscount);
   }
   /** 净资产 = 现金 + 资产 − 负债 */
   get netWorth(): number {
     return this.money + this.assetValue - this.debt;
   }
-  /** 当前日保费（已投保时） */
+  /** 当前日保费（已投保时）；风险管理体系科技打折 */
   get insurancePremiumPerDay(): number {
-    return this.insured ? this.assetValue * INSURANCE_RATE_PER_DAY : 0;
+    return this.insured ? this.assetValue * INSURANCE_RATE_PER_DAY * this.tech.insuranceFactor : 0;
   }
   /** 发生一次意外损失：已投保则保险覆盖大部分，玩家只付自付额 */
   incurDamage(gross: number, label: string): void {
@@ -701,7 +701,7 @@ export class Simulation {
   /** 签订一笔远期套保合约：锁定 volume MW × days 天，锁价 = 当前远期报价(avgSpot)；收手续费 */
   addHedge(volume: number, days: number): boolean {
     if (volume <= 0 || days <= 0) return false;
-    const fee = volume * days * HEDGE_FEE_PER_MW_DAY;
+    const fee = volume * days * HEDGE_FEE_PER_MW_DAY * this.tech.hedgeFeeFactor;
     if (this.money < fee) return false;
     this.money -= fee;
     const strike = Math.round(this.avgSpot);
@@ -713,7 +713,7 @@ export class Simulation {
   /** 买入电力期权：行权价=当前远期报价(avgSpot)，按量×天收权利金 */
   addOption(kind: 'put' | 'call', volume: number, days: number): boolean {
     if (volume <= 0 || days <= 0) return false;
-    const premium = volume * days * OPTION_PREMIUM_RATE;
+    const premium = volume * days * OPTION_PREMIUM_RATE * this.tech.optionPremiumFactor;
     if (this.money < premium) return false;
     this.money -= premium;
     const strike = Math.round(this.avgSpot);
@@ -776,15 +776,28 @@ export class Simulation {
     return this.fuelPrice[fuel];
   }
 
-  /** 机组的有效边际成本 = 基准 × 燃料指数 × 高效科技 ×（含老化上浮）×（CCS 能耗惩罚） */
+  /** 机组的有效边际成本 = 基准 × 燃料指数 × 高效科技 ×（联合循环：燃气再降）×（含老化上浮）×（CCS 能耗惩罚） */
   effMarginalCost(g: Generator): number {
     const fuel = PLANT_FUEL[g.type];
     const idx = fuel ? this.effFuelIndex(fuel) : 1;
-    return g.marginalCost * idx * this.tech.fuelCostFactor * (1 + this.wear(g) * WEAR_COST_FACTOR) * (g.ccs ? CCS_COST_FACTOR : 1);
+    const gasF = g.type === 'gas' ? this.tech.gasCostFactor : 1;
+    return g.marginalCost * idx * this.tech.fuelCostFactor * gasF * (1 + this.wear(g) * WEAR_COST_FACTOR) * (g.ccs ? this.tech.ccsCostFactor(CCS_COST_FACTOR) : 1);
   }
-  /** 机组有效碳排放强度 (t/MWh)：CCS 捕集后大幅下降 */
+  /** 机组有效碳排放强度 (t/MWh)：CCS 捕集后大幅下降（新一代 CCS 捕集更多） */
   effCo2(g: Generator): number {
-    return PLANTS[g.type].co2 * this.tech.co2Factor * (g.ccs ? 1 - CCS_CAPTURE_RATE : 1);
+    return PLANTS[g.type].co2 * this.tech.co2Factor * (g.ccs ? 1 - this.tech.ccsCaptureRate(CCS_CAPTURE_RATE) : 1);
+  }
+  /** 机组有效最小技术出力：火电灵活性改造降低燃煤 pmin */
+  effPmin(g: Generator): number {
+    return g.type === 'coal' ? g.pmin * this.tech.coalPminFactor : g.pmin;
+  }
+  /** 机组有效爬坡率：火电灵活性改造提升燃煤爬坡 */
+  effRamp(g: Generator): number {
+    return g.type === 'coal' ? g.rampRate * this.tech.coalRampFactor : g.rampRate;
+  }
+  /** 线路有效热极限：动态增容/特高压直流科技放宽 */
+  effLineCapacity(ln: Line): number {
+    return ln.capacity * this.tech.lineCapacityFactor(ln.voltage);
   }
   /** 给火电加装碳捕集改造（付改造费） */
   retrofitCCS(busId: number): boolean {
@@ -995,13 +1008,14 @@ export class Simulation {
     const compFactor = clamp(0.6 + this.marketShare * COMPETITIVENESS_K, 0.6, 1.5); // 越有竞争力获客越快
     const drActive = this.demandResponse && this.spotPrice > DR_TRIGGER_PRICE; // 高价时段触发可中断负荷
     this.drCurtailedMW = 0;
+    const drFraction = DR_FRACTION * this.tech.drFractionFactor; // VPP 科技扩大可削减量
     for (const load of this.grid.loads.values()) {
       if (this.grid.buses.get(load.busId)?.underConstruction) { load.demand = 0; continue; } // 在建大客户尚未接入
       load.baseDemand *= 1 + load.growthPerHour * compFactor * dtHours;
       const noise = 1 + (Math.random() - 0.5) * 0.05;
       const full = load.baseDemand * demandMultiplier(this.hourOfDay, load.profile) * noise * this.events.demandFactor * this.tech.demandFactor * this.cycleFactor * this.seasonDemandFactor;
       // 各品类可中断性不同：石化/矿业可大幅削减，数据中心几乎不切
-      const curtail = drActive ? clamp(DR_FRACTION * DR_CURTAILABILITY[load.profile], 0, 0.9) : 0;
+      const curtail = drActive ? clamp(drFraction * DR_CURTAILABILITY[load.profile], 0, 0.9) : 0;
       load.demand = full * (1 - curtail);
       this.drCurtailedMW += full - load.demand;
     }
@@ -1012,6 +1026,7 @@ export class Simulation {
         let a = renewableAvailability(g.type, this.hourOfDay, this.windBase);
         if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor;
         if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
+        a *= this.tech.renewAvailFactor; // 功率预测 AI：预测准 → 有效出力略升
         g.availability = clamp(a, 0, 1);
       }
     }
@@ -1052,26 +1067,28 @@ export class Simulation {
     }
     this.voltage = mainVoltage;
 
-    // —— 过载保护 / 连锁跳闸（含自动重合闸科技）——
+    // —— 过载保护 / 连锁跳闸（含自动重合闸科技；自愈 2.0 延长耐受/缩短重合）——
+    const tripDelay = TRIP_DELAY * this.tech.tripDelayFactor;
     for (const ln of this.grid.lines.values()) {
       if (ln.tripped) {
         // 电网自愈：跳闸线路冷却一段时间后自动重合闸
         if (this.tech.autoReclose) {
           ln.overloadTimer += dtSim;
-          if (ln.overloadTimer >= TECH_FX.autoRecloseDelay) {
+          if (ln.overloadTimer >= this.tech.autoRecloseDelay) {
             ln.tripped = false;
             ln.overloadTimer = 0;
           }
         }
         continue;
       }
-      const over = Math.abs(ln.flow) - ln.capacity;
+      const effCap = this.effLineCapacity(ln); // 动态增容/特高压直流放宽热极限
+      const over = Math.abs(ln.flow) - effCap;
       if (over > 0.5) {
         ln.overloadTimer += dtSim;
-        if (ln.overloadTimer >= TRIP_DELAY) {
+        if (ln.overloadTimer >= tripDelay) {
           ln.tripped = true;
           ln.overloadTimer = 0;
-          this.log('bad', `⚡ 线路过载跳闸！(${Math.abs(ln.flow).toFixed(0)}>${ln.capacity}MW) 可能引发连锁停电`);
+          this.log('bad', `⚡ 线路过载跳闸！(${Math.abs(ln.flow).toFixed(0)}>${effCap.toFixed(0)}MW) 可能引发连锁停电`);
         }
       } else {
         ln.overloadTimer = Math.max(0, ln.overloadTimer - dtSim * 1.5);
@@ -1085,7 +1102,7 @@ export class Simulation {
       const over = (bus.throughput ?? 0) - effRating;
       if (over > 0.5) {
         bus.transformerTimer = (bus.transformerTimer ?? 0) + dtSim;
-        if (bus.transformerTimer >= TRIP_DELAY) {
+        if (bus.transformerTimer >= tripDelay) {
           bus.transformerTripped = true;
           bus.transformerTimer = 0;
           this.log('bad', `⚡ 变电站「${bus.name}」变压器过载跳闸！(${(bus.throughput ?? 0).toFixed(0)}>${effRating.toFixed(0)}MW) 下游配电中断`);
@@ -1238,7 +1255,7 @@ export class Simulation {
     }
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
-      if (bus && !bus.underConstruction) firmCapacity += b.powerRating * STORAGE[b.type].capacityCredit;
+      if (bus && !bus.underConstruction) firmCapacity += b.powerRating * STORAGE[b.type].capacityCredit * this.tech.storageCreditFactor;
     }
     // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
     let regionFirm = firmCapacity;
@@ -1273,7 +1290,7 @@ export class Simulation {
       if (!g.dispatchable) renewOut += g.output;
     }
     this.renewablePenetration = totalOut > 0.5 ? clamp(renewOut / totalOut, 0, 1) : 0;
-    this.reserveReqMult = 1 + RENEW_RESERVE_K * this.renewablePenetration;
+    this.reserveReqMult = 1 + RENEW_RESERVE_K * this.tech.reserveKFactor * this.renewablePenetration; // 功率预测 AI 减半误差备用
     const reserveReq = this.regionalDemand * AS_RESERVE_REQ_FRAC * this.reserveReqMult;
     this.reserveRequirementMW = reserveReq;
     const reserveSupply = reserveCap + compCap * AS_COMP_RESERVE_FRAC;
@@ -1302,14 +1319,14 @@ export class Simulation {
       forwardCapCash -= Math.max(0, c.mw - firmCapacity) * CAP_DELIVERY_PENALTY * omDayFrac;
     }
 
-    // —— 需求响应激励：付费换取尖峰削减 ——
-    const drCost = this.drCurtailedMW * DR_INCENTIVE * dtHours + interruptPremium;
+    // —— 需求响应激励：付费换取尖峰削减（VPP 科技降低激励成本）——
+    const drCost = this.drCurtailedMW * DR_INCENTIVE * this.tech.drIncentiveFactor * dtHours + interruptPremium;
 
     // —— 输电阻塞成本：线路超过阈值负载率即计费 ——
     let congestionCost = 0;
     for (const ln of this.grid.lines.values()) {
       if (!this.grid.lineActive(ln)) continue;
-      const over = Math.abs(ln.flow) - ln.capacity * CONGESTION_THRESHOLD;
+      const over = Math.abs(ln.flow) - this.effLineCapacity(ln) * CONGESTION_THRESHOLD;
       if (over > 0) congestionCost += over * CONGESTION_PRICE * dtHours;
     }
 
@@ -1439,16 +1456,17 @@ export class Simulation {
       desired.set(g.id, give);
       rem -= give;
     }
-    // —— 机组组合：最小开/停机约束 + 冷启动成本 ——
+    // —— 机组组合：最小开/停机约束 + 冷启动成本（火电灵活性改造降低 pmin）——
     let startupCost = 0;
     for (const g of disp) {
       const sel = (desired.get(g.id) ?? 0) > 0.5;
       const spec = PLANTS[g.type];
+      const pmin = this.effPmin(g);
       if (g.committed) {
         if (sel) {
-          desired.set(g.id, Math.max(desired.get(g.id) ?? 0, g.pmin)); // 在线机组至少 pmin
+          desired.set(g.id, Math.max(desired.get(g.id) ?? 0, pmin)); // 在线机组至少 pmin
         } else if (this.clock < (g.commitLockUntil ?? 0)) {
-          desired.set(g.id, g.pmin); // 最小开机锁内：必须维持 pmin（must-run）
+          desired.set(g.id, pmin); // 最小开机锁内：必须维持 pmin（must-run）
         } else {
           g.committed = false; // 解列，进入最小停机锁
           g.commitLockUntil = this.clock + spec.minDownHours; // clock 与 minDownHours 同为"小时"
@@ -1459,7 +1477,7 @@ export class Simulation {
         g.commitLockUntil = this.clock + spec.minUpHours; // clock 与 minUpHours 同为"小时"
         g.startups = (g.startups ?? 0) + 1;
         startupCost += spec.startupCost;
-        desired.set(g.id, Math.max(desired.get(g.id) ?? 0, g.pmin));
+        desired.set(g.id, Math.max(desired.get(g.id) ?? 0, pmin));
       } else {
         desired.set(g.id, 0); // 停机锁内或不需要
       }
@@ -1467,7 +1485,7 @@ export class Simulation {
     // 按爬坡率把实际出力向期望值移动（这就是"机组无法瞬时响应"的硬核张力来源）
     for (const g of disp) {
       const want = desired.get(g.id) ?? 0;
-      const step = g.rampRate * dtSim;
+      const step = this.effRamp(g) * dtSim;
       if (g.output < want) g.output = Math.min(want, g.output + step);
       else g.output = Math.max(want, g.output - step);
       g.output = clamp(g.output, 0, g.capacity);
@@ -1493,13 +1511,15 @@ export class Simulation {
       }
     } else if (net < -0.01) {
       let surplus = -net;
+      const energyF = this.tech.storageEnergyFactor; // 长时储能科技：有效能量容量上浮
       for (const b of [...batteries].sort((x, y) => x.soc - y.soc)) {
         const power = b.powerRating * batPowerFactor;
         const rt = Math.min(0.98, b.roundTrip + this.tech.batteryRoundTripBonus);
-        const room = (b.energyCapacity - b.soc) / Math.max(dtHours * rt, 1e-6);
+        const effCap = b.energyCapacity * energyF;
+        const room = (effCap - b.soc) / Math.max(dtHours * rt, 1e-6);
         const take = clamp(surplus, 0, Math.min(power, room));
         b.output = -take;
-        b.soc = Math.min(b.energyCapacity, b.soc + take * rt * dtHours);
+        b.soc = Math.min(effCap, b.soc + take * rt * dtHours);
         surplus -= take;
       }
     }
@@ -1611,7 +1631,7 @@ export class Simulation {
     for (const ln of islandLines) qDemand += ln.flow * ln.flow * ln.reactance * LINE_Q_PER_FLOW2; // 线路无功消耗（长重线压降）
     let qSupply = 0;
     for (const g of gens) qSupply += g.capacity * GEN_Q_FACTOR; // 在线机组无功能力
-    for (const b of batteries) qSupply += b.powerRating * STORAGE_Q_FACTOR; // 储能逆变器
+    for (const b of batteries) qSupply += b.powerRating * STORAGE_Q_FACTOR * this.tech.storageQFactor; // 储能逆变器（构网型科技增强）
     for (const id of busIds) {
       const b = this.grid.buses.get(id);
       if (b?.capacitor && !b.underConstruction) qSupply += CAPACITOR_Q; // 电容器组补偿
