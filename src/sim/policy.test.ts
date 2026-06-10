@@ -56,11 +56,13 @@ describe('政策事件', () => {
   it('政策到期自动恢复常态', () => {
     const sim = setup();
     activate(sim, 'rateHike');
-    const rateHigh = sim.loanDailyRate;
     sim.policy.nextAt = Infinity; // 不再排新政策，单测到期行为
     for (let i = 0; i < 120; i++) sim.tick(0.05, 60_000); // 快进 > 3 天（每 tick≈0.83 小时）
     expect(sim.policy.current).toBeNull();
-    expect(sim.loanDailyRate).toBeLessThan(rateHigh);
+    // 同一时刻对比：到期后利率回落 = 重新激活时的利率 − 加点
+    const rateNormal = sim.loanDailyRate;
+    activate(sim, 'rateHike');
+    expect(sim.loanDailyRate).toBeCloseTo(rateNormal + POLICY_FX.rateHikeAdder, 6);
   });
 
   it('政策随存档往返', () => {
