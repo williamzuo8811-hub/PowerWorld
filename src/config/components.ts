@@ -278,6 +278,9 @@ export const FLEX_ADEQ_REF = 1.2; // 灵活性供需充裕参考点
 export const FLEX_K = 2.5; // 灵活性价格对充裕度的敏感度
 export const FLEX_PRICE_MIN = 0.4; // 灵活性价下限系数
 export const FLEX_PRICE_MAX = 3.0; // 灵活性价上限系数
+// —— 储能价差套利：低价充电/高价放电赚取现货价差，旺季价差更宽 ——
+export const STORAGE_ARB_CAPTURE = 0.5; // 价差套利的捕获比例（市场摩擦/损耗后）
+export const STORAGE_ARB_SEASON_K = 0.6; // 旺季价差更宽的套利季节增益
 export const AS_COMP_FAST_FRAC = 0.05; // 竞争对手可提供调频的容量比例（仅少量机组快速）
 export const AS_COMP_RESERVE_FRAC = 0.10; // 竞争对手可提供备用的容量比例
 export const AS_ADEQ_REF = 1.2; // 充裕度参考点

@@ -38,6 +38,7 @@ import {
   AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC,
   AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K,
   FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX,
+  STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K,
   FORWARD_CAP_PREMIUM, CAP_DELIVERY_PENALTY,
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
@@ -217,6 +218,8 @@ export class Simulation {
   renewablePenetration = 0; // 当前瞬时新能源出力占比 0..1
   flexPrice = FLEX_PRICE_BASE; // 当前灵活性/爬坡出清价 ¥/(MW·天)
   flexRequirementMW = 0; // 当前灵活性需求 (MW)
+  storageArbDay = 0; // 储能价差套利日收益（EMA, ¥/天）
+  netLoadAvg = 0; // 净负荷日均（套利价差信号的参考）
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -291,6 +294,8 @@ export class Simulation {
     this.regPrice = AS_REG_PRICE_BASE;
     this.reservePrice = AS_RESERVE_PRICE_BASE;
     this.flexPrice = FLEX_PRICE_BASE;
+    this.storageArbDay = 0;
+    this.netLoadAvg = 0;
     this.lastSeason = '';
     this.history = [];
     this.nextSampleAt = 0;
@@ -997,6 +1002,22 @@ export class Simulation {
     const aS = clamp(dtHours / 12, 0, 1);
     this.avgSpot = this.avgSpot * (1 - aS) + this.spotPrice * aS;
 
+    // —— 储能价差套利：以净负荷（需求−新能源）相对日均的偏离作为价差信号 ——
+    // 储能在净负荷高（紧张/高价）时放电、净负荷低（宽松/低价）时充电，天然赚取价差；旺季摆幅更宽。
+    let renewOutNow = 0;
+    for (const g of this.grid.gens.values()) if (!g.dispatchable && !this.genOffline(g)) renewOutNow += g.output;
+    const netLoad = aggDemand - renewOutNow;
+    const aN = clamp(dtHours / 24, 0, 1);
+    this.netLoadAvg = this.netLoadAvg <= 0 ? netLoad : this.netLoadAvg * (1 - aN) + netLoad * aN;
+    const priceDev = TARIFF * clamp((netLoad - this.netLoadAvg) / Math.max(this.netLoadAvg, 1), -1, 1);
+    const seasonSpreadF = 1 + STORAGE_ARB_SEASON_K * Math.max(seasonIntensity(this.yearPhase).summer, seasonIntensity(this.yearPhase).winter);
+    let storageArbCash = 0;
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (!bus || bus.underConstruction) continue;
+      storageArbCash += b.output * priceDev * STORAGE_ARB_CAPTURE * seasonSpreadF * dtHours;
+    }
+
     // 套保结算（差价合约）：市价低于锁价获补偿，高于则让出收益（可为负）
     this.hedges = this.hedges.filter((h) => this.clock < h.endClock);
     let hedgeIncome = 0;
@@ -1147,7 +1168,7 @@ export class Simulation {
     const revEff = revenue * this.reputationTariffFactor; // 口碑调整后的售电收入
 
     // —— 结算（扣除各项成本，加套保差价/绿证/容量补偿）——
-    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome + merchantCash;
+    this.money += revEff - fuelCost - carbonCost - penalty - omCost - interestCost - premiumCost - importCost - marketFee - congestionCost - drCost + hedgeIncome + recIncome + capacityIncome + exportIncome + ancillaryIncome + forwardCapCash + arbIncome + ftrIncome + merchantCash + storageArbCash;
 
     // —— 现金流按日估算（EMA 平滑，供财务报表）——
     const toDay = dtHours > 0 ? 24 / dtHours : 0;
@@ -1162,7 +1183,8 @@ export class Simulation {
     this.finance.hedge = ema(this.finance.hedge, hedgeIncome * toDay);
     this.finance.rec = ema(this.finance.rec, recIncome * toDay);
     this.finance.insurance = ema(this.finance.insurance, (this.claimCoveredTick - premiumCost) * toDay);
-    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome + ftrIncome + merchantCash - importCost - marketFee) * toDay);
+    this.finance.market = ema(this.finance.market, (exportIncome + arbIncome + ftrIncome + merchantCash + storageArbCash - importCost - marketFee) * toDay);
+    this.storageArbDay = ema(this.storageArbDay, storageArbCash * toDay);
     this.finance.capacity = ema(this.finance.capacity, (capacityIncome + forwardCapCash) * toDay);
     this.finance.ancillary = ema(this.finance.ancillary, ancillaryIncome * toDay);
     this.finance.congestion = ema(this.finance.congestion, -congestionCost * toDay);

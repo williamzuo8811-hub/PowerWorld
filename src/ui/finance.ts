@@ -33,6 +33,7 @@ export interface FinanceData {
   reservePrice: number;
   reserveReqMult: number;
   flexPrice: number;
+  storageArbDay: number;
   capCommitMW: number;
   zoneNorth: number;
   zoneSouth: number;
@@ -139,7 +140,8 @@ export class FinancePanel {
         d.zoneArbMW > 0 ? 'freq-ok' : '')
       + row('调频价 / 备用价', `¥${d.regPrice.toFixed(1)} / ¥${d.reservePrice.toFixed(1)} /MW·天`)
       + row('灵活性/爬坡价', `¥${d.flexPrice.toFixed(1)} /MW·天`, d.flexPrice > FLEX_PRICE_BASE * 1.3 ? 'freq-ok' : '')
-      + row('备用需求系数', `×${d.reserveReqMult.toFixed(2)}（新能源预测误差）`, d.reserveReqMult > 1.3 ? 'freq-warn' : '');
+      + row('备用需求系数', `×${d.reserveReqMult.toFixed(2)}（新能源预测误差）`, d.reserveReqMult > 1.3 ? 'freq-warn' : '')
+      + row('储能套利(日)', `+¥${fmt(Math.max(0, d.storageArbDay))}/天`, d.storageArbDay > 1 ? 'freq-ok' : '');
 
     const mkBtn = (parent: HTMLElement, text: string, enabled: boolean, fn: () => void) => {
       const b = document.createElement('button');
