@@ -32,6 +32,7 @@ export class Renderer {
   n1Subs = new Set<number>();
   categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
   clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
+  colorblind = false; // 色盲友好配色（负载色阶避开红绿对比）
 
   constructor(private grid: Grid) {}
 
@@ -78,6 +79,26 @@ export class Renderer {
     // 缩放后保持光标下的世界点不动
     this.camX += (after.x - before.x) * TILE * this.zoom;
     this.camY += (after.y - before.y) * TILE * this.zoom;
+    this.applyCamera();
+  }
+
+  /** 自动取景：缩放/平移相机让整张电网（含边距）适配屏幕 */
+  fitView(): void {
+    const buses = [...this.grid.buses.values()];
+    const w = this.app.screen.width;
+    const h = this.app.screen.height;
+    if (!buses.length) { this.camX = 80; this.camY = 90; this.zoom = 1; this.applyCamera(); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const b of buses) {
+      minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x);
+      minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y);
+    }
+    const pad = 4; // 边距（瓦片）
+    const bw = (maxX - minX + pad * 2) * TILE;
+    const bh = (maxY - minY + pad * 2) * TILE;
+    this.zoom = Math.max(0.4, Math.min(1.8, Math.min(w / Math.max(bw, 1), (h - 80) / Math.max(bh, 1))));
+    this.camX = w / 2 - ((minX + maxX) / 2) * TILE * this.zoom;
+    this.camY = (h + 52) / 2 - ((minY + maxY) / 2) * TILE * this.zoom; // 顶栏补偿
     this.applyCamera();
   }
 
@@ -168,7 +189,7 @@ export class Renderer {
       }
       // 底层用电压等级配色描边（区分 HV/MV），上层用负载率配色
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
-      const color = loadColor(load);
+      const color = loadColor(load, this.colorblind);
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
 
       // 流动粒子（潮流方向：正=from→to）
@@ -301,7 +322,14 @@ export class Renderer {
 }
 
 // —— 辅助绘制/着色 ——
-function loadColor(load: number): number {
+function loadColor(load: number, colorblind = false): number {
+  if (colorblind) {
+    // 色盲友好：蓝(轻载)→黄(中)→橙(重)→白(过载)，避开红绿对比
+    if (load < 0.6) return 0x38bdf8;
+    if (load < 0.85) return 0xf2c94c;
+    if (load < 1.0) return 0xf97316;
+    return 0xffffff;
+  }
   if (load < 0.6) return 0x38d39f; // 绿
   if (load < 0.85) return 0xf2c94c; // 黄
   if (load < 1.0) return 0xf2994a; // 橙

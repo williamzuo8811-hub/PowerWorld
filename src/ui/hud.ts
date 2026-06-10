@@ -64,6 +64,7 @@ export class Hud {
   onIRP?: () => void; // 长期规划压力测试面板按钮回调
   onPortfolio?: () => void; // 能源品类统计面板按钮回调
   onToggleSound?: () => void; // 静音切换回调
+  onSettings?: () => void; // 设置面板回调
   onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
   private soundBtn?: HTMLButtonElement;
   private speedIndex = 0; // 默认暂停，先让玩家布网
@@ -172,6 +173,8 @@ export class Hud {
     const soundBtn = document.createElement('button');
     soundBtn.textContent = '🔊'; soundBtn.title = '音效开关'; soundBtn.onclick = () => this.onToggleSound?.();
     this.soundBtn = soundBtn;
+    const settingsBtn = document.createElement('button');
+    settingsBtn.textContent = '⚙'; settingsBtn.title = '设置（音量/音乐/配色/缩放/快捷键）'; settingsBtn.onclick = () => this.onSettings?.();
     const saveBtn = document.createElement('button');
     saveBtn.textContent = '💾'; saveBtn.title = '存档'; saveBtn.onclick = () => this.onSave?.();
     const menuBtn = document.createElement('button');
@@ -185,6 +188,7 @@ export class Hud {
     sys.appendChild(portfolioBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
+    sys.appendChild(settingsBtn);
     sys.appendChild(saveBtn);
     sys.appendChild(menuBtn);
     bar.appendChild(sys);

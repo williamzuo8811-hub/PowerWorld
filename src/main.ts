@@ -11,6 +11,7 @@ import { HistoryPanel } from './ui/history';
 import { IRPPanel } from './ui/irp';
 import { PortfolioPanel } from './ui/portfolio';
 import { Sound } from './ui/sound';
+import { SettingsPanel, loadSettings, applyGlobalSettings, type GameSettings } from './ui/settings';
 import { analyzeN1 } from './sim/contingency';
 import { Achievements } from './sim/achievements';
 import { ALL_TECH_COUNT } from './config/achievements';
@@ -46,6 +47,17 @@ achievements.load();
 const sound = new Sound();
 const tutorial = new Tutorial();
 const advisor = new Advisor();
+const settingsPanel = new SettingsPanel();
+const settings: GameSettings = loadSettings();
+
+/** 把设置应用到各子系统（声音/渲染/全局样式） */
+function applySettings(s: GameSettings): void {
+  Object.assign(settings, s);
+  sound.setVolume(s.volume);
+  sound.setMusic(s.music);
+  renderer.colorblind = s.colorblind;
+  applyGlobalSettings(s);
+}
 let lastBadEvents = 0; // 上一帧的严重事件计数，用于触发报警音
 let wasGameOver = false; // 用于检测输赢瞬间
 
@@ -90,7 +102,9 @@ function enterGame(): void {
   historyPanel.hide();
   irpPanel.hide();
   portfolioPanel.hide();
+  settingsPanel.hide();
   panelOpen = false;
+  renderer.fitView(); // 自动取景到电网范围
   lastBadEvents = sim.badEventCount;
   wasGameOver = sim.gameOver;
   hud.setSpeed(0);
@@ -135,11 +149,22 @@ function doSave(): void {
   flashHint(saveGame(sim, currentScenarioId, 'quick') ? '已存档 💾' : '存档失败');
 }
 
-/** 每个游戏日自动存档一次（静默，菜单中可见/可载入） */
+/** 每个游戏日自动存档一次（静默，菜单中可见/可载入；可在设置中关闭） */
 function autosaveTick(): void {
-  if (sim.gameOver || sim.day === lastAutosaveDay) return;
+  if (!settings.autosave || sim.gameOver || sim.day === lastAutosaveDay) return;
   lastAutosaveDay = sim.day;
   saveGame(sim, currentScenarioId, 'auto');
+}
+
+/** 打开设置面板 */
+function openSettings(): void {
+  panelOpen = true;
+  hud.setSpeed(0);
+  settingsPanel.show({
+    settings,
+    onChange: (s) => applySettings(s),
+    onClose: () => { settingsPanel.hide(); panelOpen = false; },
+  });
 }
 
 /** 运行 N-1 冗余校核并把薄弱元件标注到画面 */
@@ -710,6 +735,7 @@ function bindInput(): void {
       if (renderer.categoryFilter) { renderer.categoryFilter = null; flashHint('已清除品类高亮'); }
       return;
     }
+    if (e.key === 'h' || e.key === 'H') { renderer.fitView(); return; }
     const n = parseInt(e.key, 10);
     if (!isNaN(n) && n >= 1 && n <= TOOL_ORDER.length) hud.setTool(TOOL_ORDER[n - 1]);
   });
@@ -730,6 +756,8 @@ async function start(): Promise<void> {
   hud.onIRP = openIRP;
   hud.onPortfolio = openPortfolio;
   hud.onToggleSound = () => { sound.setMuted(!sound.muted); hud.setSoundLabel(sound.muted); if (!sound.muted) sound.click(); };
+  hud.onSettings = openSettings;
+  applySettings(settings); // 启动时应用持久化设置
   hud.onContinueAfterWin = () => {
     sim.gameOver = false;
     sim.goalDay = Infinity; // 转入无尽经营：不再有通关日，但仍可破产

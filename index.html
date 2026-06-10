@@ -42,6 +42,8 @@
       .freq-ok { color: var(--ok); }
       .freq-warn { color: var(--warn); }
       .freq-bad { color: var(--danger); }
+      /* 色盲友好配色：好=蓝、警=黄、坏=品红（避开红绿对比） */
+      body.colorblind { --ok: #38bdf8; --danger: #f472b6; --accent: #38bdf8; }
 
       /* 速度控制 */
       #speed { display: flex; gap: 4px; }
