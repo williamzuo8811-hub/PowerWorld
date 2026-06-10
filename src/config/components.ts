@@ -218,6 +218,10 @@ export const COMPETITOR_EXPAND_MARGIN = 15; // 出清价高于成本多少才扩
 export const COMPETITOR_CAP_MIN_FRAC = 0.3; // 容量下限（占初始）
 export const COMPETITOR_CAP_MAX_FRAC = 2.5; // 容量上限（占初始）
 export const ACQUISITION_PRICE_PER_MW = 4_000; // 并购竞争对手的每 MW 估值
+// 反垄断审查：并购按全网装机口径评估市场集中度
+export const ANTITRUST_SOFT_SHARE = 0.45; // 并购后市占超过此值开始产生反垄断补救费
+export const ANTITRUST_HARD_SHARE = 0.65; // 超过此值监管直接否决并购
+export const ANTITRUST_PREMIUM_K = 1.5; // 补救费 = 基础估值 × K × 超额比例(0..1)
 
 // —— 容量市场（容量拍卖）——
 // 除卖电外，按"可用确定性容量"获容量补偿。容量价由拍卖出清：区域容量目标 vs 总可用容量，

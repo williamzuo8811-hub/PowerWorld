@@ -1,5 +1,5 @@
 // 财务报表面板：资产负债 + 每日损益 + 市场行情 + 贷款操作（复用 #panel）。
-import { INTERCONNECTOR_CAPACITY, MARKET_FEE_PER_DAY, ACQUISITION_PRICE_PER_MW } from '../config/components';
+import { INTERCONNECTOR_CAPACITY, MARKET_FEE_PER_DAY } from '../config/components';
 
 export interface FinanceData {
   money: number;
@@ -26,7 +26,7 @@ export interface FinanceData {
   marketShare: number;
   clearingPrice: number;
   regionalDemand: number;
-  competitors: { name: string; capacity: number; marginalCost: number }[];
+  competitors: { name: string; capacity: number; marginalCost: number; acqTotal: number; acqRemedy: number; acqBlocked: boolean; postShare: number }[];
   capacityPrice: number;
   capacityAdequacy: number;
   regPrice: number;
@@ -154,14 +154,15 @@ export class FinancePanel {
       compBlock.innerHTML = `<span style="color:var(--text-dim);font-size:12px">区域内已无独立竞争对手</span>`;
     }
     d.competitors.forEach((c, i) => {
-      const cost = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
       const rowEl = document.createElement('div');
       rowEl.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 0;gap:8px';
-      rowEl.innerHTML = `<span style="color:var(--text-dim);font-size:12px">· ${c.name} · ${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh</span>`;
-      const can = d.money >= cost;
+      const remedyNote = c.acqRemedy > 0 ? ` · 含补救费 ¥${fmt(c.acqRemedy)}` : '';
+      rowEl.innerHTML = `<span style="color:var(--text-dim);font-size:12px">· ${c.name} · ${c.capacity.toFixed(0)}MW @¥${c.marginalCost}/MWh · 并后市占 ${(c.postShare * 100).toFixed(0)}%${remedyNote}</span>`;
+      const can = !c.acqBlocked && d.money >= c.acqTotal;
       const b = document.createElement('button');
-      b.textContent = `并购 ¥${fmt(cost)}`;
+      b.textContent = c.acqBlocked ? '🚫 反垄断否决' : `并购 ¥${fmt(c.acqTotal)}`;
       b.disabled = !can;
+      b.title = c.acqBlocked ? '并购后市占将超过监管上限' : c.acqRemedy > 0 ? '高集中度，含反垄断补救费' : '';
       b.style.cssText = 'background:#182431;color:var(--text);border:1px solid var(--panel-border);border-radius:6px;padding:4px 9px;cursor:pointer;font-family:inherit;font-size:11px;white-space:nowrap';
       if (!can) b.style.opacity = '0.45';
       else b.onclick = () => o.onAcquire(i);

@@ -223,7 +223,10 @@ function openFinance(): void {
       marketShare: sim.marketShare,
       clearingPrice: sim.marketClearingPrice,
       regionalDemand: sim.regionalDemand,
-      competitors: sim.competitors,
+      competitors: sim.competitors.map((c, i) => {
+        const q = sim.acquisitionQuote(i)!;
+        return { name: c.name, capacity: c.capacity, marginalCost: c.marginalCost, acqTotal: q.total, acqRemedy: q.remedy, acqBlocked: q.blocked, postShare: q.postShare };
+      }),
       capacityPrice: sim.capacityPrice,
       capacityAdequacy: sim.capacityAdequacy,
       regPrice: sim.regPrice,

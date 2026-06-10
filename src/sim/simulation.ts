@@ -41,6 +41,7 @@ import {
   ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, ZONE_PERIOD_DAYS, ZONE_NORTH_OFFSET, ZONE_NORTH_AMP, ZONE_SOUTH_OFFSET, ZONE_SOUTH_AMP, FTR_MARKUP,
   COMPETITOR_EXPAND_RATE, COMPETITOR_RETIRE_RATE, COMPETITOR_EXPAND_MARGIN,
   COMPETITOR_CAP_MIN_FRAC, COMPETITOR_CAP_MAX_FRAC, ACQUISITION_PRICE_PER_MW,
+  ANTITRUST_SOFT_SHARE, ANTITRUST_HARD_SHARE, ANTITRUST_PREMIUM_K,
   type CompetitorSpec,
 } from '../config/components';
 
@@ -444,16 +445,51 @@ export class Simulation {
     return { clearingCost, playerDispatched, shortfall: Math.max(0, demand - cum) };
   }
 
-  /** 并购一家竞争对手：付估值，移除其、吸收为商船队（市场出清中作自有，捕获其市场利润） */
+  /** 玩家自有装机（自有机组 + 已并购商船队）MW —— 反垄断口径 */
+  get playerNameplate(): number {
+    let cap = 0;
+    for (const g of this.grid.gens.values()) cap += g.capacity;
+    for (const m of this.mergedCapacity) cap += m.mw;
+    return cap;
+  }
+  /** 全区域装机（玩家 + 所有竞争对手）MW */
+  get regionNameplate(): number {
+    let cap = this.playerNameplate;
+    for (const c of this.competitors) cap += c.capacity;
+    return cap;
+  }
+
+  /**
+   * 并购报价（含反垄断审查）：返回基础估值、补救费、合计、并购后市占与是否被否决。
+   * 监管按全网装机口径衡量集中度：市占越高，补救费越贵；超过硬上限直接否决。
+   */
+  acquisitionQuote(index: number): { base: number; remedy: number; total: number; postShare: number; blocked: boolean } | null {
+    const c = this.competitors[index];
+    if (!c) return null;
+    const region = Math.max(this.regionNameplate, 1);
+    const postShare = (this.playerNameplate + c.capacity) / region;
+    const base = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
+    const blocked = postShare > ANTITRUST_HARD_SHARE;
+    const over = clamp((postShare - ANTITRUST_SOFT_SHARE) / (ANTITRUST_HARD_SHARE - ANTITRUST_SOFT_SHARE), 0, 1);
+    const remedy = blocked ? 0 : Math.round(base * ANTITRUST_PREMIUM_K * over);
+    return { base, remedy, total: base + remedy, postShare, blocked };
+  }
+
+  /** 并购一家竞争对手：过审后付估值(+补救费)，吸收为商船队（市场出清中作自有，捕获其市场利润） */
   acquireCompetitor(index: number): boolean {
     const c = this.competitors[index];
-    if (!c) return false;
-    const cost = Math.round(c.capacity * ACQUISITION_PRICE_PER_MW);
-    if (this.money < cost) return false;
-    this.money -= cost;
+    const q = this.acquisitionQuote(index);
+    if (!c || !q) return false;
+    if (q.blocked) {
+      this.log('warn', `🚫 反垄断否决：并购「${c.name}」后市占将达 ${(q.postShare * 100).toFixed(0)}%，超过 ${(ANTITRUST_HARD_SHARE * 100).toFixed(0)}% 上限`);
+      return false;
+    }
+    if (this.money < q.total) return false;
+    this.money -= q.total;
     this.mergedCapacity.push({ mw: c.capacity, marginalCost: c.marginalCost });
     this.competitors.splice(index, 1);
-    this.log('good', `🤝 并购「${c.name}」${c.capacity.toFixed(0)}MW（¥${cost.toLocaleString('en-US')}）：吸收为自有商船队`);
+    const remedyNote = q.remedy > 0 ? `（含反垄断补救费 ¥${q.remedy.toLocaleString('en-US')}）` : '';
+    this.log('good', `🤝 并购「${c.name}」${c.capacity.toFixed(0)}MW（¥${q.total.toLocaleString('en-US')}）${remedyNote}：吸收为自有商船队`);
     return true;
   }
 
