@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0b1016"/>
+  <rect x="24" y="24" width="464" height="464" rx="80" fill="none" stroke="#2a3a4d" stroke-width="8"/>
+  <!-- 输电塔剪影 -->
+  <path d="M150 420 L210 140 L302 140 L362 420" fill="none" stroke="#38d39f" stroke-width="14" stroke-linecap="round" opacity="0.55"/>
+  <path d="M170 330 L342 330 M186 250 L326 250 M202 190 L310 190" stroke="#38d39f" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  <!-- 闪电 -->
+  <path d="M292 64 L172 288 L246 288 L208 448 L350 218 L270 218 Z" fill="#f2c94c" stroke="#0b1016" stroke-width="10" stroke-linejoin="round"/>
+</svg>
