@@ -54,7 +54,9 @@ export class ResearchPanel {
         else tag = `${afford ? '可研发' : '点数不足'} · ${t.cost} 点`;
         const reqNote = t.requires?.length && !owned && prereqOk
           ? `<span style="color:var(--text-dim)">（前置：${t.requires.map(nameOf).join('、')} ✓）</span>` : '';
-        card.innerHTML = `<div class="mc-name">${t.name} <span style="float:right;font-weight:400;color:var(--text-dim)">${tag}</span></div><div class="mc-brief">${t.desc} ${reqNote}</div>`;
+        const fitNote = t.fit ? `<div style="margin-top:4px;font-size:11px;color:var(--accent)">🎯 适配：${t.fit}</div>` : '';
+        card.title = t.fit ? `适配场景：${t.fit}` : '';
+        card.innerHTML = `<div class="mc-name">${t.name} <span style="float:right;font-weight:400;color:var(--text-dim)">${tag}</span></div><div class="mc-brief">${t.desc} ${reqNote}</div>${fitNote}`;
         if (!owned && prereqOk && afford) card.onclick = () => o.onUnlock(t.id);
         grid.appendChild(card);
       }

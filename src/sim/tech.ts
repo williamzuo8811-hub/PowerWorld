@@ -49,6 +49,9 @@ export class TechState {
   get coalRampFactor(): number {
     return this.has('flexCoal') ? TECH_FX.coalRampFactor : 1;
   }
+  get coalStartupFactor(): number {
+    return this.has('flexCoal') ? TECH_FX.coalStartupFactor : 1;
+  }
   /** CCS 能耗惩罚系数（基础值由调用方传入，新一代 CCS 替换为更优值） */
   ccsCostFactor(base: number): number {
     return this.has('ccsAdv') ? TECH_FX.ccsAdvCostFactor : base;
@@ -89,6 +92,14 @@ export class TechState {
   }
   get drIncentiveFactor(): number {
     return this.has('vpp') ? TECH_FX.vppDrIncentiveFactor : 1;
+  }
+  /** VPP：可削减负荷计入可信容量的比例（未解锁为 0） */
+  get vppFirmCredit(): number {
+    return this.has('vpp') ? TECH_FX.vppFirmCredit : 0;
+  }
+  /** 新能源分钟级出力噪声幅度系数（功率预测 AI 减半） */
+  get renewNoiseFactor(): number {
+    return this.has('forecasting') ? TECH_FX.forecastNoiseFactor : 1;
   }
   get autoReclose(): boolean {
     return this.has('autoReclose');

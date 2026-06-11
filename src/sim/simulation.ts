@@ -28,6 +28,8 @@ import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
   PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
+  STORAGE_ARB_LIQUIDITY_MW, STORAGE_ARB_SOC_MARGIN, STORAGE_ARB_SOC_EDGE_FACTOR,
+  RENEW_NOISE_SIGMA, RENEW_NOISE_REVERT, RENEW_NOISE_CLAMP,
 } from '../config/components';
 import type { Generator, Line, Load, LoadProfile } from './types';
 import {
@@ -259,6 +261,8 @@ export class Simulation {
     this.carbonPriceMult = 1;
     this.sandbox = false;
     this.windBase = 0.6;
+    this.windNoise = 0;
+    this.solarNoise = 0;
     this.lastLossFraction = 0.02;
     this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
     this.events = new EventSystem();
@@ -414,6 +418,8 @@ export class Simulation {
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
+  windNoise = 0; // 风电分钟级出力噪声（OU 过程，围绕预报值摆动）
+  solarNoise = 0; // 光伏分钟级出力噪声（云团遮挡）
   private lastLossFraction = 0.02; // 上一 tick 的线损占比，用于本 tick 多发一点
   totalGen = 0;
   totalDemand = 0;
@@ -816,7 +822,7 @@ export class Simulation {
       g.committed = true;
       g.commitLockUntil = this.clock + spec.minUpHours;
       g.startups = (g.startups ?? 0) + 1;
-      this.money -= spec.startupCost;
+      this.money -= spec.startupCost * (g.type === 'coal' ? this.tech.coalStartupFactor : 1);
       committedCap += g.capacity * g.availability;
       this.log('info', `🤖 联合调度：晚峰前预并网「${this.grid.buses.get(g.busId)?.name ?? spec.label}」（预估晚峰 ${peak.toFixed(0)}MW）`);
     }
@@ -848,6 +854,14 @@ export class Simulation {
 
     // —— 天气：风况慢变随机游走 + 天气/危机事件 + 政策事件 ——
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
+    // 新能源预测误差：OU（均值回归）噪声——实际出力围绕预报值分钟级摆动；功率预测 AI 减半幅度
+    const noiseSigma = RENEW_NOISE_SIGMA * this.tech.renewNoiseFactor;
+    const ouStep = (n: number) => clamp(
+      n - n * RENEW_NOISE_REVERT * dtHours + (Math.random() * 2 - 1) * noiseSigma * Math.sqrt(Math.max(dtHours, 1e-9)),
+      -RENEW_NOISE_CLAMP, RENEW_NOISE_CLAMP,
+    );
+    this.windNoise = ouStep(this.windNoise);
+    this.solarNoise = ouStep(this.solarNoise);
     this.events.update(this);
     this.policy.update(this);
 
@@ -920,8 +934,8 @@ export class Simulation {
     for (const g of this.grid.gens.values()) {
       if (!g.dispatchable) {
         let a = renewableAvailability(g.type, this.hourOfDay, this.windBase);
-        if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor;
-        if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
+        if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor * (1 + this.windNoise);
+        if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor * (1 + this.solarNoise);
         a *= this.tech.renewAvailFactor; // 功率预测 AI：预测准 → 有效出力略升
         a *= g.siteFactor ?? 1; // 选址资源禀赋（风带/光照分区）
         g.availability = clamp(a, 0, 1);
@@ -1061,10 +1075,18 @@ export class Simulation {
     const seasonSpreadF = 1 + STORAGE_ARB_SEASON_K * Math.max(seasonIntensity(this.yearPhase).summer, seasonIntensity(this.yearPhase).winter);
     let storageArbCash = 0;
     const arbCapture = STORAGE_ARB_CAPTURE * (this.storageStrategy === 'reg' ? STORAGE_REG_ARB_FACTOR : 1); // 投调频则套利打折
+    // 流动性衰减：套利交易自身压平价差——机队功率越大，单位收益越低（收益对规模是凹函数，不再是印钞机）
+    let fleetArbMW = 0;
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) fleetArbMW += b.powerRating;
+    }
+    const liquidityF = arbLiquidityFactor(fleetArbMW);
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (!bus || bus.underConstruction) continue;
-      storageArbCash += b.output * priceDev * arbCapture * seasonSpreadF * dtHours;
+      const socFrac = b.energyCapacity > 0 ? b.soc / b.energyCapacity : 0;
+      storageArbCash += b.output * priceDev * arbCapture * liquidityF * arbSocFactor(socFrac, b.output) * seasonSpreadF * dtHours;
     }
 
     // 套保结算（差价合约）：市价低于锁价获补偿，高于则让出收益（可为负）
@@ -1179,6 +1201,10 @@ export class Simulation {
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (bus && !bus.underConstruction) firmCapacity += b.powerRating * STORAGE[b.type].capacityCredit * this.tech.storageCreditFactor;
+    }
+    // 虚拟电厂：已启用需求响应时，可削减负荷按比例计入可信容量（用户侧也是"电厂"）
+    if (this.demandResponse && this.tech.vppFirmCredit > 0) {
+      firmCapacity += aggDemand * DR_FRACTION * this.tech.drFractionFactor * this.tech.vppFirmCredit;
     }
     // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
     let regionFirm = firmCapacity;
@@ -1405,7 +1431,7 @@ export class Simulation {
         g.committed = true; // 冷启动并网，进入最小开机锁
         g.commitLockUntil = this.clock + spec.minUpHours; // clock 与 minUpHours 同为"小时"
         g.startups = (g.startups ?? 0) + 1;
-        startupCost += spec.startupCost;
+        startupCost += spec.startupCost * (g.type === 'coal' ? this.tech.coalStartupFactor : 1); // 灵活性改造降启停费
         desired.set(g.id, Math.max(desired.get(g.id) ?? 0, pmin));
       } else {
         desired.set(g.id, 0); // 停机锁内或不需要
@@ -1781,6 +1807,17 @@ export class Simulation {
       customerSatisfaction: this.customerSatisfaction,
     };
   }
+}
+
+/** 储能套利的流动性衰减系数：机队功率越大，单位价差收益越低（套利自身压平价差）。纯函数便于测试。 */
+export function arbLiquidityFactor(fleetMW: number): number {
+  return STORAGE_ARB_LIQUIDITY_MW / (STORAGE_ARB_LIQUIDITY_MW + Math.max(0, fleetMW));
+}
+
+/** 储能套利的 SoC 区间系数：空电没法高卖（放电贴边）、满电没法低买（充电贴边）。纯函数便于测试。 */
+export function arbSocFactor(socFrac: number, output: number): number {
+  const edge = output > 0 ? socFrac < STORAGE_ARB_SOC_MARGIN : output < 0 ? socFrac > 1 - STORAGE_ARB_SOC_MARGIN : false;
+  return edge ? STORAGE_ARB_SOC_EDGE_FACTOR : 1;
 }
 
 /** 由供需失衡推算系统频率 */
