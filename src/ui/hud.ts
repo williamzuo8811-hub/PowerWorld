@@ -9,7 +9,7 @@ import { t } from '../i18n';
 import type { StringKey } from '../i18n/strings';
 
 export type ToolId =
-  | 'inspect' | 'line' | 'substation'
+  | 'inspect' | 'line' | 'substation' | 'upgrade'
   | 'coal' | 'gas' | 'wind' | 'solar' | 'nuclear' | 'hydro' | 'biomass' | 'battery' | 'pumped' | 'hydrogen'
   | 'datacenter' | 'transport' | 'petrochem' | 'mining'
   | 'maintenance' | 'ccs' | 'capacitor' | 'backup' | 'contract' | 'bulldoze';
@@ -20,6 +20,7 @@ const TOOLS: ToolDef[] = [
   { id: 'inspect', label: '🔍 检查 / 重合闸', sub: '查看·恢复跳闸线路/变压器' },
   { id: 'line', label: '➖ 拉线路', sub: `HV¥${fmt(VOLTAGE.HV.costPerTile)} · MV¥${fmt(VOLTAGE.MV.costPerTile)} /格` },
   { id: 'substation', label: '◆ 变电站', sub: `¥${fmt(SUBSTATION_CAPEX)}·工期${SUBSTATION_BUILD_DAYS}天` },
+  { id: 'upgrade', label: '⤴ 增容改造', sub: '点线路：热极限+50% · 点变电站：主变+45MW' },
   { id: 'coal', label: '■ 燃煤 60MW', sub: `¥${fmt(PLANTS.coal.capex)}·工期${PLANTS.coal.buildDays}天·脏` },
   { id: 'gas', label: '■ 燃气 40MW', sub: `¥${fmt(PLANTS.gas.capex)}·工期${PLANTS.gas.buildDays}天·贵` },
   { id: 'wind', label: '■ 风电 30MW', sub: `¥${fmt(PLANTS.wind.capex)}·工期${PLANTS.wind.buildDays}天·看风` },
@@ -44,7 +45,7 @@ const TOOLS: ToolDef[] = [
 
 // 工具分类（可折叠）：把 20+ 工具按用途归组，缩短建造栏（标签走 i18n 字符串表）
 const TOOL_GROUPS: { labelKey: StringKey; ids: ToolId[]; collapsed?: boolean }[] = [
-  { labelKey: 'grp_grid', ids: ['line', 'substation', 'capacitor'] },
+  { labelKey: 'grp_grid', ids: ['line', 'substation', 'upgrade', 'capacitor'] },
   { labelKey: 'grp_source', ids: ['coal', 'gas', 'wind', 'solar', 'nuclear', 'hydro', 'biomass'] },
   { labelKey: 'grp_storage', ids: ['battery', 'pumped', 'hydrogen'], collapsed: true },
   { labelKey: 'grp_key', ids: ['datacenter', 'transport', 'petrochem', 'mining'], collapsed: true },
@@ -65,6 +66,8 @@ export class Hud {
   onHistory?: () => void; // 走势面板按钮回调
   onIRP?: () => void; // 长期规划压力测试面板按钮回调
   onPortfolio?: () => void; // 能源品类统计面板按钮回调
+  onFleet?: () => void; // 机队管理/网络分析面板回调
+  onViewMode?: () => void; // 线路着色模式切换回调（负载/电压/拥堵）
   onToggleSound?: () => void; // 静音切换回调
   onSettings?: () => void; // 设置面板回调
   onContinueAfterWin?: () => void; // 通关后"继续经营"回调（转入无尽模式）
@@ -82,6 +85,7 @@ export class Hud {
   private inspectorEl!: HTMLElement;
   private hintEl!: HTMLElement;
   private tutorialEl!: HTMLElement;
+  private lastObjectivesHtml = ''; // 目标侧栏的变更检测缓存
 
   get timeScale(): number {
     return TIME_SCALES[this.speedIndex];
@@ -154,6 +158,10 @@ export class Hud {
     irpBtn.textContent = '🧭'; irpBtn.title = t('btn_irp'); irpBtn.onclick = () => this.onIRP?.();
     const portfolioBtn = document.createElement('button');
     portfolioBtn.textContent = '🗂'; portfolioBtn.title = t('btn_portfolio'); portfolioBtn.onclick = () => this.onPortfolio?.();
+    const fleetBtn = document.createElement('button');
+    fleetBtn.textContent = '🏭'; fleetBtn.title = t('btn_fleet'); fleetBtn.onclick = () => this.onFleet?.();
+    const viewBtn = document.createElement('button');
+    viewBtn.textContent = '🗺'; viewBtn.title = t('btn_viewmode'); viewBtn.onclick = () => this.onViewMode?.();
     const n1Btn = document.createElement('button');
     n1Btn.textContent = 'N-1'; n1Btn.title = t('btn_n1'); n1Btn.onclick = () => this.onN1?.();
     const soundBtn = document.createElement('button');
@@ -172,6 +180,8 @@ export class Hud {
     sys.appendChild(histBtn);
     sys.appendChild(irpBtn);
     sys.appendChild(portfolioBtn);
+    sys.appendChild(fleetBtn);
+    sys.appendChild(viewBtn);
     sys.appendChild(n1Btn);
     sys.appendChild(soundBtn);
     sys.appendChild(settingsBtn);
@@ -179,7 +189,30 @@ export class Hud {
     sys.appendChild(menuBtn);
     bar.appendChild(sys);
 
+    // 可访问性：系统按钮全部带 aria-label（图标按钮对读屏不可读）
+    for (const b of sys.querySelectorAll('button')) b.setAttribute('aria-label', b.title || b.textContent || '');
+
     this.refreshSpeedButtons();
+  }
+
+  /** 语言切换后重建界面框架（顶栏/工具栏文案即时生效，无需刷新页面） */
+  rebuildChrome(): void {
+    this.statVals.clear();
+    this.speedBtns = [];
+    this.buildTopbar();
+    this.buildToolbar();
+    if (this.logEl) this.logEl.innerHTML = `<div class="title">${t('log_title')}</div><div id="log-body"></div>`;
+  }
+
+  /** 建造预览浮签：跟随光标显示造价/资源评分/合法性（null 隐藏） */
+  setBuildTip(html: string | null, x = 0, y = 0): void {
+    const el = document.getElementById('buildtip');
+    if (!el) return;
+    if (!html) { el.style.display = 'none'; return; }
+    el.innerHTML = html;
+    el.style.display = 'block';
+    el.style.left = `${Math.min(x + 18, window.innerWidth - el.offsetWidth - 8)}px`;
+    el.style.top = `${Math.min(y + 18, window.innerHeight - el.offsetHeight - 8)}px`;
   }
 
   private buildToolbar(): void {
@@ -317,6 +350,25 @@ export class Hud {
       }).join('');
     }
 
+    // 附加目标追踪侧栏（仅有附加目标的关卡显示；内容变化时才重渲染）
+    const objEl = document.getElementById('objectives');
+    if (objEl) {
+      if (s.objectives.length === 0) {
+        if (objEl.style.display !== 'none') objEl.style.display = 'none';
+      } else {
+        const html = `<div class="title">🎯 附加目标</div>` + s.objectives.map((o) => {
+          const cls = o.failed ? 'obj-failed' : o.done ? 'obj-done' : 'obj-pending';
+          const mark = o.failed ? '✗' : o.done ? '✓' : '○';
+          return `<div class="${cls}">${mark} ${o.label} <span style="opacity:.75">${o.progress}</span></div>`;
+        }).join('');
+        if (this.lastObjectivesHtml !== html) {
+          this.lastObjectivesHtml = html;
+          objEl.innerHTML = html;
+        }
+        if (objEl.style.display !== 'block') objEl.style.display = 'block';
+      }
+    }
+
     if (s.gameOver) this.showOverlay(s);
   }
 
@@ -353,7 +405,7 @@ export class Hud {
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };
-      gradeEl.textContent = s.win ? `评级 ${s.grade}　（${s.gradeScore.toFixed(0)} 分）` : '';
+      gradeEl.textContent = s.win ? `评级 ${s.grade} （${s.gradeScore.toFixed(0)} 分）` : '';
       gradeEl.style.color = gradeColor[s.grade] ?? '#fff';
     }
     const summary = `经营摘要 · 可靠性 ${(s.reliability * 100).toFixed(1)}% · 市占 ${(s.marketShare * 100).toFixed(0)}% · 清洁 ${(s.renewableShare * 100).toFixed(0)}% · 大客户满意 ${(s.customerSatisfaction * 100).toFixed(0)}%`;

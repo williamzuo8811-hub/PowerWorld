@@ -1,0 +1,19 @@
+{
+  "name": "电力世界 · PowerWorld",
+  "short_name": "电力世界",
+  "description": "硬核电网建造经营：发电 / 输电 / 变电 / 配电",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b1016",
+  "theme_color": "#0b1016",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

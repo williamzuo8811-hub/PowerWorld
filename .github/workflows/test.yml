@@ -1,0 +1,40 @@
+name: Test
+
+# 所有分支推送与 PR 都跑：类型检查 + 全量单元/整局测试。
+# deploy.yml 只管部署——这里是质量闸门，错误代码不再能"静默部署"。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Unit & playthrough tests
+        run: npm test
+
+      - name: Production build
+        run: npx vite build

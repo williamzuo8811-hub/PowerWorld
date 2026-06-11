@@ -16,7 +16,7 @@ describe('燃料长约采购', () => {
 
   it('长约到期后回到现货', () => {
     const sim = new Simulation();
-    const gas = sim.grid.addPlant('gas', 0, 0).gen;
+    sim.grid.addPlant('gas', 0, 0);
     sim.fuelPrice.gas = 1;
     sim.signFuelContract('gas', 5);
     sim.fuelPrice.gas = 2;

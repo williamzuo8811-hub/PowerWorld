@@ -24,8 +24,10 @@ interface Smoke {
 export class Renderer {
   app = new Application();
   private world = new Container();
-  private gridLayer = new Graphics(); // 地形
-  private resourceLayer = new Graphics(); // 资源热力覆盖
+  private gridLayer = new Container(); // 地形（烘焙成单张纹理的 Sprite，避免每帧重绘 8000+ Graphics 指令）
+  private terrainSprite: Sprite | null = null;
+  private resourceLayer = new Container(); // 资源热力覆盖（同样烘焙）
+  private resourceSprite: Sprite | null = null;
   private lineLayer = new Graphics();
   private flowLayer = new Graphics();
   private groundFx = new Graphics(); // 地面层特效：阴影/状态环/光标地块/连线预览
@@ -35,6 +37,7 @@ export class Renderer {
   private labelLayer = new Container();
   private ambientLayer = new Graphics(); // 屏幕空间：昼夜/天气色调滤镜
   private labels = new Map<number, Text>(); // busId -> Text
+  private labelCache = new Map<number, { text: string; fill: number; alpha: number }>(); // 避免每帧触发 Text 重排版
   private sprites = new Map<number, Sprite>(); // busId -> 建筑贴图
   private spriteKind = new Map<number, string>(); // busId -> 贴图键（类型变化时重建）
   private textures = new Map<string, BuildingSprite>();
@@ -51,10 +54,13 @@ export class Renderer {
   pendingFromBus: Bus | null = null;
   cursorTile: { x: number; y: number } | null = null;
   hoverBusId: number | null = null;
+  cursorOk: boolean | null = null; // 建造预览合法性：true=绿（可建） false=红（不可建/钱不够） null=中性
+  pendingLineOk: boolean | null = null; // 拉线预览：悬停目标是否为合法终点
   // N-1 校核标注的薄弱元件
   n1Lines = new Set<number>();
   n1Subs = new Set<number>();
   categoryFilter: string | null = null; // 能源品类筛选：仅高亮该品类，淡化其余
+  lineColorMode: 'load' | 'voltage' | 'congestion' = 'load'; // 线路着色模式（M 键/按钮切换）
   clock = 0; // 当前仿真小时（由外部每帧写入，用于显示建设剩余工期）
   colorblind = false; // 色盲友好配色（负载色阶避开红绿对比）
   hourOfDay = 12; // 当前一天中的小时（昼夜色调用，由外部每帧写入）
@@ -184,15 +190,44 @@ export class Renderer {
     return best;
   }
 
+  /** 当前可视范围（世界像素，含 margin）——视锥剔除用 */
+  private viewRect(margin = 90): { x0: number; y0: number; x1: number; y1: number } {
+    const w = this.app.screen.width, h = this.app.screen.height;
+    return {
+      x0: (0 - this.camX) / this.zoom - margin,
+      y0: (0 - this.camY) / this.zoom - margin,
+      x1: (w - this.camX) / this.zoom + margin,
+      y1: (h - this.camY) / this.zoom + margin,
+    };
+  }
+
   /** 等轴菱形地块路径（cx,cy 为中心，s 为占瓦片比例） */
   private diamond(g: Graphics, cx: number, cy: number, s: number): Graphics {
     const hw = (TW / 2) * s, hh = (THh / 2) * s;
     return g.poly([cx, cy - hh, cx + hw, cy, cx, cy + hh, cx - hw, cy]);
   }
 
+  /** 把一张画好的 Graphics 烘焙成 Sprite 挂到容器（销毁旧纹理，防显存泄漏） */
+  private bakeInto(layer: Container, old: Sprite | null, g: Graphics): Sprite | null {
+    if (old) {
+      old.texture.destroy(true);
+      old.destroy();
+    }
+    layer.removeChildren();
+    const bounds = g.getLocalBounds();
+    if (bounds.width <= 0 || bounds.height <= 0) { g.destroy(); return null; }
+    const tex = this.app.renderer.generateTexture(g);
+    g.destroy();
+    const sp = new Sprite(tex);
+    sp.position.set(bounds.x, bounds.y);
+    layer.addChild(sp);
+    return sp;
+  }
+
   private drawBackgroundGrid(): void {
-    const g = this.gridLayer;
-    g.clear();
+    // 地形只在开局/换种子时变化：画进临时 Graphics 后烘焙成一张纹理，
+    // 每帧渲染从 8000+ 矢量指令降为 1 次贴图采样。
+    const g = new Graphics();
     const X0 = -2, X1 = 60, Y0 = -2, Y1 = 36;
     const terrain = this.grid.terrain;
     // 1) 陆地底色：整张可玩区域的等轴大菱形，比画布背景略亮——地图有"实体"边界感
@@ -270,6 +305,8 @@ export class Renderer {
       this.projX(X1, Y1), this.projY(X1, Y1) + THh / 2,
       this.projX(X0, Y1) - TW / 2, this.projY(X0, Y1),
     ]).stroke({ width: 2, color: 0x2a3a4d, alpha: 0.9 });
+
+    this.terrainSprite = this.bakeInto(this.gridLayer, this.terrainSprite, g);
   }
 
   /** 地形种子变化后（开新局/读档）重绘底图 */
@@ -277,11 +314,18 @@ export class Renderer {
     this.drawBackgroundGrid();
   }
 
-  /** 资源热力覆盖：选中风/光/水电建造工具时展示对应资源分布（亮=优质场址） */
+  /** 资源热力覆盖：选中风/光/水电建造工具时展示对应资源分布（亮=优质场址）；烘焙成纹理 */
   setResourceOverlay(kind: 'wind' | 'solar' | 'hydro' | null): void {
-    const g = this.resourceLayer;
-    g.clear();
-    if (!kind) return;
+    if (!kind) {
+      if (this.resourceSprite) {
+        this.resourceSprite.texture.destroy(true);
+        this.resourceSprite.destroy();
+        this.resourceSprite = null;
+      }
+      this.resourceLayer.removeChildren();
+      return;
+    }
+    const g = new Graphics();
     const color = kind === 'wind' ? 0x4ade80 : kind === 'solar' ? 0xf2c94c : 0x38bdf8;
     const range: Record<string, [number, number]> = { wind: [0.8, 1.2], solar: [0.85, 1.15], hydro: [0.85, 1.15] };
     const [lo, hi] = range[kind];
@@ -292,6 +336,7 @@ export class Renderer {
         if (t > 0.05) this.diamond(g, this.projX(x, y), this.projY(x, y), 1).fill({ color, alpha: 0.04 + t * 0.22 });
       }
     }
+    this.resourceSprite = this.bakeInto(this.resourceLayer, this.resourceSprite, g);
   }
 
   /** 每帧重绘（dtSec 用于流动动画推进） */
@@ -361,6 +406,7 @@ export class Renderer {
     lg.clear();
     fg.clear();
     const lineDim = this.categoryFilter && this.categoryFilter !== 'grid' ? 0.16 : 1;
+    const view = this.viewRect(40);
 
     for (const ln of this.grid.lines.values()) {
       const a = this.grid.buses.get(ln.from);
@@ -368,6 +414,9 @@ export class Renderer {
       if (!a || !b) continue;
       const ax = this.projX(a.x, a.y), ay = this.projY(a.x, a.y);
       const bx = this.projX(b.x, b.y), by = this.projY(b.x, b.y);
+      // 视锥剔除：线段包围盒与视口不相交则跳过
+      if (Math.max(ax, bx) < view.x0 || Math.min(ax, bx) > view.x1
+        || Math.max(ay, by) < view.y0 || Math.min(ay, by) > view.y1) continue;
       const load = ln.capacity > 0 ? Math.abs(ln.flow) / ln.capacity : 0;
       const isHV = ln.voltage === 'HV';
       const width = (isHV ? 3.2 : 1.8) + Math.min(5, ln.capacity / 30);
@@ -382,11 +431,30 @@ export class Renderer {
       if (this.n1Lines.has(ln.id)) {
         lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 8, color: 0xf2c94c, alpha: 0.32 });
       }
-      // 线路阴影（贴地感）+ 电压等级底色 + 负载率着色
+      // 临近过载脉冲预警：负载率 >85% 的线路呼吸式光晕，先于跳闸把危险"喊出来"
+      if (load > 0.85) {
+        const pulse = 0.25 + 0.25 * (0.5 + 0.5 * Math.sin(this.clock * 9 + ln.id));
+        lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 6, color: load >= 1 ? 0xff3344 : 0xffaa33, alpha: pulse * lineDim });
+      }
+      // 线路阴影（贴地感）+ 电压等级底色 + 模式着色
       lg.moveTo(ax, ay + 2).lineTo(bx, by + 2).stroke({ width: width + 1, color: 0x000000, alpha: 0.25 * lineDim });
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width: width + 3, color: VOLTAGE[ln.voltage].color, alpha: 0.16 * lineDim });
-      const color = loadColor(load, this.colorblind);
+      const color = this.lineColorMode === 'voltage'
+        ? voltageColor(Math.min(a.voltage ?? 1, b.voltage ?? 1), this.colorblind)
+        : this.lineColorMode === 'congestion'
+          ? congestionColor(load, this.colorblind)
+          : loadColor(load, this.colorblind);
       lg.moveTo(ax, ay).lineTo(bx, by).stroke({ width, color, alpha: 0.92 * lineDim });
+      // 色盲辅助：过载状态额外用"横向刻痕"传达（不只靠颜色）
+      if (this.colorblind && load >= 1) {
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const len = Math.hypot(bx - ax, by - ay) || 1;
+        const nx = -(by - ay) / len, ny = (bx - ax) / len;
+        for (const o of [-10, 0, 10]) {
+          const px = mx + ((bx - ax) / len) * o, py = my + ((by - ay) / len) * o;
+          lg.moveTo(px - nx * 6, py - ny * 6).lineTo(px + nx * 6, py + ny * 6).stroke({ width: 2, color: 0xffffff, alpha: 0.9 });
+        }
+      }
 
       // 流动粒子（潮流方向：正=from→to）
       if (Math.abs(ln.flow) > 0.5) {
@@ -418,19 +486,23 @@ export class Renderer {
     ground.clear();
     top.clear();
 
-    // 光标地块高亮（建造落点预览）
+    // 光标地块高亮（建造落点预览）：合法=绿、非法/资金不足=红、中性=细线
     if (this.cursorTile) {
       const sx = Math.round(this.cursorTile.x), sy = Math.round(this.cursorTile.y);
-      this.diamond(ground, this.projX(sx, sy), this.projY(sx, sy), 1)
-        .stroke({ width: 1.5, color: 0x38d39f, alpha: 0.45 });
+      const c = this.cursorOk === false ? 0xef5d60 : 0x38d39f;
+      const d = this.diamond(ground, this.projX(sx, sy), this.projY(sx, sy), 1)
+        .stroke({ width: this.cursorOk == null ? 1.5 : 2.5, color: c, alpha: this.cursorOk == null ? 0.45 : 0.85 });
+      if (this.cursorOk != null) d.fill({ color: c, alpha: 0.10 });
     }
-    // 连线预览（拉线工具）
+    // 连线预览（拉线工具）：悬停在合法终点=绿、非法终点=红、空地=中性
     if (this.pendingFromBus && this.cursorTile) {
       const a = this.pendingFromBus;
+      const c = this.pendingLineOk === false ? 0xef5d60 : 0x38d39f;
       drawDashed(ground, this.projX(a.x, a.y), this.projY(a.x, a.y),
-        this.projX(this.cursorTile.x, this.cursorTile.y), this.projY(this.cursorTile.x, this.cursorTile.y), 0x38d39f, 2);
+        this.projX(this.cursorTile.x, this.cursorTile.y), this.projY(this.cursorTile.x, this.cursorTile.y), c, this.pendingLineOk == null ? 2 : 3);
     }
 
+    const view = this.viewRect();
     const alive = new Set<number>();
     for (const bus of this.grid.buses.values()) {
       alive.add(bus.id);
@@ -444,14 +516,19 @@ export class Renderer {
         if (!tex) continue;
         sp = new Sprite(tex.texture);
         sp.anchor.set(tex.ax, tex.ay);
+        // 建筑不会移动：位置/深度/缩放只在创建时设一次（每帧重设 zIndex 会触发整层重排序）
+        sp.x = cx;
+        sp.y = cy + 4; // 微微压入地块中心
+        sp.zIndex = cy; // 画家算法：南边建筑盖住北边
+        sp.scale.set(1.15); // 建筑相对地块略放大，提升可读性
         this.spriteLayer.addChild(sp);
         this.sprites.set(bus.id, sp);
         this.spriteKind.set(bus.id, key);
       }
-      sp.x = cx;
-      sp.y = cy + 4; // 微微压入地块中心
-      sp.zIndex = cy; // 画家算法：南边建筑盖住北边
-      sp.scale.set(1.15); // 建筑相对地块略放大，提升可读性
+      // 视锥剔除：屏外建筑跳过状态环/特效计算，并隐藏贴图
+      const offscreen = cx < view.x0 || cx > view.x1 || cy < view.y0 || cy > view.y1;
+      sp.visible = !offscreen;
+      if (offscreen) continue;
 
       const gen0 = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
       const inOutage = !!gen0 && gen0.outageUntil != null && gen0.outageUntil > this.clock && !bus.underConstruction;
@@ -523,8 +600,10 @@ export class Renderer {
     }
   }
 
-  /** 维护每个母线下方的文字标签（缓存复用，按需增删） */
+  /** 维护每个母线下方的文字标签（缓存复用，按需增删）。
+   *  Text.text / style.fill 的赋值会触发重排版/样式重编译——只在内容真正变化时才写入。 */
   private syncLabels(): void {
+    const view = this.viewRect();
     const alive = new Set<number>();
     for (const bus of this.grid.buses.values()) {
       alive.add(bus.id);
@@ -532,26 +611,38 @@ export class Renderer {
       if (!t) {
         t = new Text({ text: '', style: LABEL_STYLE.clone() });
         t.anchor.set(0.5, 0);
+        // 母线不会移动：位置只设一次
+        t.x = this.projX(bus.x, bus.y);
+        t.y = this.projY(bus.x, bus.y) + 12;
         this.labelLayer.addChild(t);
         this.labels.set(bus.id, t);
+        this.labelCache.set(bus.id, { text: '', fill: -1, alpha: -1 });
       }
+      // 视锥剔除：屏外标签直接隐藏，连文本计算都省掉
+      const offscreen = t.x < view.x0 || t.x > view.x1 || t.y < view.y0 || t.y > view.y1;
+      t.visible = !offscreen;
+      if (offscreen) continue;
+
       const og = bus.kind === 'plant' ? this.grid.gensAtBus(bus.id)[0] : undefined;
       const outage = !!og && og.outageUntil != null && og.outageUntil > this.clock && !bus.underConstruction;
-      t.text = bus.underConstruction
+      const text = bus.underConstruction
         ? `${bus.name} 🏗${Math.max(0, ((bus.commissionAt ?? 0) - this.clock) / 24).toFixed(1)}d`
         : outage ? `${bus.name} 🔧检修`
           : busLabel(this.grid, bus);
-      t.x = this.projX(bus.x, bus.y);
-      t.y = this.projY(bus.x, bus.y) + 12;
       const matchFilter = !this.categoryFilter || busCategory(this.grid, bus) === this.categoryFilter;
-      t.alpha = matchFilter ? 1 : 0.15;
-      t.style.fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0xb9cbda;
+      const alpha = matchFilter ? 1 : 0.15;
+      const fill = bus.blackout ? 0xef5d60 : bus.underConstruction ? 0xf2c94c : outage ? 0xff7043 : 0xb9cbda;
+      const cache = this.labelCache.get(bus.id)!;
+      if (cache.text !== text) { t.text = text; cache.text = text; }
+      if (cache.alpha !== alpha) { t.alpha = alpha; cache.alpha = alpha; }
+      if (cache.fill !== fill) { t.style.fill = fill; cache.fill = fill; }
     }
     for (const [id, t] of [...this.labels]) {
       if (!alive.has(id)) {
         t.destroy();
         this.labelLayer.removeChild(t);
         this.labels.delete(id);
+        this.labelCache.delete(id);
       }
     }
   }
@@ -572,6 +663,33 @@ function shadeColor(c: number, f: number): number {
   const g = Math.max(0, Math.min(255, Math.round(((c >> 8) & 0xff) * f)));
   const b = Math.max(0, Math.min(255, Math.round((c & 0xff) * f)));
   return (r << 16) | (g << 8) | b;
+}
+
+/** 电压着色（电压模式）：1.0pu 健康 → 0.9pu 深度欠压 */
+function voltageColor(v: number, colorblind = false): number {
+  if (colorblind) {
+    if (v >= 0.98) return 0x38bdf8;
+    if (v >= 0.95) return 0xf2c94c;
+    if (v >= 0.92) return 0xf97316;
+    return 0xffffff;
+  }
+  if (v >= 0.98) return 0x38d39f;
+  if (v >= 0.95) return 0xf2c94c;
+  if (v >= 0.92) return 0xf2994a;
+  return 0xef5d60;
+}
+
+/** 拥堵着色（拥堵模式）：低于阈值置灰，越接近热极限越红——一眼找出"要花阻塞费"的走廊 */
+function congestionColor(load: number, colorblind = false): number {
+  if (load < 0.7) return 0x44525f; // 阈值以下：不拥堵，置灰
+  if (colorblind) {
+    if (load < 0.85) return 0xf2c94c;
+    if (load < 1.0) return 0xf97316;
+    return 0xffffff;
+  }
+  if (load < 0.85) return 0xf2c94c;
+  if (load < 1.0) return 0xf2994a;
+  return 0xef5d60;
 }
 
 function loadColor(load: number, colorblind = false): number {

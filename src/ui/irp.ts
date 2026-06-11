@@ -55,7 +55,7 @@ export class IRPPanel {
     const deficitTxt = Number.isFinite(a.deficitDay)
       ? `第 ${a.deficitDay.toFixed(0)} 天（约还有 ${Math.max(0, a.deficitDay - a.curDay).toFixed(0)} 天）`
       : '基准增长下短期不会出现';
-    let adviceHtml = '';
+    let adviceHtml: string;
     if (a.option) {
       const o2 = a.option;
       const overdue = o2.startByDay <= a.curDay;

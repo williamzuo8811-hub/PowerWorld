@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0b1016" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <title>电力世界 · PowerWorld</title>
     <style>
       :root {
@@ -36,8 +39,8 @@
       }
       #topbar .stat { flex: 0 0 auto; }
       #topbar .stat { display: flex; flex-direction: column; line-height: 1.25; }
-      #topbar .stat .k { color: var(--text-dim); font-size: 10px; letter-spacing: .5px; }
-      #topbar .stat .v { font-size: 15px; font-weight: 600; }
+      #topbar .stat .k { color: var(--text-dim); font-size: calc(10px * var(--font-scale, 1)); letter-spacing: .5px; }
+      #topbar .stat .v { font-size: calc(15px * var(--font-scale, 1)); font-weight: 600; }
       #topbar .spacer { flex: 1; }
       .freq-ok { color: var(--ok); }
       .freq-warn { color: var(--warn); }
@@ -70,7 +73,7 @@
       #toolbar button {
         text-align: left; background: #141d28; color: var(--text);
         border: 1px solid var(--panel-border); border-radius: 7px; padding: 7px 8px;
-        cursor: pointer; font-family: inherit; font-size: 11px; line-height: 1.3;
+        cursor: pointer; font-family: inherit; font-size: calc(11px * var(--font-scale, 1)); line-height: 1.3;
       }
       #toolbar button .cost { display: block; color: var(--text-dim); font-size: 10px; }
       #toolbar button.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -80,7 +83,7 @@
       #log {
         position: fixed; right: 16px; bottom: 16px; z-index: 10; width: 320px; max-height: 180px;
         overflow: hidden; background: var(--panel); border: 1px solid var(--panel-border);
-        border-radius: 10px; padding: 8px 10px; font-size: 11px; line-height: 1.5;
+        border-radius: 10px; padding: 8px 10px; font-size: calc(11px * var(--font-scale, 1)); line-height: 1.5;
       }
       #log .title { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; margin-bottom: 4px; }
       #log .entry { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -112,6 +115,31 @@
         position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 10;
         background: rgba(56, 211, 159, 0.12); border: 1px solid var(--accent); color: var(--accent);
         padding: 5px 14px; border-radius: 20px; font-size: 12px; display: none;
+      }
+
+      /* 附加目标追踪侧栏（仅有附加目标的关卡显示） */
+      #objectives {
+        position: fixed; left: 16px; top: 64px; z-index: 10; width: 240px;
+        background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px;
+        padding: 8px 12px; font-size: 12px; line-height: 1.8; display: none;
+      }
+      #objectives .title { color: var(--text-dim); font-size: 10px; letter-spacing: 1px; }
+      #objectives .obj-done { color: var(--ok); }
+      #objectives .obj-pending { color: var(--warn); }
+      #objectives .obj-failed { color: var(--danger); text-decoration: line-through; }
+
+      /* 建造预览浮签（跟随光标：造价/地形/资源评分/合法性） */
+      #buildtip {
+        position: fixed; z-index: 12; pointer-events: none; display: none;
+        background: rgba(10, 16, 24, 0.92); border: 1px solid var(--panel-border); border-radius: 8px;
+        padding: 5px 10px; font-size: 11px; line-height: 1.6; white-space: nowrap;
+      }
+      #buildtip .bt-bad { color: var(--danger); }
+      #buildtip .bt-good { color: var(--ok); }
+
+      /* 可访问性：键盘焦点可见 */
+      button:focus-visible, input:focus-visible {
+        outline: 2px solid var(--accent); outline-offset: 1px;
       }
       /* 主菜单 / 关卡选择 / 研发面板 */
       #menu, #panel {
@@ -178,7 +206,16 @@
         #toolbar button { font-size: 10px; padding: 5px 6px; }
         #log { width: 210px; max-height: 110px; font-size: 10px; right: 8px; bottom: 8px; }
         #inspector { display: none !important; }
+        #objectives { width: 180px; font-size: 11px; }
         .menu-panel { padding: 16px; }
+      }
+      /* 触屏设备：按 44px 触控标准放大可点目标 */
+      @media (pointer: coarse) {
+        #toolbar { width: 256px; max-height: 52vh; overflow-y: auto; }
+        #toolbar button { min-height: 44px; font-size: 12px; }
+        #toolbar .tool-group { min-height: 32px; display: flex; align-items: center; }
+        #speed button { min-height: 44px; min-width: 44px; }
+        #buildtip { display: none !important; }
       }
 
       /* 游戏结束遮罩 */
@@ -202,6 +239,8 @@
     <div id="inspector"></div>
     <div id="hint"></div>
     <div id="tutorial"></div>
+    <div id="objectives"></div>
+    <div id="buildtip"></div>
     <div id="menu"></div>
     <div id="panel"></div>
     <div id="toast"></div>

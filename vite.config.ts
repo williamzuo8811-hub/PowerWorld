@@ -10,5 +10,12 @@ export default defineConfig({
   build: {
     target: 'es2022',
     outDir: 'dist',
+    sourcemap: true, // 线上报错可定位源码
+    rollupOptions: {
+      output: {
+        // 把 pixi.js（约 1MB）拆出主包：游戏逻辑迭代时用户只需重新下载小的主 chunk
+        manualChunks: { pixi: ['pixi.js'] },
+      },
+    },
   },
 });

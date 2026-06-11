@@ -219,6 +219,12 @@ export const POLICY_FX = {
 export const CYCLE_PERIOD_DAYS = 8; // 周期长度（天）
 export const CYCLE_AMPLITUDE = 0.15; // 对需求的振幅（±15%）
 
+// —— 新能源出力预测误差（分钟级噪声）——
+// 风/光实际出力围绕"预报值"做均值回归的随机摆动：储能、备用与功率预测 AI 科技因此有了真实意义。
+export const RENEW_NOISE_SIGMA = 0.22; // 噪声强度（每√小时的随机步长）
+export const RENEW_NOISE_REVERT = 1.0; // 向 0 回归速率（每小时）——约 1 小时尺度的湍流/云团
+export const RENEW_NOISE_CLAMP = 0.35; // 噪声幅度上限（±35%）
+
 // —— 季节性（年度循环：需求与新能源随四季摆动；第 0 天为春，中性起点）——
 export const SEASON_YEAR_DAYS = 24; // 一年的游戏天数（四季各约 6 天）
 export const SEASON_SUMMER_DEMAND = 0.18; // 盛夏制冷高峰需求加成（+18%）
@@ -347,6 +353,11 @@ export const FLEX_PRICE_MAX = 3.0; // 灵活性价上限系数
 // —— 储能价差套利：低价充电/高价放电赚取现货价差，旺季价差更宽 ——
 export const STORAGE_ARB_CAPTURE = 0.5; // 价差套利的捕获比例（市场摩擦/损耗后）
 export const STORAGE_ARB_SEASON_K = 0.6; // 旺季价差更宽的套利季节增益
+// 流动性衰减：套利本身会压平价差——储能机队越大，单位收益越低（防"印钞机"式无限堆储能）
+export const STORAGE_ARB_LIQUIDITY_MW = 80; // 半衰参考容量：机队功率达此值时单位套利收益约打 5 折
+// SoC 区间约束：满电没法低买、空电没法高卖——SoC 贴边时套利捕获大打折扣
+export const STORAGE_ARB_SOC_MARGIN = 0.08; // SoC 距离 0%/100% 的"可交易"边距
+export const STORAGE_ARB_SOC_EDGE_FACTOR = 0.25; // SoC 贴边时的套利捕获折减
 // 储能商业策略二选一：'arb'=专注价差套利（不参与调频）；'reg'=投标调频（套利捕获减半，留 SoC 履约）
 export const STORAGE_REG_ARB_FACTOR = 0.5; // 调频策略下的套利捕获折减
 // —— 可中断负荷合同：付季节性可用费，把大用户可中断负荷作为备用/容量资源 ——
@@ -460,9 +471,9 @@ export const LEAD_WINDOW_DAYS = 3; // 招商窗口时长（天）
 export const LEAD_DISCOUNT = 0.6; // 窗口期内接入费折扣
 // —— 反向挖角：竞争力高时，有机会从较弱对手手中赢得现成大客户 ——
 export const POACH_WIN_STANDING = 0.65; // 触发反向挖角机会所需的最低竞争力
-export const POACH_WIN_CHANCE = 0.45; // 满足条件时招商机会为"竞品客户"的概率
+export const POACH_WIN_CHANCE = 0.3; // 满足条件时招商机会为"竞品客户"的概率（防"赢家通吃"正反馈）
 export const POACH_WIN_MIN_COMP = 120; // 可被挖的对手最低容量 (MW)
-export const POACH_WIN_FRACTION = 0.6; // 赢得竞品客户时对手缩减的容量比例（×该品类规模）
+export const POACH_WIN_FRACTION = 0.4; // 赢得竞品客户时对手缩减的容量比例（×该品类规模）
 // —— 大客户流失与自备应急 ——
 export const CHURN_THRESHOLD = 0.55; // 满意度持续低于此累积流失风险
 export const CHURN_DAYS = 3; // 持续低满意达此天数 → 大客户流失（撤离）
@@ -471,7 +482,7 @@ export const CHURN_REP_HIT = 5; // 大客户流失的口碑打击
 export const POACH_CONTEST_K = 0.7; // 市场竞争激烈度对流失（挖角）速度的加成
 export const POACH_COMP_GAIN = 0.5; // 被挖走的负荷有此比例转化为最强对手的新增容量
 export const BACKUP_FRACTION = 0.6; // 自备应急电源（UPS/柴发）可兜底的负荷比例（高于流失阈值→护客户）
-export const BACKUP_CAPEX = 90_000; // 自备应急电源造价
+export const BACKUP_CAPEX = 180_000; // 自备应急电源造价（定价对标其"永久护客"价值，回本期约 90 天）
 export const BACKUP_OM_PER_DAY = 220; // 自备应急电源日常维护费（¥/天）——不再是"一次投资永久兜底"
 // —— 大客户长约：锁定忠诚（合约期内不被挖角）换取电价折让 ——
 export const CONTRACT_DAYS = 20; // 长约时长（天）
@@ -484,7 +495,9 @@ export const KEY_ACCOUNTS: Record<string, KeyAccountSpec> = {
 };
 export const UNSERVED_PENALTY = 240; // 失负荷罚款 $/MWh（停电代价远高于电价）
 export const CARBON_PRICE_START = 4; // 配额价 $/吨，随时间上涨
-export const CARBON_PRICE_GROWTH_PER_DAY = 0.6;
+// 增速使"煤 vs 气"的边际成本交叉点出现在约第 55 天（两个游戏年内）：
+// 煤 26+0.95c vs 气 58+0.45c → c≈64 时反超，清洁转型压力随对局推进真实显现。
+export const CARBON_PRICE_GROWTH_PER_DAY = 1.1;
 // 碳配额交易（基准分配）：按送达电量免费发放排放配额，基准强度随时间收紧。
 // 排放强度低于基准 → 卖出富余配额获利；高于基准 → 买入配额付费。
 export const CARBON_BENCH_START = 0.55; // 基准排放强度起点 (t/MWh)

@@ -146,8 +146,12 @@ export function addCapacityCommitmentTo(sim: Simulation, mw: number, days: numbe
   return true;
 }
 
-/** 借款（受信用额度约束），成功返回 true */
+/** 借款（受信用额度约束；预算约束关卡/无贷款模式下禁用），成功返回 true */
 export function borrowFor(sim: Simulation, amount: number): boolean {
+  if (sim.loanBan) {
+    sim.log('warn', '🚫 本局禁止贷款（预算约束）——只能靠经营现金流');
+    return false;
+  }
   if (amount <= 0 || sim.debt + amount > sim.creditLimit) return false;
   sim.debt += amount;
   sim.money += amount;

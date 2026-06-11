@@ -7,12 +7,13 @@ export interface GameSettings {
   music: boolean; // 氛围背景音乐
   colorblind: boolean; // 色盲友好配色（线路负载/状态色避开红绿对比）
   uiScale: number; // 界面缩放（0.9/1/1.1/1.25）
+  fontScale: number; // 字体缩放（独立于整体缩放，0.9/1/1.15/1.3）
   autosave: boolean; // 每游戏日自动存档
 }
 
 const KEY = 'powerworld.settings.v1';
 
-export const DEFAULT_SETTINGS: GameSettings = { volume: 0.7, music: false, colorblind: false, uiScale: 1, autosave: true };
+export const DEFAULT_SETTINGS: GameSettings = { volume: 0.7, music: false, colorblind: false, uiScale: 1, fontScale: 1, autosave: true };
 
 export function loadSettings(): GameSettings {
   try {
@@ -32,10 +33,11 @@ export function saveSettings(s: GameSettings): void {
   }
 }
 
-/** 应用即时生效的全局设置（配色类名 / 界面缩放） */
+/** 应用即时生效的全局设置（配色类名 / 界面缩放 / 字体缩放） */
 export function applyGlobalSettings(s: GameSettings): void {
   document.body.classList.toggle('colorblind', s.colorblind);
   (document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = s.uiScale === 1 ? '' : String(s.uiScale);
+  document.documentElement.style.setProperty('--font-scale', String(s.fontScale ?? 1));
 }
 
 const KEYMAP: [string, () => string][] = [
@@ -136,6 +138,19 @@ export class SettingsPanel {
       scaleWrap.appendChild(b);
     }
     panel.appendChild(rowEl(t('set_uiscale'), scaleWrap));
+
+    // 字体缩放（独立档位：UI 布局不变、只放大文字）
+    const fontWrap = document.createElement('div');
+    fontWrap.style.cssText = 'display:flex;gap:6px';
+    for (const fc of [0.9, 1, 1.15, 1.3]) {
+      const b = document.createElement('button');
+      b.textContent = `${Math.round(fc * 100)}%`;
+      const on = Math.abs((s.fontScale ?? 1) - fc) < 0.01;
+      b.style.cssText = `background:${on ? 'var(--accent)' : '#182431'};color:${on ? '#04211a' : 'var(--text)'};border:1px solid var(--panel-border);border-radius:6px;padding:6px 10px;cursor:pointer;font-family:inherit;font-size:12px`;
+      b.onclick = () => { s.fontScale = fc; emit(); this.show({ ...o, settings: s }); };
+      fontWrap.appendChild(b);
+    }
+    panel.appendChild(rowEl(t('set_fontscale'), fontWrap));
 
     // 快捷键一览
     const head = document.createElement('div');

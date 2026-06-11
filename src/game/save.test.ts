@@ -87,4 +87,31 @@ describe('多槽位存档', () => {
     expect(migrateSave({ version: 2 })).toBeNull(); // 缺 save/scenarioId
     expect(migrateSave({ version: 2, scenarioId: 'x', ts: 1, save: { money: 'oops' } })).toBeNull();
   });
+
+  it('migrateSave 拒绝数值损坏的存档（NaN/Infinity/越界）', () => {
+    const sim = makeSim();
+    const base = () => ({ version: 2, scenarioId: 'town', ts: 1, save: sim.serialize() });
+    // 健康档通过
+    expect(migrateSave(base())).not.toBeNull();
+    // money = NaN
+    const b1 = base(); b1.save.money = NaN;
+    expect(migrateSave(b1)).toBeNull();
+    // clock = Infinity / 负数
+    const b2 = base(); b2.save.clock = Infinity;
+    expect(migrateSave(b2)).toBeNull();
+    const b3 = base(); b3.save.clock = -5;
+    expect(migrateSave(b3)).toBeNull();
+    // debt 为负
+    const b4 = base(); b4.save.debt = -100;
+    expect(migrateSave(b4)).toBeNull();
+    // reliability 越界
+    const b5 = base(); b5.save.reliability = 3;
+    expect(migrateSave(b5)).toBeNull();
+    // 母线坐标 NaN
+    const b6 = base(); b6.save.grid.buses[0].x = NaN;
+    expect(migrateSave(b6)).toBeNull();
+    // grid 缺数组
+    const b7 = base(); (b7.save.grid as unknown as Record<string, unknown>).lines = undefined;
+    expect(migrateSave(b7)).toBeNull();
+  });
 });

@@ -14,6 +14,9 @@ export interface ScoreRecord {
   clean: number; // 0..1
   marketShare: number; // 0..1
   netWorth: number;
+  sig?: string; // 策略签名：通关时的电源组合（如"煤1·气2·风3·储2"）
+  badges?: string[]; // 亮点徽章：零失负荷/全清洁/零负债/N-1 等
+  mode?: string; // 变体模式名（困难/竞速/无贷款/极限）
 }
 
 interface ScoreStore {
@@ -76,13 +79,17 @@ export function allBests(): Record<string, ScoreRecord> {
 
 const GRADE_EMOJI: Record<string, string> = { S: '🌟', A: '🏆', B: '🥈', C: '🥉', D: '😅' };
 
-/** 生成可分享的战绩文本（复制到剪贴板/粘贴到群里） */
+/** 生成可分享的战绩文本（复制到剪贴板/粘贴到群里）：含策略签名与亮点徽章，越晒越想比 */
 export function shareText(rec: ScoreRecord, scenarioName: string): string {
   const seedNote = rec.seed != null ? ` #${rec.seed}` : '';
-  return [
-    `⚡ 电力世界 · ${scenarioName}${seedNote}`,
+  const modeNote = rec.mode ? `【${rec.mode}】` : '';
+  const lines = [
+    `⚡ 电力世界 · ${scenarioName}${seedNote}${modeNote}`,
     `${GRADE_EMOJI[rec.grade] ?? '🏅'} 评级 ${rec.grade}（${rec.score.toFixed(0)} 分）· 第 ${rec.day} 天通关`,
     `🔌 可靠性 ${(rec.reliability * 100).toFixed(1)}% | 🌱 清洁 ${(rec.clean * 100).toFixed(0)}% | 📊 市占 ${(rec.marketShare * 100).toFixed(0)}%`,
     `💰 净资产 ¥${Math.round(rec.netWorth).toLocaleString('en-US')}`,
-  ].join('\n');
+  ];
+  if (rec.sig) lines.push(`🧩 打法：${rec.sig}`);
+  if (rec.badges?.length) lines.push(`🎖 ${rec.badges.join(' ')}`);
+  return lines.join('\n');
 }

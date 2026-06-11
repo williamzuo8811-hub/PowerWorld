@@ -54,6 +54,7 @@ export function weightedChoice(weights: [WeatherKind, number][]): WeatherKind {
 export class EventSystem {
   active: ActiveEvent[] = [];
   nextAt = Infinity;
+  intensity = 1; // 天气事件频率倍率（>1 更频繁——每日挑战"天气烈度"/困难模式）
   /** 天气预报：下一场事件的种类提前掷出并公示，让玩家能提前备战（充储能/并机组/检修避让） */
   forecast: { kind: WeatherKind; at: number } | null = null;
   private forecastWarned = false; // 临近预警（边沿触发）
@@ -67,7 +68,7 @@ export class EventSystem {
 
   /** 安排第一场事件（开局后若干小时）；预报在下个 update 结合季节生成 */
   schedule(clock: number): void {
-    this.nextAt = clock + rnd(8, 16);
+    this.nextAt = clock + rnd(8, 16) / this.intensity;
     this.forecast = null;
     this.forecastWarned = false;
   }
@@ -97,7 +98,7 @@ export class EventSystem {
     let guard = 0;
     while (t >= this.nextAt && guard++ < 8) {
       this.trigger(sim);
-      this.nextAt += rnd(10, 24);
+      this.nextAt += rnd(10, 24) / this.intensity;
       this.rollForecast(sim); // 下一场事件的新预报
     }
     // 过期事件移除

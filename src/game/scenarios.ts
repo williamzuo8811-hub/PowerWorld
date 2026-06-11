@@ -1,4 +1,6 @@
 // 战役关卡定义。每个关卡设定起始资金、目标、初始电网与电源布局。
+// 关卡类型不只有"撑 X 天"：残局修复 / 预算约束 / 剧本事件链 / 大停电考古
+// 通过 sim.objectives（附加目标）、sim.loanBan（禁贷）、sim.scriptedWeather（剧本天气）实现差异化玩法。
 import type { Simulation } from '../sim/simulation';
 
 export interface Scenario {
@@ -190,6 +192,126 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    id: 'restore',
+    name: '⑨ 残局修复',
+    brief: '你接手了一家烂摊子电力公司：两条线路停运、主力机组临修、全机队老化严重。先抢修复电，再在第 8 天前补出 N-1 冗余，撑到第 10 天且可靠性≥88%。',
+    hint: '开局先用「检查/重合闸」恢复跳闸线路！老机组故障率高——安排计划检修降役龄；第 8 天前必须通过 N-1 校核（顶栏按钮）。',
+    goals: '附加目标：第 8 天前通过 N-1 冗余校核（到期未过=直接失败）',
+    setup(sim) {
+      sim.money = 720_000;
+      sim.goalDay = 10;
+      sim.goalReliability = 0.88;
+      sim.objectives = [{ kind: 'n1ByDay', byDay: 8 }];
+      const g = sim.grid;
+      const res = g.addLoad(15, 5, 'residential', 28, '老城区', 0.004);
+      const com = g.addLoad(18, 12, 'commercial', 24, '商业街', 0.0045);
+      const ind = g.addLoad(8, 14, 'industrial', 34, '老工业区', 0.0035);
+      const coal = g.addPlant('coal', 5, 6);
+      const gas = g.addPlant('gas', 7, 4);
+      const sub = g.addSubstation(12, 9, '残破主变');
+      const l1 = g.addLine(coal.bus.id, sub.id);
+      g.addLine(gas.bus.id, sub.id);
+      g.addLine(sub.id, res.bus.id);
+      const l2 = g.addLine(sub.id, com.bus.id);
+      g.addLine(sub.id, ind.bus.id);
+      // 残局：两条线路停运待重合闸、主力煤机临修 1 天、全机队高役龄（高故障率/高成本）
+      l1.tripped = true;
+      l2.tripped = true;
+      coal.gen.age = 32;
+      coal.gen.outageUntil = 20; // 开局即在检修中，约 20 小时后归队
+      gas.gen.age = 26;
+      sim.log('warn', '【残局修复】前任留下的电网百孔千疮——线路跳闸、机组临修、设备老化。先抢修，再补冗余。');
+    },
+  },
+  {
+    id: 'budget',
+    name: '⑩ 精打细算',
+    brief: '监管冻结了你的信用额度：全程禁止贷款，只有 ¥900,000 启动资金和经营现金流。每一笔投资都要回本，撑到第 14 天且可靠性≥90%。',
+    hint: '没有贷款兜底：现金归零=立即破产。优先低 capex 的燃气/光伏滚动发展，建设工期内要留足运维与燃料钱。',
+    goals: '禁贷款 · 高星级 = 抠出利润的同时保住可靠性',
+    setup(sim) {
+      sim.money = 900_000;
+      sim.goalDay = 14;
+      sim.goalReliability = 0.9;
+      sim.loanBan = true;
+      const g = sim.grid;
+      g.addLoad(15, 5, 'residential', 30, '城北', 0.0045);
+      g.addLoad(19, 12, 'commercial', 26, '商圈', 0.005);
+      g.addLoad(8, 13, 'industrial', 34, '工业区', 0.0038);
+      const coal = g.addPlant('coal', 5, 6).bus;
+      const sub = g.addSubstation(12, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      sim.log('info', '【精打细算】信用额度被冻结——全程无贷款，现金流就是生命线。');
+    },
+  },
+  {
+    id: 'megadeal',
+    name: '⑪ 超级大单',
+    brief: '一家云计算巨头宣布在本区域选址数据中心，窗口只到第 8 天——错过即出局（直接判负）。先把电网做可靠，签下大单，再撑到第 16 天且可靠性≥90%。',
+    hint: '第 8 天前必须用「💻 数据中心」工具签下大客户（竞争力太低会被拒——先保口碑/可靠性）！签约后它最怕停电，备好冗余与储能。',
+    goals: '附加目标：第 8 天前签下数据中心 · 高星级 = 大单收入 + 高可靠',
+    setup(sim) {
+      sim.money = 1_400_000;
+      sim.goalDay = 16;
+      sim.goalReliability = 0.9;
+      sim.objectives = [{ kind: 'keyAccountByDay', profile: 'datacenter', byDay: 8 }];
+      sim.nextLeadAt = 2 * 24; // 第 2 天招商窗口开启（窗口期接入费有折扣）
+      // 剧本事件链：签约后的考验——第 9 天热浪、第 12 天风暴
+      sim.scriptedWeather = [
+        { atClock: 9 * 24 + 12, kind: 'heatwave' },
+        { atClock: 12 * 24 + 6, kind: 'storm' },
+      ];
+      const g = sim.grid;
+      g.addLoad(15, 6, 'commercial', 24, '商务区', 0.004);
+      g.addLoad(9, 14, 'industrial', 30, '产业园', 0.0035);
+      const coal = g.addPlant('coal', 5, 6).bus;
+      const gas = g.addPlant('gas', 7, 4).bus;
+      const sub = g.addSubstation(12, 9, '主变电站');
+      g.addLine(coal.id, sub.id);
+      g.addLine(gas.id, sub.id);
+      sim.log('info', '【超级大单】云巨头第 8 天前要看到一张可靠的电网——签不下这单就出局。');
+    },
+  },
+  {
+    id: 'blackout2003',
+    name: '⑫ 大停电考古 · 2003',
+    brief: '复刻 2003 年北美大停电的剧本：西部电源经过载走廊向东部城市远供，一条骨干线即将被"树闪"打掉——连锁跳闸一触即发。第 6 天前补出 N-1，撑到第 10 天且可靠性≥88%。',
+    hint: '历史的教训：单条走廊重载 + 一次树闪 = 5,000 万人停电。开局尽快加第二条输电走廊/就地电源；风暴会再来，第 6 天前必须通过 N-1。',
+    goals: '附加目标：第 6 天前通过 N-1 校核 · 这是本游戏最"电网工程"的一关',
+    setup(sim) {
+      sim.money = 1_050_000;
+      sim.goalDay = 10;
+      sim.goalReliability = 0.88;
+      sim.objectives = [{ kind: 'n1ByDay', byDay: 6 }];
+      // 剧本：开局 5 小时"树闪"风暴打掉走廊（风暴会随机损毁一条在运线路）；第 4 天再来一场
+      sim.scriptedWeather = [
+        { atClock: 5, kind: 'storm' },
+        { atClock: 4 * 24 + 10, kind: 'storm' },
+      ];
+      const g = sim.grid;
+      // 西部电源群
+      const coal1 = g.addPlant('coal', 4, 6).bus;
+      const coal2 = g.addPlant('coal', 3, 10).bus;
+      const gas = g.addPlant('gas', 6, 4).bus;
+      const west = g.addSubstation(8, 8, '西部枢纽');
+      g.addLine(coal1.id, west.id);
+      g.addLine(coal2.id, west.id);
+      g.addLine(gas.id, west.id);
+      // 东部城市群（远离电源——只能靠输电走廊）
+      const east = g.addSubstation(26, 12, '东部枢纽');
+      const r = g.addLoad(29, 9, 'residential', 40, '东部市区', 0.004);
+      const c = g.addLoad(31, 14, 'commercial', 34, '金融城', 0.0045);
+      const i = g.addLoad(27, 17, 'industrial', 38, '制造带', 0.0035);
+      g.addLine(east.id, r.bus.id);
+      g.addLine(east.id, c.bus.id);
+      g.addLine(east.id, i.bus.id);
+      // 唯一的重载输电走廊（HV ~170MW vs 110+MW 负荷且持续增长）——这就是 2003 的"Harding-Chamberlin"
+      g.addLine(west.id, east.id);
+      sim.events.nextAt = sim.clock + 30; // 随机天气稍晚——前 5 小时留给剧本
+      sim.log('warn', '【大停电考古】2003-08-14：一条重载骨干线擦过未修剪的树木后跳闸，连锁反应在 8 分钟内击溃了整个东北电网。这一次，轮到你来改写历史。');
+    },
+  },
+  {
     id: 'endless',
     name: '∞ 无尽经营',
     brief: '没有终点的生涯模式：城市持续成长、四季循环、对手演化、政策更迭。唯一的失败是破产。每年给出经营年报，看你能把电力帝国带到多远。',
@@ -229,7 +351,9 @@ export function dailySeed(date = new Date()): number {
   return date.getUTCFullYear() * 10000 + (date.getUTCMonth() + 1) * 100 + date.getUTCDate();
 }
 
-/** 用种子确定性生成每日挑战的题面（导出供测试） */
+/** 用种子确定性生成每日挑战的题面（导出供测试）。
+ *  维度：城区布局/起步电源/开局季节/资金/目标天数 + 燃料起价/碳价/天气烈度/燃料波动率/
+ *       对手强度/初始破损/特殊禁令——组合空间数万量级，一年内不重样。 */
 export function setupDaily(sim: Simulation, seed: number): void {
   const rnd = mulberry32(seed);
   sim.grid.setTerrainSeed(seed); // 当日地形/资源图也由日期种子决定
@@ -238,6 +362,7 @@ export function setupDaily(sim: Simulation, seed: number): void {
   sim.goalDay = 12 + Math.floor(rnd() * 5); // 12~16 天
   sim.goalReliability = 0.9;
   sim.clock = Math.floor(rnd() * 24) * 24; // 随机开局季节
+  sim.events.schedule(sim.clock); // 重排首场天气（避免开局补触发一串积压事件）
   const g = sim.grid;
   // 3~5 个城区：类型/位置/规模随机但当天确定
   const n = 3 + Math.floor(rnd() * 3);
@@ -249,14 +374,44 @@ export function setupDaily(sim: Simulation, seed: number): void {
   }
   // 起步电源：煤或气 + 中心变电站
   const starter = pick(['coal', 'gas'] as const);
-  const plant = g.addPlant(starter, 4 + Math.floor(rnd() * 3), 4 + Math.floor(rnd() * 4)).bus;
+  const plant = g.addPlant(starter, 4 + Math.floor(rnd() * 3), 4 + Math.floor(rnd() * 4));
   const sub = g.addSubstation(12 + Math.floor(rnd() * 6), 7 + Math.floor(rnd() * 4), '中心变电站');
-  g.addLine(plant.id, sub.id);
+  g.addLine(plant.bus.id, sub.id);
   // 当天的"风味"扰动：燃料起价 / 碳价倍率小幅随机
   sim.fuelPrice.coal = 0.8 + rnd() * 0.5;
   sim.fuelPrice.gas = 0.8 + rnd() * 0.7;
   sim.carbonPriceMult = 0.9 + rnd() * 0.8;
-  sim.log('info', `【每日挑战 #${seed}】今天所有玩家同一张图——撑到第 ${sim.goalDay} 天、可靠性≥90%，比比谁的评级高！`);
+  // —— 扩展维度（每个都改变当天的最优解法）——
+  const flavors: string[] = [];
+  // ① 天气烈度：风调雨顺 ↔ 多事之秋
+  const wx = pick([0.7, 1, 1, 1.4, 1.8]);
+  sim.events.intensity = wx;
+  sim.events.schedule(sim.clock);
+  if (wx > 1.2) flavors.push(`🌪 天气烈度 ×${wx.toFixed(1)}`);
+  else if (wx < 0.9) flavors.push('☀ 风调雨顺');
+  // ② 燃料波动率：平稳 ↔ 动荡行情（动荡日燃料长约/套保更值钱）
+  const vol = pick([0.6, 1, 1, 1.6, 2.4]);
+  sim.fuelVolatilityMult = vol;
+  if (vol > 1.3) flavors.push(`📈 燃料动荡 ×${vol.toFixed(1)}`);
+  // ③ 政策节奏：首个政策事件来得早或晚
+  sim.policy.nextAt = sim.clock + (3 + Math.floor(rnd() * 5)) * 24;
+  // ④ 对手强度：弱旅 ↔ 强敌（影响市占与挖角压力）
+  const compScale = 0.7 + rnd() * 0.9;
+  for (const c of sim.competitors) { c.base *= compScale; c.capacity = c.base; }
+  if (compScale > 1.3) flavors.push('⚔ 强敌环伺');
+  else if (compScale < 0.85) flavors.push('🕊 对手孱弱');
+  // ⑤ 初始破损：三成的日子接手老化机队（检修策略前置）
+  if (rnd() < 0.3) {
+    plant.gen.age = 22 + Math.floor(rnd() * 16);
+    flavors.push('🔧 起步机组老化');
+  }
+  // ⑥ 特殊禁令：部分日子禁建某类电源（强制改变路线）
+  const ban = rnd();
+  if (ban < 0.15) { sim.bannedPlants.add('coal'); flavors.push('🚫 禁建燃煤'); }
+  else if (ban < 0.25) { sim.bannedPlants.add('nuclear'); flavors.push('🚫 禁建核电'); }
+  else if (ban < 0.32) { sim.loanBan = true; flavors.push('🏦 禁止贷款'); }
+  const flavorNote = flavors.length ? `今日规则：${flavors.join(' · ')}。` : '';
+  sim.log('info', `【每日挑战 #${seed}】今天所有玩家同一张图——${flavorNote}撑到第 ${sim.goalDay} 天、可靠性≥90%，比比谁的评级高！`);
 }
 
 SCENARIOS.push({
@@ -286,6 +441,68 @@ SCENARIOS.push({
     g.addPlant('coal', 5, 8); // 免费电厂（待连接）
     g.addLoad(16, 8, 'residential', 24, '居民区', 0); // 待接入的城区
     sim.log('info', '【新手教程】跟着上方提示一步步来。');
+  },
+});
+
+// —— 进阶 mini 教程：预设残局 + 步骤引导，把后期经济子系统各教一遍（步骤见 tutorial.ts）——
+SCENARIOS.push({
+  id: 'tutFinance',
+  name: '💼 进阶教程 · 财务融资',
+  brief: '手把手学会：贷款摊平现金流、设备保险、燃料长约、还款节流。预设一张运转中的电网，无输赢压力。',
+  hint: '跟着屏幕中央的步骤操作（都在 📊 财务面板里）。',
+  setup(sim) {
+    sim.sandbox = true;
+    sim.money = 500_000;
+    sim.goalDay = Infinity;
+    sim.goalReliability = 1;
+    const g = sim.grid;
+    const coal = g.addPlant('coal', 5, 6).bus;
+    const sub = g.addSubstation(11, 9, '主变电站');
+    const res = g.addLoad(16, 7, 'residential', 26, '居民区', 0.002);
+    g.addLine(coal.id, sub.id);
+    g.addLine(sub.id, res.bus.id);
+    sim.log('info', '【财务融资教程】电网已就绪——跟着提示把财务工具箱用一遍。');
+  },
+});
+SCENARIOS.push({
+  id: 'tutMarket',
+  name: '🏪 进阶教程 · 市场竞争',
+  brief: '手把手学会：接入批发市场、需求响应、大客户长约与自备应急——保供留客的四件套。',
+  hint: '跟着屏幕中央的步骤操作（财务面板 + 左侧改造/合约工具）。',
+  setup(sim) {
+    sim.sandbox = true;
+    sim.money = 900_000;
+    sim.goalDay = Infinity;
+    sim.goalReliability = 1;
+    const g = sim.grid;
+    const coal = g.addPlant('coal', 5, 6).bus;
+    const gas = g.addPlant('gas', 7, 4).bus;
+    const sub = g.addSubstation(11, 9, '主变电站');
+    const dc = g.addLoad(17, 8, 'datacenter', 40, '云数据中心', 0.003);
+    g.addLine(coal.id, sub.id);
+    g.addLine(gas.id, sub.id);
+    g.addLine(sub.id, dc.bus.id);
+    sim.log('info', '【市场竞争教程】这家数据中心就是你要守住的现金牛——跟着提示学保供留客。');
+  },
+});
+SCENARIOS.push({
+  id: 'tutDerivatives',
+  name: '📈 进阶教程 · 衍生品风控',
+  brief: '手把手学会：远期套保、电力期权、输电权（FTR）、远期容量承诺——对冲价格风险的金融四件套。',
+  hint: '跟着屏幕中央的步骤操作（都在 📊 财务面板的市场/套保区）。',
+  setup(sim) {
+    sim.sandbox = true;
+    sim.money = 1_200_000;
+    sim.goalDay = Infinity;
+    sim.goalReliability = 1;
+    sim.marketEnabled = true; // 预先接入市场，FTR/跨区价差可见
+    const g = sim.grid;
+    const gas = g.addPlant('gas', 5, 6).bus;
+    const sub = g.addSubstation(11, 9, '主变电站');
+    const com = g.addLoad(16, 8, 'commercial', 28, '商业区', 0.002);
+    g.addLine(gas.id, sub.id);
+    g.addLine(sub.id, com.bus.id);
+    sim.log('info', '【衍生品风控教程】现货价天天在变——跟着提示学会四种锁定风险的工具。');
   },
 });
 

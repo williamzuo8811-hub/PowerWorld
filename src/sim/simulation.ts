@@ -2,7 +2,7 @@
 // 这是一个纯逻辑对象，不知道任何关于渲染的事；前端每帧调用 tick() 并读取快照。
 import type { SimSnapshot, LogEntry } from './types';
 import { Grid, type GridData } from './grid';
-import { solveDC } from './powerflow';
+import { factorizeDC, type DCFactorization } from './powerflow';
 import { EventSystem } from './events';
 import { PolicyState } from './policy';
 import { TechState } from './tech';
@@ -27,9 +27,13 @@ import {
 import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
-  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
+  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_RATING, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
+  STORAGE_ARB_LIQUIDITY_MW, STORAGE_ARB_SOC_MARGIN, STORAGE_ARB_SOC_EDGE_FACTOR,
+  RENEW_NOISE_SIGMA, RENEW_NOISE_REVERT, RENEW_NOISE_CLAMP,
 } from '../config/components';
-import type { Generator, Line, Load, LoadProfile } from './types';
+import type { Generator, Line, Load, LoadProfile, PlantType } from './types';
+import { evaluateObjectives, objectiveDeadline, objectiveDone, objectiveLabel, type ObjectiveSpec } from './objectives';
+import type { WeatherKind } from './events';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT, CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, CONTRACT_DAYS, CONTRACT_DISCOUNT, LEAD_FIRST_DAY, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY, CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN, REC_START, REC_DECLINE_PER_DAY, REC_MIN, FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY, MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY, GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION, BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE, LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, CAPACITOR_CAPEX, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K, POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT, REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY, CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX, SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP, SEASON_ADEQ_MARGIN, IRP_SCENARIOS, type StressScenarioSpec, REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K, CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC, CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW, CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_CURTAILABILITY, DR_TRIGGER_PRICE, DR_INCENTIVE, AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC, AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K, FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX, STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K, INTERRUPT_RATE_BASE, INTERRUPT_SEASON_K, CAP_DELIVERY_PENALTY, ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR, AUTOOPS_RECLOSE_DELAY, AUTOOPS_WEAR_THRESHOLD, AUTOOPS_MAINT_CASH_MULT, AUTOOPS_CASH_FLOOR, AUTOOPS_PRECOMMIT_TARGET, type CompetitorSpec,
 } from '../config/components';
@@ -51,6 +55,14 @@ export interface HistorySample {
 
 // 规划/组合分析已拆至 ./planning（纯分析模块）；类型在此转发以保持既有导入路径兼容。
 export type { PortfolioCategory, YearPlan, ExpansionAdvice, StressResult } from './planning';
+
+/** 每 tick 一次性构建的反向索引（busId → 元件），供逐岛求解直接查表 */
+interface TickAggregates {
+  gensByBus: Map<number, Generator[]>; // 仅在线机组
+  loadsByBus: Map<number, Load[]>;
+  batsByBus: Map<number, import('./types').Battery[]>; // 仅已投运储能
+  linesByFrom: Map<number, Line[]>; // 仅在运线路，按 from 端索引
+}
 
 interface IslandResult {
   gen: number;
@@ -140,6 +152,13 @@ export interface SimSaveState {
   competitors?: Competitor[]; // 对手状态（容量/报价随局演化，需随档保存）
   storageStrategy?: 'arb' | 'reg';
   autoOps?: AutoOps;
+  objectives?: ObjectiveSpec[]; // 关卡附加目标
+  loanBan?: boolean;
+  rpRateMult?: number;
+  bannedPlants?: PlantType[];
+  fuelVolatilityMult?: number;
+  scriptedWeather?: { atClock: number; kind: WeatherKind; fired?: boolean }[];
+  eventIntensity?: number; // 天气事件频率倍率
 }
 
 /** 自动运维 / 联合调度助理的开关组 */
@@ -174,6 +193,13 @@ export class Simulation {
   goalReliability = WIN_RELIABILITY; // 且可靠性达标
   carbonPriceMult = 1; // 碳价倍率（关卡可调，如"碳中和转型"加压）
   sandbox = false; // 沙盒模式：无输赢、无破产
+  objectives: ObjectiveSpec[] = []; // 关卡附加目标（deadline 型到期未达成即判负；atWin 型作为通关门槛）
+  loanBan = false; // 禁止贷款（预算约束/无贷款模式）
+  rpRateMult = 1; // 研发点积累倍率（失败补偿/变体模式）
+  bannedPlants = new Set<PlantType>(); // 禁建机组类型（每日挑战"特殊禁令"/自定义关卡）
+  fuelVolatilityMult = 1; // 燃料波动率倍率（每日挑战维度）
+  scriptedWeather: { atClock: number; kind: WeatherKind; fired?: boolean }[] = []; // 剧本天气事件（按时刻触发）
+  private lastObjReminderDay = -1; // 目标截止提醒的"每日一次"节流
   events = new EventSystem();
   policy = new PolicyState();
   tech = new TechState();
@@ -210,6 +236,8 @@ export class Simulation {
   autoOps: AutoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
   private lastOpsDay = -1; // 自动检修/还款的"每日一次"节流
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
+  /** 直流潮流 LU 分解缓存：键 = 岛拓扑签名。拓扑不变时跨 tick 复用，求解从 O(n³) 降至 O(n²)。 */
+  private dcCache = new Map<string, DCFactorization>();
   private lastYearIdx = 0; // 已结算年报的年序号（年度边界触发经营年报）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -258,7 +286,16 @@ export class Simulation {
     this.goalReliability = WIN_RELIABILITY;
     this.carbonPriceMult = 1;
     this.sandbox = false;
+    this.objectives = [];
+    this.loanBan = false;
+    this.rpRateMult = 1;
+    this.bannedPlants = new Set();
+    this.fuelVolatilityMult = 1;
+    this.scriptedWeather = [];
+    this.lastObjReminderDay = -1;
     this.windBase = 0.6;
+    this.windNoise = 0;
+    this.solarNoise = 0;
     this.lastLossFraction = 0.02;
     this.totalGen = this.totalDemand = this.totalServed = this.totalLoss = this.co2Rate = 0;
     this.events = new EventSystem();
@@ -300,6 +337,7 @@ export class Simulation {
     this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
     this.lastOpsDay = -1;
     this.lastSeason = '';
+    this.dcCache.clear();
     this.lastYearIdx = 0;
     this.history = [];
     this.nextSampleAt = 0;
@@ -348,6 +386,13 @@ export class Simulation {
       competitors: this.competitors.map((c) => ({ ...c })),
       storageStrategy: this.storageStrategy,
       autoOps: { ...this.autoOps },
+      objectives: this.objectives.map((o) => ({ ...o })),
+      loanBan: this.loanBan,
+      rpRateMult: this.rpRateMult,
+      bannedPlants: [...this.bannedPlants],
+      fuelVolatilityMult: this.fuelVolatilityMult,
+      scriptedWeather: this.scriptedWeather.map((s) => ({ ...s })),
+      eventIntensity: this.events.intensity,
     };
   }
 
@@ -409,11 +454,21 @@ export class Simulation {
       : COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
     this.storageStrategy = d.storageStrategy ?? 'arb';
     this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false, ...(d.autoOps ?? {}) };
+    this.objectives = (d.objectives ?? []).map((o) => ({ ...o }));
+    this.loanBan = d.loanBan ?? false;
+    this.rpRateMult = d.rpRateMult ?? 1;
+    this.bannedPlants = new Set(d.bannedPlants ?? []);
+    this.fuelVolatilityMult = d.fuelVolatilityMult ?? 1;
+    this.scriptedWeather = (d.scriptedWeather ?? []).map((s) => ({ ...s }));
+    this.events.intensity = d.eventIntensity ?? 1;
+    this.lastObjReminderDay = this.day;
     this.lastOpsDay = this.day;
     this.lastYearIdx = Math.floor(this.day / SEASON_YEAR_DAYS); // 读档不重发既往年报
   }
 
   private windBase = 0.6; // 当日风况基准，慢变随机游走
+  windNoise = 0; // 风电分钟级出力噪声（OU 过程，围绕预报值摆动）
+  solarNoise = 0; // 光伏分钟级出力噪声（云团遮挡）
   private lastLossFraction = 0.02; // 上一 tick 的线损占比，用于本 tick 多发一点
   totalGen = 0;
   totalDemand = 0;
@@ -645,6 +700,36 @@ export class Simulation {
     return true;
   }
 
+  /** 线路增容造价（按长度 × 电压等级；导线加粗/复导线改造） */
+  lineUpgradeCost(ln: Line): number {
+    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * 0.55);
+  }
+  /** 线路原地增容：热极限 +50% 默认容量——替代"再拉一条并联线"的经典电网投资 */
+  upgradeLineCapacity(lineId: number): boolean {
+    const ln = this.grid.lines.get(lineId);
+    if (!ln || ln.underConstruction) return false;
+    const step = Math.round(VOLTAGE[ln.voltage].defaultCapacity * 0.5);
+    const cost = this.lineUpgradeCost(ln);
+    if (!this.spend(cost)) return false;
+    ln.capacity += step;
+    this.log('good', `⤴ 线路增容 +${step}MW（¥${cost.toLocaleString('en-US')}）：热极限 ${ln.capacity}MW`);
+    return true;
+  }
+  /** 变压器增容费用 */
+  transformerUpgradeCost(): number {
+    return Math.round(SUBSTATION_CAPEX * 0.6);
+  }
+  /** 变电站变压器原地增容：额定 +45MW（换更大主变，免拆站重建） */
+  upgradeTransformer(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'substation' || bus.underConstruction) return false;
+    const cost = this.transformerUpgradeCost();
+    if (!this.spend(cost)) return false;
+    bus.rating = (bus.rating ?? SUBSTATION_RATING) + 45;
+    this.log('good', `⤴ 变电站「${bus.name}」换大主变 +45MW（¥${cost.toLocaleString('en-US')}）：额定 ${bus.rating}MW`);
+    return true;
+  }
+
   /** 签订燃料长约：锁定该燃料当前现货指数 × 溢价，锁定 days 天 */
   signFuelContract(fuel: FuelType, days: number): boolean {
     if (days <= 0) return false;
@@ -743,7 +828,7 @@ export class Simulation {
       const info = FUEL_INFO[fuel];
       let p = this.fuelPrice[fuel];
       p += (this.fuelSeasonMean(fuel) - p) * FUEL_MEAN_REVERT * dtDay; // 向季节性基准回归
-      p += (Math.random() * 2 - 1) * info.volatility * Math.sqrt(dtDay); // 随机游走
+      p += (Math.random() * 2 - 1) * info.volatility * this.fuelVolatilityMult * Math.sqrt(dtDay); // 随机游走
       if (Math.random() < FUEL_SHOCK_CHANCE_PER_DAY * dtDay) {
         p *= 1 + Math.random() * 0.5; // 供给冲击：跳涨 0~50%
         this.log('warn', `📈 ${info.label}价格跳涨（指数 ${clamp(p, FUEL_MIN, FUEL_MAX).toFixed(2)}）`);
@@ -816,7 +901,7 @@ export class Simulation {
       g.committed = true;
       g.commitLockUntil = this.clock + spec.minUpHours;
       g.startups = (g.startups ?? 0) + 1;
-      this.money -= spec.startupCost;
+      this.money -= spec.startupCost * (g.type === 'coal' ? this.tech.coalStartupFactor : 1);
       committedCap += g.capacity * g.availability;
       this.log('info', `🤖 联合调度：晚峰前预并网「${this.grid.buses.get(g.busId)?.name ?? spec.label}」（预估晚峰 ${peak.toFixed(0)}MW）`);
     }
@@ -848,6 +933,21 @@ export class Simulation {
 
     // —— 天气：风况慢变随机游走 + 天气/危机事件 + 政策事件 ——
     this.windBase = clamp(this.windBase + (Math.random() - 0.5) * 0.25 * dtHours, 0.12, 1.0);
+    // 新能源预测误差：OU（均值回归）噪声——实际出力围绕预报值分钟级摆动；功率预测 AI 减半幅度
+    const noiseSigma = RENEW_NOISE_SIGMA * this.tech.renewNoiseFactor;
+    const ouStep = (n: number) => clamp(
+      n - n * RENEW_NOISE_REVERT * dtHours + (Math.random() * 2 - 1) * noiseSigma * Math.sqrt(Math.max(dtHours, 1e-9)),
+      -RENEW_NOISE_CLAMP, RENEW_NOISE_CLAMP,
+    );
+    this.windNoise = ouStep(this.windNoise);
+    this.solarNoise = ouStep(this.solarNoise);
+    // 剧本天气：到点触发预设事件（剧本关卡/自定义关卡的导演手段）
+    for (const s of this.scriptedWeather) {
+      if (!s.fired && this.clock >= s.atClock) {
+        s.fired = true;
+        this.events.triggerKind(this, s.kind);
+      }
+    }
     this.events.update(this);
     this.policy.update(this);
 
@@ -920,8 +1020,8 @@ export class Simulation {
     for (const g of this.grid.gens.values()) {
       if (!g.dispatchable) {
         let a = renewableAvailability(g.type, this.hourOfDay, this.windBase);
-        if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor;
-        if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor;
+        if (g.type === 'wind') a *= this.events.windCap * this.seasonWindFactor * (1 + this.windNoise);
+        if (g.type === 'solar') a *= this.events.solarCap * this.seasonSolarFactor * (1 + this.solarNoise);
         a *= this.tech.renewAvailFactor; // 功率预测 AI：预测准 → 有效出力略升
         a *= g.siteFactor ?? 1; // 选址资源禀赋（风带/光照分区）
         g.availability = clamp(a, 0, 1);
@@ -944,15 +1044,37 @@ export class Simulation {
     for (const g of this.grid.gens.values()) if (this.genOffline(g)) g.output = 0; // 离线机组出力清零
 
     // —— 逐孤岛求解 ——
+    // 每 tick 先做一次反向索引聚合（busId → 机组/负荷/储能/线路），各孤岛直接查表，
+    // 避免"每岛全量 filter"的 O(岛数 × 元件数) 重复扫描。
     const islands = this.grid.islands();
-    let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
+    const agg: TickAggregates = { gensByBus: new Map(), loadsByBus: new Map(), batsByBus: new Map(), linesByFrom: new Map() };
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      const arr = agg.gensByBus.get(g.busId);
+      if (arr) arr.push(g); else agg.gensByBus.set(g.busId, [g]);
+    }
+    for (const l of this.grid.loads.values()) {
+      const arr = agg.loadsByBus.get(l.busId);
+      if (arr) arr.push(l); else agg.loadsByBus.set(l.busId, [l]);
+    }
+    for (const b of this.grid.batteries.values()) {
+      if (this.grid.buses.get(b.busId)?.underConstruction) continue;
+      const arr = agg.batsByBus.get(b.busId);
+      if (arr) arr.push(b); else agg.batsByBus.set(b.busId, [b]);
+    }
+    for (const ln of this.grid.lines.values()) {
+      if (!this.grid.lineActive(ln)) continue;
+      const arr = agg.linesByFrom.get(ln.from);
+      if (arr) arr.push(ln); else agg.linesByFrom.set(ln.from, [ln]);
+    }
+    let fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
     let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
     let mainVoltage = 1;
 
     for (const busIds of islands) {
-      const r = this.solveIsland(busIds, dtSim);
+      const r = this.solveIsland(busIds, dtSim, agg);
       aggGen += r.gen; aggDemand += r.demand; aggServed += r.served; aggLoss += r.loss;
       aggMarketImport += r.marketImport;
       aggCurtailed += r.curtailed;
@@ -1061,10 +1183,18 @@ export class Simulation {
     const seasonSpreadF = 1 + STORAGE_ARB_SEASON_K * Math.max(seasonIntensity(this.yearPhase).summer, seasonIntensity(this.yearPhase).winter);
     let storageArbCash = 0;
     const arbCapture = STORAGE_ARB_CAPTURE * (this.storageStrategy === 'reg' ? STORAGE_REG_ARB_FACTOR : 1); // 投调频则套利打折
+    // 流动性衰减：套利交易自身压平价差——机队功率越大，单位收益越低（收益对规模是凹函数，不再是印钞机）
+    let fleetArbMW = 0;
+    for (const b of this.grid.batteries.values()) {
+      const bus = this.grid.buses.get(b.busId);
+      if (bus && !bus.underConstruction) fleetArbMW += b.powerRating;
+    }
+    const liquidityF = arbLiquidityFactor(fleetArbMW);
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (!bus || bus.underConstruction) continue;
-      storageArbCash += b.output * priceDev * arbCapture * seasonSpreadF * dtHours;
+      const socFrac = b.energyCapacity > 0 ? b.soc / b.energyCapacity : 0;
+      storageArbCash += b.output * priceDev * arbCapture * liquidityF * arbSocFactor(socFrac, b.output) * seasonSpreadF * dtHours;
     }
 
     // 套保结算（差价合约）：市价低于锁价获补偿，高于则让出收益（可为负）
@@ -1135,7 +1265,7 @@ export class Simulation {
       this.grid.removeBus(l.busId);
       this.reputation = Math.max(0, this.reputation - CHURN_REP_HIT);
     }
-    revenue = tariffWeighted * this.spotPrice * dtHours;
+    const revenue = tariffWeighted * this.spotPrice * dtHours;
     penalty += slaPenalty;
 
     // —— 碳配额交易：免费配额 = 送达电量 × 基准强度；超出买入、富余卖出（可为负=获利）——
@@ -1179,6 +1309,10 @@ export class Simulation {
     for (const b of this.grid.batteries.values()) {
       const bus = this.grid.buses.get(b.busId);
       if (bus && !bus.underConstruction) firmCapacity += b.powerRating * STORAGE[b.type].capacityCredit * this.tech.storageCreditFactor;
+    }
+    // 虚拟电厂：已启用需求响应时，可削减负荷按比例计入可信容量（用户侧也是"电厂"）
+    if (this.demandResponse && this.tech.vppFirmCredit > 0) {
+      firmCapacity += aggDemand * DR_FRACTION * this.tech.drFractionFactor * this.tech.vppFirmCredit;
     }
     // 容量拍卖出清：区域容量目标 vs 总可用容量（你 + 竞争对手）
     let regionFirm = firmCapacity;
@@ -1327,8 +1461,8 @@ export class Simulation {
     this.startupsTotal = [...this.grid.gens.values()].reduce((s, g) => s + (g.startups ?? 0), 0);
     this.lastLossFraction = aggDemand > 1 ? clamp(aggLoss / aggDemand, 0, MAX_LOSS_FRACTION) : 0.02;
 
-    // 研发点：随送达电量积累（电网越大、运行越好，研发越快）
-    this.tech.points += aggServed * dtHours * RP_PER_MWH;
+    // 研发点：随送达电量积累（电网越大、运行越好，研发越快）；失败补偿/变体模式可加成
+    this.tech.points += aggServed * dtHours * RP_PER_MWH * this.rpRateMult;
     this.peakServed = Math.max(this.peakServed, aggServed);
     this.totalEnergyServed += aggServed * dtHours;
     this.outageEnergyTotal += Math.max(0, aggDemand - aggServed) * dtHours;
@@ -1351,12 +1485,23 @@ export class Simulation {
   }
 
   /** 对单个孤岛执行调度 + 平衡 + 直流潮流，返回聚合量 */
-  private solveIsland(busIds: number[], dtSim: number): IslandResult {
+  private solveIsland(busIds: number[], dtSim: number, agg: TickAggregates): IslandResult {
     const dtHours = dtSim / 3600;
     const set = new Set(busIds);
-    const uc = (busId: number) => this.grid.buses.get(busId)?.underConstruction === true; // 在建中不参与运行
-    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId) && !this.genOffline(g));
-    const loads = [...this.grid.loads.values()].filter((l) => set.has(l.busId));
+    const gens: Generator[] = [];
+    const loads: Load[] = [];
+    const batteries: import('./types').Battery[] = [];
+    const islandLines: Line[] = [];
+    for (const id of busIds) {
+      const gs = agg.gensByBus.get(id);
+      if (gs) gens.push(...gs);
+      const ls = agg.loadsByBus.get(id);
+      if (ls) loads.push(...ls);
+      const bs = agg.batsByBus.get(id);
+      if (bs) batteries.push(...bs);
+      const lns = agg.linesByFrom.get(id);
+      if (lns) for (const ln of lns) if (set.has(ln.to)) islandLines.push(ln);
+    }
     const demand = loads.reduce((s, l) => s + l.demand, 0);
 
     // 新能源可用出力（必发）
@@ -1372,7 +1517,7 @@ export class Simulation {
 
     // 目标出力 = 需求 ×(1+线损占比)，先扣掉新能源必发
     const target = demand * (1 + this.lastLossFraction);
-    let remaining = Math.max(0, target - renewAvail);
+    const remaining = Math.max(0, target - renewAvail);
 
     // 可调机组：仅"已并网 或 离线但已过最小停机锁"的机组可参与出清（merit order）
     const disp = gens.filter((g) => g.dispatchable);
@@ -1405,7 +1550,7 @@ export class Simulation {
         g.committed = true; // 冷启动并网，进入最小开机锁
         g.commitLockUntil = this.clock + spec.minUpHours; // clock 与 minUpHours 同为"小时"
         g.startups = (g.startups ?? 0) + 1;
-        startupCost += spec.startupCost;
+        startupCost += spec.startupCost * (g.type === 'coal' ? this.tech.coalStartupFactor : 1); // 灵活性改造降启停费
         desired.set(g.id, Math.max(desired.get(g.id) ?? 0, pmin));
       } else {
         desired.set(g.id, 0); // 停机锁内或不需要
@@ -1424,7 +1569,6 @@ export class Simulation {
     let genBase = gens.reduce((s, g) => s + g.output, 0);
 
     // —— 储能调度：缺电则放电补缺口，过剩则充电吸收 ——
-    const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId) && !uc(b.busId));
     for (const b of batteries) b.output = 0;
     const net = demand - genBase; // >0 缺口；<0 过剩
     const batPowerFactor = this.tech.batteryPowerFactor; // 先进储能科技
@@ -1509,14 +1653,35 @@ export class Simulation {
       }
     }
 
-    // 分配实际供电到各负荷（受供需比 × 恢复程度限制），并标记停电
+    // 分配实际供电到各负荷（受供需比 × 恢复程度限制），并标记停电。
+    // 缺供时按保供权重"逐级甩负荷"（UFLS 轮次）：先切普通负荷，数据中心等关键负荷最后断——
+    // 同级内按需求比例均摊，不再是全网一刀切。
     let servedDelivered = 0;
-    for (const l of loads) {
-      const bus = this.grid.buses.get(l.busId);
-      const ez = bus?.energized ?? 1;
-      l.served = l.demand * ratio * ez;
-      servedDelivered += l.served;
-      if (bus) bus.blackout = ratio * ez < 0.999;
+    if (ratio >= 0.999) {
+      for (const l of loads) {
+        const bus = this.grid.buses.get(l.busId);
+        const ez = bus?.energized ?? 1;
+        l.served = l.demand * ez;
+        servedDelivered += l.served;
+        if (bus) bus.blackout = ez < 0.999;
+      }
+    } else {
+      let budget = served; // 可分配的总供电 (MW)
+      const tiers = [...new Set(loads.map((l) => RELIABILITY_WEIGHT[l.profile]))].sort((a, b) => b - a);
+      for (const w of tiers) {
+        const tierLoads = loads.filter((l) => RELIABILITY_WEIGHT[l.profile] === w);
+        const tierDemand = tierLoads.reduce((s, l) => s + l.demand, 0);
+        const tierRatio = tierDemand > 0 ? clamp(budget / tierDemand, 0, 1) : 0;
+        for (const l of tierLoads) {
+          const bus = this.grid.buses.get(l.busId);
+          const ez = bus?.energized ?? 1;
+          const alloc = l.demand * tierRatio;
+          l.served = alloc * ez;
+          servedDelivered += l.served;
+          budget -= alloc;
+          if (bus) bus.blackout = tierRatio * ez < 0.999;
+        }
+      }
     }
     if (islandDead) for (const id of busIds) { const b = this.grid.buses.get(id); if (b) b.blackout = true; }
     if (shedding && !islandDead && ratio < 0.95) {
@@ -1533,10 +1698,17 @@ export class Simulation {
     const localFraction = served > 0 ? (served - marketImport) / served : 1;
     for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served * localFraction);
 
-    const islandLines = [...this.grid.lines.values()].filter(
-      (ln) => this.grid.lineActive(ln) && set.has(ln.from) && set.has(ln.to),
-    );
-    const { flows } = solveDC(busIds, islandLines, injection);
+    // 直流潮流：拓扑签名命中缓存则复用 LU 分解（O(n²) 回代），否则分解一次并缓存
+    let sigParts = '';
+    for (const ln of islandLines) sigParts += ln.id + ',';
+    const dcKey = busIds.join(',') + '|' + sigParts;
+    let fact = this.dcCache.get(dcKey);
+    if (!fact) {
+      fact = factorizeDC(busIds, islandLines);
+      if (this.dcCache.size > 128) this.dcCache.clear(); // 防拓扑频繁演化时缓存无限膨胀
+      this.dcCache.set(dcKey, fact);
+    }
+    const { flows } = fact.solve(injection);
 
     let lossSum = 0;
     for (const ln of islandLines) {
@@ -1675,6 +1847,11 @@ export class Simulation {
     return { score, grade, parts: { reliability: reliability * 100, finance: finance * 100, clean: clean * 100, reputation: reputation * 100 } };
   }
 
+  /** 附加目标状态（HUD 目标追踪用） */
+  objectiveStatus(): ReturnType<typeof evaluateObjectives> {
+    return evaluateObjectives(this);
+  }
+
   private checkEndConditions(): void {
     if (this.gameOver || this.sandbox) return; // 沙盒模式没有输赢
     if (this.money < 0) {
@@ -1683,7 +1860,30 @@ export class Simulation {
       this.log('bad', '💸 资金耗尽，电力公司破产了。');
       return;
     }
+    // deadline 型附加目标：到期未达成 = 立即判负（剧本压力）
+    for (const o of this.objectives) {
+      const deadline = objectiveDeadline(o);
+      if (deadline != null && this.day >= deadline && !objectiveDone(this, o)) {
+        this.gameOver = true;
+        this.win = false;
+        this.log('bad', `⏰ 目标失败：「${objectiveLabel(o)}」未在期限内达成。`);
+        return;
+      }
+    }
+    // 目标截止提醒：每天一次，对 2 天内到期且未完成的目标预警
+    if (this.day !== this.lastObjReminderDay) {
+      this.lastObjReminderDay = this.day;
+      for (const o of this.objectives) {
+        const deadline = objectiveDeadline(o);
+        if (deadline != null && !objectiveDone(this, o) && deadline - this.day <= 2 && deadline > this.day) {
+          this.log('warn', `⏳ 目标倒计时：「${objectiveLabel(o)}」还剩 ${deadline - this.day} 天`);
+        }
+      }
+    }
     if (this.day >= this.goalDay && this.reliability >= this.goalReliability) {
+      // atWin 型附加目标：作为通关的额外门槛（未达成则继续经营，不判负）
+      const pending = this.objectives.filter((o) => objectiveDeadline(o) == null && !objectiveDone(this, o));
+      if (pending.length > 0) return;
       this.gameOver = true;
       this.win = true;
       this.log('good', '🏆 达成关卡目标，灯火通明，你赢了！');
@@ -1779,8 +1979,22 @@ export class Simulation {
       outageEnergyTotal: this.outageEnergyTotal,
       voltage: this.voltage,
       customerSatisfaction: this.customerSatisfaction,
+      objectives: this.objectives.length
+        ? evaluateObjectives(this).map((o) => ({ label: o.label, done: o.done, failed: o.failed, progress: o.progress }))
+        : [],
     };
   }
+}
+
+/** 储能套利的流动性衰减系数：机队功率越大，单位价差收益越低（套利自身压平价差）。纯函数便于测试。 */
+export function arbLiquidityFactor(fleetMW: number): number {
+  return STORAGE_ARB_LIQUIDITY_MW / (STORAGE_ARB_LIQUIDITY_MW + Math.max(0, fleetMW));
+}
+
+/** 储能套利的 SoC 区间系数：空电没法高卖（放电贴边）、满电没法低买（充电贴边）。纯函数便于测试。 */
+export function arbSocFactor(socFrac: number, output: number): number {
+  const edge = output > 0 ? socFrac < STORAGE_ARB_SOC_MARGIN : output < 0 ? socFrac > 1 - STORAGE_ARB_SOC_MARGIN : false;
+  return edge ? STORAGE_ARB_SOC_EDGE_FACTOR : 1;
 }
 
 /** 由供需失衡推算系统频率 */
