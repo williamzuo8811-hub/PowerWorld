@@ -2,7 +2,7 @@
 // 这是一个纯逻辑对象，不知道任何关于渲染的事；前端每帧调用 tick() 并读取快照。
 import type { SimSnapshot, LogEntry } from './types';
 import { Grid, type GridData } from './grid';
-import { solveDC } from './powerflow';
+import { factorizeDC, type DCFactorization } from './powerflow';
 import { EventSystem } from './events';
 import { PolicyState } from './policy';
 import { TechState } from './tech';
@@ -53,6 +53,14 @@ export interface HistorySample {
 
 // 规划/组合分析已拆至 ./planning（纯分析模块）；类型在此转发以保持既有导入路径兼容。
 export type { PortfolioCategory, YearPlan, ExpansionAdvice, StressResult } from './planning';
+
+/** 每 tick 一次性构建的反向索引（busId → 元件），供逐岛求解直接查表 */
+interface TickAggregates {
+  gensByBus: Map<number, Generator[]>; // 仅在线机组
+  loadsByBus: Map<number, Load[]>;
+  batsByBus: Map<number, import('./types').Battery[]>; // 仅已投运储能
+  linesByFrom: Map<number, Line[]>; // 仅在运线路，按 from 端索引
+}
 
 interface IslandResult {
   gen: number;
@@ -212,6 +220,8 @@ export class Simulation {
   autoOps: AutoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
   private lastOpsDay = -1; // 自动检修/还款的"每日一次"节流
   private lastSeason = ''; // 上一次的季节标签（用于迎峰预警的边沿触发）
+  /** 直流潮流 LU 分解缓存：键 = 岛拓扑签名。拓扑不变时跨 tick 复用，求解从 O(n³) 降至 O(n²)。 */
+  private dcCache = new Map<string, DCFactorization>();
   private lastYearIdx = 0; // 已结算年报的年序号（年度边界触发经营年报）
   history: HistorySample[] = []; // 历史走势采样
   private nextSampleAt = 0; // 下次采样时刻
@@ -304,6 +314,7 @@ export class Simulation {
     this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false };
     this.lastOpsDay = -1;
     this.lastSeason = '';
+    this.dcCache.clear();
     this.lastYearIdx = 0;
     this.history = [];
     this.nextSampleAt = 0;
@@ -958,7 +969,29 @@ export class Simulation {
     for (const g of this.grid.gens.values()) if (this.genOffline(g)) g.output = 0; // 离线机组出力清零
 
     // —— 逐孤岛求解 ——
+    // 每 tick 先做一次反向索引聚合（busId → 机组/负荷/储能/线路），各孤岛直接查表，
+    // 避免"每岛全量 filter"的 O(岛数 × 元件数) 重复扫描。
     const islands = this.grid.islands();
+    const agg: TickAggregates = { gensByBus: new Map(), loadsByBus: new Map(), batsByBus: new Map(), linesByFrom: new Map() };
+    for (const g of this.grid.gens.values()) {
+      if (this.genOffline(g)) continue;
+      const arr = agg.gensByBus.get(g.busId);
+      if (arr) arr.push(g); else agg.gensByBus.set(g.busId, [g]);
+    }
+    for (const l of this.grid.loads.values()) {
+      const arr = agg.loadsByBus.get(l.busId);
+      if (arr) arr.push(l); else agg.loadsByBus.set(l.busId, [l]);
+    }
+    for (const b of this.grid.batteries.values()) {
+      if (this.grid.buses.get(b.busId)?.underConstruction) continue;
+      const arr = agg.batsByBus.get(b.busId);
+      if (arr) arr.push(b); else agg.batsByBus.set(b.busId, [b]);
+    }
+    for (const ln of this.grid.lines.values()) {
+      if (!this.grid.lineActive(ln)) continue;
+      const arr = agg.linesByFrom.get(ln.from);
+      if (arr) arr.push(ln); else agg.linesByFrom.set(ln.from, [ln]);
+    }
     let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
     let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
@@ -966,7 +999,7 @@ export class Simulation {
     let mainVoltage = 1;
 
     for (const busIds of islands) {
-      const r = this.solveIsland(busIds, dtSim);
+      const r = this.solveIsland(busIds, dtSim, agg);
       aggGen += r.gen; aggDemand += r.demand; aggServed += r.served; aggLoss += r.loss;
       aggMarketImport += r.marketImport;
       aggCurtailed += r.curtailed;
@@ -1377,12 +1410,23 @@ export class Simulation {
   }
 
   /** 对单个孤岛执行调度 + 平衡 + 直流潮流，返回聚合量 */
-  private solveIsland(busIds: number[], dtSim: number): IslandResult {
+  private solveIsland(busIds: number[], dtSim: number, agg: TickAggregates): IslandResult {
     const dtHours = dtSim / 3600;
     const set = new Set(busIds);
-    const uc = (busId: number) => this.grid.buses.get(busId)?.underConstruction === true; // 在建中不参与运行
-    const gens = [...this.grid.gens.values()].filter((g) => set.has(g.busId) && !this.genOffline(g));
-    const loads = [...this.grid.loads.values()].filter((l) => set.has(l.busId));
+    const gens: Generator[] = [];
+    const loads: Load[] = [];
+    const batteries: import('./types').Battery[] = [];
+    const islandLines: Line[] = [];
+    for (const id of busIds) {
+      const gs = agg.gensByBus.get(id);
+      if (gs) gens.push(...gs);
+      const ls = agg.loadsByBus.get(id);
+      if (ls) loads.push(...ls);
+      const bs = agg.batsByBus.get(id);
+      if (bs) batteries.push(...bs);
+      const lns = agg.linesByFrom.get(id);
+      if (lns) for (const ln of lns) if (set.has(ln.to)) islandLines.push(ln);
+    }
     const demand = loads.reduce((s, l) => s + l.demand, 0);
 
     // 新能源可用出力（必发）
@@ -1450,7 +1494,6 @@ export class Simulation {
     let genBase = gens.reduce((s, g) => s + g.output, 0);
 
     // —— 储能调度：缺电则放电补缺口，过剩则充电吸收 ——
-    const batteries = [...this.grid.batteries.values()].filter((b) => set.has(b.busId) && !uc(b.busId));
     for (const b of batteries) b.output = 0;
     const net = demand - genBase; // >0 缺口；<0 过剩
     const batPowerFactor = this.tech.batteryPowerFactor; // 先进储能科技
@@ -1559,10 +1602,17 @@ export class Simulation {
     const localFraction = served > 0 ? (served - marketImport) / served : 1;
     for (const l of loads) injection.set(l.busId, (injection.get(l.busId) ?? 0) - l.served * localFraction);
 
-    const islandLines = [...this.grid.lines.values()].filter(
-      (ln) => this.grid.lineActive(ln) && set.has(ln.from) && set.has(ln.to),
-    );
-    const { flows } = solveDC(busIds, islandLines, injection);
+    // 直流潮流：拓扑签名命中缓存则复用 LU 分解（O(n²) 回代），否则分解一次并缓存
+    let sigParts = '';
+    for (const ln of islandLines) sigParts += ln.id + ',';
+    const dcKey = busIds.join(',') + '|' + sigParts;
+    let fact = this.dcCache.get(dcKey);
+    if (!fact) {
+      fact = factorizeDC(busIds, islandLines);
+      if (this.dcCache.size > 128) this.dcCache.clear(); // 防拓扑频繁演化时缓存无限膨胀
+      this.dcCache.set(dcKey, fact);
+    }
+    const { flows } = fact.solve(injection);
 
     let lossSum = 0;
     for (const ln of islandLines) {
