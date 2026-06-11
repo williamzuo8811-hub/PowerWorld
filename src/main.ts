@@ -598,7 +598,7 @@ function startBuild(target: { underConstruction?: boolean; commissionAt?: number
   target.commissionAt = sim.clock + days * 24;
 }
 
-function handleClick(clientX: number, clientY: number): void {
+function handleClick(clientX: number, clientY: number, shiftKey = false): void {
   if (menuOpen || panelOpen || sim.gameOver) return;
   const tile = renderer.screenToTile(clientX, clientY);
   const tool = hud.currentTool;
@@ -653,8 +653,14 @@ function handleClick(clientX: number, clientY: number): void {
             }
           }
         }
-        setPending(null);
-        hud.setHint(null);
+        // Shift 连线模式：完成一条后以终点为新起点继续拉（批量布网）
+        if (shiftKey && bus && bus.id !== pendingFrom.id) {
+          setPending(bus);
+          hud.setHint('Shift 连续拉线中——点下一个母线继续（松开 Shift 或 Esc 结束）');
+        } else {
+          setPending(null);
+          hud.setHint(null);
+        }
       }
       return;
     }
@@ -1053,7 +1059,7 @@ function bindInput(): void {
   };
   window.addEventListener('pointercancel', endPointer);
   window.addEventListener('pointerup', (e) => {
-    if (dragging && !moved) handleClick(e.clientX, e.clientY);
+    if (dragging && !moved) handleClick(e.clientX, e.clientY, e.shiftKey);
     dragging = false;
     endPointer(e);
   });
