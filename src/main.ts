@@ -1079,6 +1079,12 @@ function bindInput(): void {
 }
 
 // ——————————————————— 启动 ———————————————————
+/** PWA：注册 Service Worker（生产环境）——首访后离线可玩、可安装到桌面 */
+function registerPWA(): void {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').catch(() => { /* 不支持/被禁用时静默 */ });
+}
+
 async function start(): Promise<void> {
   await renderer.init(document.getElementById('app')!);
   hud.build();
@@ -1119,6 +1125,7 @@ async function start(): Promise<void> {
   };
   hud.setSoundLabel(sound.muted);
   bindInput();
+  registerPWA();
   openMenu(); // 开局先进主菜单选关
 
   renderer.app.ticker.add(() => {

@@ -359,7 +359,7 @@ export class Hud {
         const html = `<div class="title">🎯 附加目标</div>` + s.objectives.map((o) => {
           const cls = o.failed ? 'obj-failed' : o.done ? 'obj-done' : 'obj-pending';
           const mark = o.failed ? '✗' : o.done ? '✓' : '○';
-          return `<div class="${cls}">${mark} ${o.label}　<span style="opacity:.75">${o.progress}</span></div>`;
+          return `<div class="${cls}">${mark} ${o.label} <span style="opacity:.75">${o.progress}</span></div>`;
         }).join('');
         if (this.lastObjectivesHtml !== html) {
           this.lastObjectivesHtml = html;
@@ -405,7 +405,7 @@ export class Hud {
     const gradeEl = document.getElementById('overlay-grade');
     if (gradeEl) {
       const gradeColor: Record<string, string> = { S: '#fbbf24', A: '#34d399', B: '#38bdf8', C: '#a3a3a3', D: '#f87171' };
-      gradeEl.textContent = s.win ? `评级 ${s.grade}　（${s.gradeScore.toFixed(0)} 分）` : '';
+      gradeEl.textContent = s.win ? `评级 ${s.grade} （${s.gradeScore.toFixed(0)} 分）` : '';
       gradeEl.style.color = gradeColor[s.grade] ?? '#fff';
     }
     const summary = `经营摘要 · 可靠性 ${(s.reliability * 100).toFixed(1)}% · 市占 ${(s.marketShare * 100).toFixed(0)}% · 清洁 ${(s.renewableShare * 100).toFixed(0)}% · 大客户满意 ${(s.customerSatisfaction * 100).toFixed(0)}%`;

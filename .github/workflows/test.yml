@@ -30,6 +30,9 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: npx tsc --noEmit
 
+      - name: Lint (eslint)
+        run: npm run lint
+
       - name: Unit & playthrough tests
         run: npm test
 

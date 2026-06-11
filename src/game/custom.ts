@@ -7,7 +7,7 @@ import type { Scenario } from './scenarios';
 import type { PlantType, LoadProfile } from '../sim/types';
 import type { WeatherKind } from '../sim/events';
 import { validateObjective, type ObjectiveSpec } from '../sim/objectives';
-import { PLANTS, STORAGE, KEY_ACCOUNTS, type StorageType } from '../config/components';
+import { PLANTS, STORAGE, type StorageType } from '../config/components';
 
 export const SCENARIO_FORMAT = 'powerworld-scenario';
 export const SCENARIO_VERSION = 2; // v1 仍可导入（新字段全部可选）

@@ -1067,7 +1067,7 @@ export class Simulation {
       const arr = agg.linesByFrom.get(ln.from);
       if (arr) arr.push(ln); else agg.linesByFrom.set(ln.from, [ln]);
     }
-    let revenue = 0, fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
+    let fuelCost = 0, penalty = 0, co2Rate = 0, startupCostAgg = 0;
     let aggGen = 0, aggDemand = 0, aggServed = 0, aggLoss = 0, aggMarketImport = 0, aggCurtailed = 0;
     let mainDemand = -1;
     let mainFreq = FREQ_NOMINAL;
@@ -1265,7 +1265,7 @@ export class Simulation {
       this.grid.removeBus(l.busId);
       this.reputation = Math.max(0, this.reputation - CHURN_REP_HIT);
     }
-    revenue = tariffWeighted * this.spotPrice * dtHours;
+    const revenue = tariffWeighted * this.spotPrice * dtHours;
     penalty += slaPenalty;
 
     // —— 碳配额交易：免费配额 = 送达电量 × 基准强度；超出买入、富余卖出（可为负=获利）——
@@ -1517,7 +1517,7 @@ export class Simulation {
 
     // 目标出力 = 需求 ×(1+线损占比)，先扣掉新能源必发
     const target = demand * (1 + this.lastLossFraction);
-    let remaining = Math.max(0, target - renewAvail);
+    const remaining = Math.max(0, target - renewAvail);
 
     // 可调机组：仅"已并网 或 离线但已过最小停机锁"的机组可参与出清（merit order）
     const disp = gens.filter((g) => g.dispatchable);
@@ -1653,14 +1653,35 @@ export class Simulation {
       }
     }
 
-    // 分配实际供电到各负荷（受供需比 × 恢复程度限制），并标记停电
+    // 分配实际供电到各负荷（受供需比 × 恢复程度限制），并标记停电。
+    // 缺供时按保供权重"逐级甩负荷"（UFLS 轮次）：先切普通负荷，数据中心等关键负荷最后断——
+    // 同级内按需求比例均摊，不再是全网一刀切。
     let servedDelivered = 0;
-    for (const l of loads) {
-      const bus = this.grid.buses.get(l.busId);
-      const ez = bus?.energized ?? 1;
-      l.served = l.demand * ratio * ez;
-      servedDelivered += l.served;
-      if (bus) bus.blackout = ratio * ez < 0.999;
+    if (ratio >= 0.999) {
+      for (const l of loads) {
+        const bus = this.grid.buses.get(l.busId);
+        const ez = bus?.energized ?? 1;
+        l.served = l.demand * ez;
+        servedDelivered += l.served;
+        if (bus) bus.blackout = ez < 0.999;
+      }
+    } else {
+      let budget = served; // 可分配的总供电 (MW)
+      const tiers = [...new Set(loads.map((l) => RELIABILITY_WEIGHT[l.profile]))].sort((a, b) => b - a);
+      for (const w of tiers) {
+        const tierLoads = loads.filter((l) => RELIABILITY_WEIGHT[l.profile] === w);
+        const tierDemand = tierLoads.reduce((s, l) => s + l.demand, 0);
+        const tierRatio = tierDemand > 0 ? clamp(budget / tierDemand, 0, 1) : 0;
+        for (const l of tierLoads) {
+          const bus = this.grid.buses.get(l.busId);
+          const ez = bus?.energized ?? 1;
+          const alloc = l.demand * tierRatio;
+          l.served = alloc * ez;
+          servedDelivered += l.served;
+          budget -= alloc;
+          if (bus) bus.blackout = tierRatio * ez < 0.999;
+        }
+      }
     }
     if (islandDead) for (const id of busIds) { const b = this.grid.buses.get(id); if (b) b.blackout = true; }
     if (shedding && !islandDead && ratio < 0.95) {
