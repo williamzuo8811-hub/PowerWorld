@@ -1,8 +1,18 @@
 // 无头整局测试：用简单 bot 自动玩关卡到通关，并对比多种电源策略的可行性。
 // 这是平衡性的回归防线——任何调参若让"标准打法"无法通关或让某策略破产，测试会失败。
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Simulation } from './simulation';
-import { scenarioById } from '../game/scenarios';
+import { scenarioById, mulberry32 } from '../game/scenarios';
+
+// 固定 RNG 种子：bot 通关与随机天气/燃料波动解耦，CI 不再间歇性红。
+// （种子选择使天气序列具有代表性；若调参后失败，是真实的平衡回归而非运气。）
+beforeEach(() => {
+  const rnd = mulberry32(20260611);
+  vi.spyOn(Math, 'random').mockImplementation(rnd);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /** 勤快运维 bot：每步把跳闸线路/变压器重合闸（等价于玩家点「检查/重合闸」） */
 function recloseAll(sim: Simulation): void {

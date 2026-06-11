@@ -34,9 +34,17 @@ export function migrateSave(blob: unknown): SaveBlob | null {
   // v1 → v2：结构兼容（deserialize 对新增字段都有 ?? 兜底），仅升版本号
   if (v === 1) v = 2;
   if (v !== SAVE_VERSION) return null; // 来自更新版本的存档：拒绝（避免静默丢数据）
-  // 基本完整性校验
+  // 基本完整性校验：字段存在 + 数值合理（NaN/Infinity 的损坏档直接拒绝，避免污染对局）
   const s = b.save as Partial<SimSaveState>;
   if (typeof s.money !== 'number' || typeof s.clock !== 'number' || !s.grid) return null;
+  if (!Number.isFinite(s.money) || !Number.isFinite(s.clock) || s.clock < 0) return null;
+  if (s.debt != null && (!Number.isFinite(s.debt) || s.debt < 0)) return null;
+  if (s.reliability != null && (!Number.isFinite(s.reliability) || s.reliability < 0 || s.reliability > 1.0001)) return null;
+  const g = s.grid as Partial<import('../sim/grid').GridData>;
+  if (!Array.isArray(g.buses) || !Array.isArray(g.gens) || !Array.isArray(g.loads) || !Array.isArray(g.lines)) return null;
+  for (const bus of g.buses) {
+    if (!Number.isFinite(bus.x) || !Number.isFinite(bus.y)) return null;
+  }
   return { version: SAVE_VERSION, scenarioId: b.scenarioId, ts: b.ts ?? Date.now(), save: b.save as SimSaveState };
 }
 
