@@ -21,6 +21,10 @@ export interface MenuOptions {
   onDeleteCustom?: (name: string) => void;
   onImportScenario?: (json: string) => string | null; // 返回错误信息或 null
   onExportCurrentScenario?: () => void; // 把当前局面导出为关卡文件
+  // —— 元进度 / 变体模式 ——
+  meta?: { level: number; frac: number; xp: number; wins: number; losses: number; rpBonusArmed: boolean };
+  modes?: { id: string; name: string; icon: string; desc: string; locked: boolean; unlockLevel: number; selected: boolean }[];
+  onSelectMode?: (id: string) => void;
 }
 
 export class Menu {
@@ -42,6 +46,51 @@ export class Menu {
       resume.textContent = '↩ 返回当前对局';
       resume.onclick = () => opts.onResume!();
       panel.appendChild(resume);
+    }
+
+    // —— 元进度：指挥官等级 + 经验条（通关/失败都涨经验，等级解锁变体玩法）——
+    if (opts.meta) {
+      const m = opts.meta;
+      const bar = document.createElement('div');
+      bar.className = 'menu-saves';
+      bar.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:14px;font-weight:700">⭐ 指挥官 Lv.${m.level}</span>
+          <span class="save-ts">通关 ${m.wins} · 失利 ${m.losses}${m.rpBonusArmed ? ' · <b style="color:var(--accent)">下局研发点 +10%（失利补偿）</b>' : ''}</span>
+        </div>
+        <div style="height:6px;background:#10161e;border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${Math.round(m.frac * 100)}%;background:var(--accent)"></div>
+        </div>`;
+      panel.appendChild(bar);
+    }
+
+    // —— 变体模式选择（按等级解锁）：选中后对任意战役关卡生效 ——
+    if (opts.modes?.length) {
+      const sec = document.createElement('div');
+      sec.className = 'menu-saves';
+      sec.innerHTML = `<div class="menu-sec-title">🎮 变体模式（叠加在所选关卡上 · 升级解锁更多）</div>`;
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+      for (const md of opts.modes) {
+        const b = document.createElement('button');
+        b.className = 'save-mini';
+        b.disabled = md.locked;
+        b.title = md.locked ? `Lv.${md.unlockLevel} 解锁 · ${md.desc}` : md.desc;
+        b.textContent = md.locked ? `🔒 ${md.icon} ${md.name}` : `${md.icon} ${md.name}`;
+        if (md.selected) b.style.cssText += ';background:var(--accent);color:#04211a;font-weight:700';
+        if (md.locked) b.style.opacity = '0.5';
+        b.onclick = () => { if (!md.locked) opts.onSelectMode?.(md.id); };
+        row.appendChild(b);
+      }
+      sec.appendChild(row);
+      const selDesc = opts.modes.find((x) => x.selected)?.desc;
+      if (selDesc) {
+        const d = document.createElement('div');
+        d.className = 'save-ts';
+        d.textContent = selDesc;
+        sec.appendChild(d);
+      }
+      panel.appendChild(sec);
     }
 
     // —— 存档区：列出所有槽位的存档（读档/导出/删除） ——

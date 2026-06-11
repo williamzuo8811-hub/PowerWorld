@@ -27,11 +27,13 @@ import {
 import { RP_PER_MWH, type TechId } from '../config/tech';
 import { demandMultiplier, renewableAvailability, seasonIntensity } from './profiles';
 import {
-  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
+  PLANTS, VOLTAGE, SUBSTATION_CAPEX, SUBSTATION_RATING, SUBSTATION_OM_PER_DAY, PLANT_FUEL, FUEL_INFO, FUEL_MEAN_REVERT, FUEL_MIN, FUEL_MAX, FUEL_SHOCK_CHANCE_PER_DAY, FUEL_CONTRACT_PREMIUM, FUEL_SEASON_WINTER_AMP, type FuelType, WEAR_FULL_DAYS, WEAR_COST_FACTOR, WEAR_OM_FACTOR, FAIL_BASE_HAZARD, REPAIR_DAYS, REPAIR_COST_FRACTION, SALVAGE_FRACTION, DEPREC_DAYS, MAINT_DAYS, MAINT_COST_FRACTION, MAINT_AGE_REDUCTION_DAYS, MAINT_SHOULDER_FACTOR, MAINT_PEAK_FACTOR, HYDRO_AVAIL_BASE, HYDRO_SUMMER_BOOST, HYDRO_WINTER_DROP, AS_HYDRO_REG_FACTOR,
   STORAGE_ARB_LIQUIDITY_MW, STORAGE_ARB_SOC_MARGIN, STORAGE_ARB_SOC_EDGE_FACTOR,
   RENEW_NOISE_SIGMA, RENEW_NOISE_REVERT, RENEW_NOISE_CLAMP,
 } from '../config/components';
-import type { Generator, Line, Load, LoadProfile } from './types';
+import type { Generator, Line, Load, LoadProfile, PlantType } from './types';
+import { evaluateObjectives, objectiveDeadline, objectiveDone, objectiveLabel, type ObjectiveSpec } from './objectives';
+import type { WeatherKind } from './events';
 import {
   START_MONEY, TARIFF, TARIFF_CLASS, RELIABILITY_WEIGHT, LOAD_MACRO, KEY_ACCOUNTS, SAT_TIME_CONSTANT, CHURN_THRESHOLD, CHURN_DAYS, CHURN_RECOVER, CHURN_REP_HIT, POACH_CONTEST_K, POACH_COMP_GAIN, BACKUP_FRACTION, CONTRACT_DAYS, CONTRACT_DISCOUNT, LEAD_FIRST_DAY, UNSERVED_PENALTY, CARBON_PRICE_START, CARBON_PRICE_GROWTH_PER_DAY, CARBON_BENCH_START, CARBON_BENCH_DECLINE_PER_DAY, CARBON_BENCH_MIN, REC_START, REC_DECLINE_PER_DAY, REC_MIN, FREQ_NOMINAL, FREQ_DROOP, FREQ_SHED_THRESHOLD, TRIP_DELAY, MAX_LOSS_FRACTION, WIN_DAY, WIN_RELIABILITY, GRADE_NETWORTH_REF, GRADE_W_RELIABILITY, GRADE_W_FINANCE, GRADE_W_CLEAN, GRADE_W_REPUTATION, BLACKSTART_TYPES, RESTORE_FAST_RATE, RESTORE_SLOW_RATE, BLACKOUT_DROP_RATE, LOAD_PF_TAN, GEN_Q_FACTOR, STORAGE_Q_FACTOR, LINE_Q_PER_FLOW2, CAPACITOR_Q, CAPACITOR_CAPEX, VOLT_SAG_K, VOLT_MIN, VOLT_LOW, VOLT_LOSS_K, POLLUTION_RADIUS, REP_TARIFF_MIN, REP_TARIFF_SPAN, REP_UNSERVED_WEIGHT, REP_CARBON_WEIGHT, REP_POLLUTION_WEIGHT, REP_TIME_CONSTANT, SPOT, INTERCONNECTOR_CAPACITY, IMPORT_MARKUP, MARKET_FEE_PER_DAY, EXPORT_WHEEL, IMPORT_CARBON_INTENSITY, CYCLE_PERIOD_DAYS, CYCLE_AMPLITUDE, HISTORY_SAMPLE_HOURS, HISTORY_MAX, SEASON_YEAR_DAYS, SEASON_SUMMER_DEMAND, SEASON_WINTER_DEMAND, SEASON_SOLAR_AMP, SEASON_WIND_AMP, SEASON_ADEQ_MARGIN, IRP_SCENARIOS, type StressScenarioSpec, REGIONAL_BASE_DEMAND, COMPETITORS_INIT, GEN_MARGIN_MARKUP, REGIONAL_SCARCITY_ADDER, COMPETITIVENESS_K, CAPACITY_PRICE_BASE, RESERVE_REQUIREMENT, CAP_ADEQ_REF, CAP_K, CAP_PRICE_MIN_FRAC, CAP_PRICE_MAX_FRAC, CAPACITY_CREDIT, STORAGE, CCS_CAPTURE_RATE, CCS_COST_FACTOR, CCS_CAPEX_PER_MW, CONGESTION_THRESHOLD, CONGESTION_PRICE, DR_FRACTION, DR_CURTAILABILITY, DR_TRIGGER_PRICE, DR_INCENTIVE, AS_REG_PRICE_BASE, AS_RESERVE_PRICE_BASE, AS_GAS_REG_FACTOR, AS_REG_REQ_FRAC, AS_RESERVE_REQ_FRAC, AS_COMP_FAST_FRAC, AS_COMP_RESERVE_FRAC, AS_ADEQ_REF, AS_K, AS_PRICE_MIN, AS_PRICE_MAX, RENEW_RESERVE_K, FLEX_PRICE_BASE, FLEX_BASE_FRAC, FLEX_RENEW_FACTOR, FLEX_COMP_FRAC, FLEX_ADEQ_REF, FLEX_K, FLEX_PRICE_MIN, FLEX_PRICE_MAX, STORAGE_ARB_CAPTURE, STORAGE_ARB_SEASON_K, INTERRUPT_RATE_BASE, INTERRUPT_SEASON_K, CAP_DELIVERY_PENALTY, ZONE_TRADE_CAPACITY, ZONE_WHEEL_FEE, BACKUP_OM_PER_DAY, STORAGE_REG_ARB_FACTOR, AUTOOPS_RECLOSE_DELAY, AUTOOPS_WEAR_THRESHOLD, AUTOOPS_MAINT_CASH_MULT, AUTOOPS_CASH_FLOOR, AUTOOPS_PRECOMMIT_TARGET, type CompetitorSpec,
 } from '../config/components';
@@ -150,6 +152,13 @@ export interface SimSaveState {
   competitors?: Competitor[]; // 对手状态（容量/报价随局演化，需随档保存）
   storageStrategy?: 'arb' | 'reg';
   autoOps?: AutoOps;
+  objectives?: ObjectiveSpec[]; // 关卡附加目标
+  loanBan?: boolean;
+  rpRateMult?: number;
+  bannedPlants?: PlantType[];
+  fuelVolatilityMult?: number;
+  scriptedWeather?: { atClock: number; kind: WeatherKind; fired?: boolean }[];
+  eventIntensity?: number; // 天气事件频率倍率
 }
 
 /** 自动运维 / 联合调度助理的开关组 */
@@ -184,6 +193,13 @@ export class Simulation {
   goalReliability = WIN_RELIABILITY; // 且可靠性达标
   carbonPriceMult = 1; // 碳价倍率（关卡可调，如"碳中和转型"加压）
   sandbox = false; // 沙盒模式：无输赢、无破产
+  objectives: ObjectiveSpec[] = []; // 关卡附加目标（deadline 型到期未达成即判负；atWin 型作为通关门槛）
+  loanBan = false; // 禁止贷款（预算约束/无贷款模式）
+  rpRateMult = 1; // 研发点积累倍率（失败补偿/变体模式）
+  bannedPlants = new Set<PlantType>(); // 禁建机组类型（每日挑战"特殊禁令"/自定义关卡）
+  fuelVolatilityMult = 1; // 燃料波动率倍率（每日挑战维度）
+  scriptedWeather: { atClock: number; kind: WeatherKind; fired?: boolean }[] = []; // 剧本天气事件（按时刻触发）
+  private lastObjReminderDay = -1; // 目标截止提醒的"每日一次"节流
   events = new EventSystem();
   policy = new PolicyState();
   tech = new TechState();
@@ -270,6 +286,13 @@ export class Simulation {
     this.goalReliability = WIN_RELIABILITY;
     this.carbonPriceMult = 1;
     this.sandbox = false;
+    this.objectives = [];
+    this.loanBan = false;
+    this.rpRateMult = 1;
+    this.bannedPlants = new Set();
+    this.fuelVolatilityMult = 1;
+    this.scriptedWeather = [];
+    this.lastObjReminderDay = -1;
     this.windBase = 0.6;
     this.windNoise = 0;
     this.solarNoise = 0;
@@ -363,6 +386,13 @@ export class Simulation {
       competitors: this.competitors.map((c) => ({ ...c })),
       storageStrategy: this.storageStrategy,
       autoOps: { ...this.autoOps },
+      objectives: this.objectives.map((o) => ({ ...o })),
+      loanBan: this.loanBan,
+      rpRateMult: this.rpRateMult,
+      bannedPlants: [...this.bannedPlants],
+      fuelVolatilityMult: this.fuelVolatilityMult,
+      scriptedWeather: this.scriptedWeather.map((s) => ({ ...s })),
+      eventIntensity: this.events.intensity,
     };
   }
 
@@ -424,6 +454,14 @@ export class Simulation {
       : COMPETITORS_INIT.map((c) => ({ ...c, base: c.capacity, mcBase: c.marginalCost }));
     this.storageStrategy = d.storageStrategy ?? 'arb';
     this.autoOps = { reclose: false, maintenance: false, repay: false, precommit: false, ...(d.autoOps ?? {}) };
+    this.objectives = (d.objectives ?? []).map((o) => ({ ...o }));
+    this.loanBan = d.loanBan ?? false;
+    this.rpRateMult = d.rpRateMult ?? 1;
+    this.bannedPlants = new Set(d.bannedPlants ?? []);
+    this.fuelVolatilityMult = d.fuelVolatilityMult ?? 1;
+    this.scriptedWeather = (d.scriptedWeather ?? []).map((s) => ({ ...s }));
+    this.events.intensity = d.eventIntensity ?? 1;
+    this.lastObjReminderDay = this.day;
     this.lastOpsDay = this.day;
     this.lastYearIdx = Math.floor(this.day / SEASON_YEAR_DAYS); // 读档不重发既往年报
   }
@@ -662,6 +700,36 @@ export class Simulation {
     return true;
   }
 
+  /** 线路增容造价（按长度 × 电压等级；导线加粗/复导线改造） */
+  lineUpgradeCost(ln: Line): number {
+    return Math.round(ln.length * VOLTAGE[ln.voltage].costPerTile * 0.55);
+  }
+  /** 线路原地增容：热极限 +50% 默认容量——替代"再拉一条并联线"的经典电网投资 */
+  upgradeLineCapacity(lineId: number): boolean {
+    const ln = this.grid.lines.get(lineId);
+    if (!ln || ln.underConstruction) return false;
+    const step = Math.round(VOLTAGE[ln.voltage].defaultCapacity * 0.5);
+    const cost = this.lineUpgradeCost(ln);
+    if (!this.spend(cost)) return false;
+    ln.capacity += step;
+    this.log('good', `⤴ 线路增容 +${step}MW（¥${cost.toLocaleString('en-US')}）：热极限 ${ln.capacity}MW`);
+    return true;
+  }
+  /** 变压器增容费用 */
+  transformerUpgradeCost(): number {
+    return Math.round(SUBSTATION_CAPEX * 0.6);
+  }
+  /** 变电站变压器原地增容：额定 +45MW（换更大主变，免拆站重建） */
+  upgradeTransformer(busId: number): boolean {
+    const bus = this.grid.buses.get(busId);
+    if (!bus || bus.kind !== 'substation' || bus.underConstruction) return false;
+    const cost = this.transformerUpgradeCost();
+    if (!this.spend(cost)) return false;
+    bus.rating = (bus.rating ?? SUBSTATION_RATING) + 45;
+    this.log('good', `⤴ 变电站「${bus.name}」换大主变 +45MW（¥${cost.toLocaleString('en-US')}）：额定 ${bus.rating}MW`);
+    return true;
+  }
+
   /** 签订燃料长约：锁定该燃料当前现货指数 × 溢价，锁定 days 天 */
   signFuelContract(fuel: FuelType, days: number): boolean {
     if (days <= 0) return false;
@@ -760,7 +828,7 @@ export class Simulation {
       const info = FUEL_INFO[fuel];
       let p = this.fuelPrice[fuel];
       p += (this.fuelSeasonMean(fuel) - p) * FUEL_MEAN_REVERT * dtDay; // 向季节性基准回归
-      p += (Math.random() * 2 - 1) * info.volatility * Math.sqrt(dtDay); // 随机游走
+      p += (Math.random() * 2 - 1) * info.volatility * this.fuelVolatilityMult * Math.sqrt(dtDay); // 随机游走
       if (Math.random() < FUEL_SHOCK_CHANCE_PER_DAY * dtDay) {
         p *= 1 + Math.random() * 0.5; // 供给冲击：跳涨 0~50%
         this.log('warn', `📈 ${info.label}价格跳涨（指数 ${clamp(p, FUEL_MIN, FUEL_MAX).toFixed(2)}）`);
@@ -873,6 +941,13 @@ export class Simulation {
     );
     this.windNoise = ouStep(this.windNoise);
     this.solarNoise = ouStep(this.solarNoise);
+    // 剧本天气：到点触发预设事件（剧本关卡/自定义关卡的导演手段）
+    for (const s of this.scriptedWeather) {
+      if (!s.fired && this.clock >= s.atClock) {
+        s.fired = true;
+        this.events.triggerKind(this, s.kind);
+      }
+    }
     this.events.update(this);
     this.policy.update(this);
 
@@ -1386,8 +1461,8 @@ export class Simulation {
     this.startupsTotal = [...this.grid.gens.values()].reduce((s, g) => s + (g.startups ?? 0), 0);
     this.lastLossFraction = aggDemand > 1 ? clamp(aggLoss / aggDemand, 0, MAX_LOSS_FRACTION) : 0.02;
 
-    // 研发点：随送达电量积累（电网越大、运行越好，研发越快）
-    this.tech.points += aggServed * dtHours * RP_PER_MWH;
+    // 研发点：随送达电量积累（电网越大、运行越好，研发越快）；失败补偿/变体模式可加成
+    this.tech.points += aggServed * dtHours * RP_PER_MWH * this.rpRateMult;
     this.peakServed = Math.max(this.peakServed, aggServed);
     this.totalEnergyServed += aggServed * dtHours;
     this.outageEnergyTotal += Math.max(0, aggDemand - aggServed) * dtHours;
@@ -1751,6 +1826,11 @@ export class Simulation {
     return { score, grade, parts: { reliability: reliability * 100, finance: finance * 100, clean: clean * 100, reputation: reputation * 100 } };
   }
 
+  /** 附加目标状态（HUD 目标追踪用） */
+  objectiveStatus(): ReturnType<typeof evaluateObjectives> {
+    return evaluateObjectives(this);
+  }
+
   private checkEndConditions(): void {
     if (this.gameOver || this.sandbox) return; // 沙盒模式没有输赢
     if (this.money < 0) {
@@ -1759,7 +1839,30 @@ export class Simulation {
       this.log('bad', '💸 资金耗尽，电力公司破产了。');
       return;
     }
+    // deadline 型附加目标：到期未达成 = 立即判负（剧本压力）
+    for (const o of this.objectives) {
+      const deadline = objectiveDeadline(o);
+      if (deadline != null && this.day >= deadline && !objectiveDone(this, o)) {
+        this.gameOver = true;
+        this.win = false;
+        this.log('bad', `⏰ 目标失败：「${objectiveLabel(o)}」未在期限内达成。`);
+        return;
+      }
+    }
+    // 目标截止提醒：每天一次，对 2 天内到期且未完成的目标预警
+    if (this.day !== this.lastObjReminderDay) {
+      this.lastObjReminderDay = this.day;
+      for (const o of this.objectives) {
+        const deadline = objectiveDeadline(o);
+        if (deadline != null && !objectiveDone(this, o) && deadline - this.day <= 2 && deadline > this.day) {
+          this.log('warn', `⏳ 目标倒计时：「${objectiveLabel(o)}」还剩 ${deadline - this.day} 天`);
+        }
+      }
+    }
     if (this.day >= this.goalDay && this.reliability >= this.goalReliability) {
+      // atWin 型附加目标：作为通关的额外门槛（未达成则继续经营，不判负）
+      const pending = this.objectives.filter((o) => objectiveDeadline(o) == null && !objectiveDone(this, o));
+      if (pending.length > 0) return;
       this.gameOver = true;
       this.win = true;
       this.log('good', '🏆 达成关卡目标，灯火通明，你赢了！');
@@ -1855,6 +1958,9 @@ export class Simulation {
       outageEnergyTotal: this.outageEnergyTotal,
       voltage: this.voltage,
       customerSatisfaction: this.customerSatisfaction,
+      objectives: this.objectives.length
+        ? evaluateObjectives(this).map((o) => ({ label: o.label, done: o.done, failed: o.failed, progress: o.progress }))
+        : [],
     };
   }
 }

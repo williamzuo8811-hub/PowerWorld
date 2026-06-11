@@ -19,8 +19,8 @@ describe('战役关卡', () => {
       const sim = new Simulation();
       expect(() => s.setup(sim)).not.toThrow();
       expect(sim.money).toBeGreaterThan(0);
-      // 教程/沙盒/无尽外的关卡应有有限目标日
-      if (s.id !== 'tutorial' && s.id !== 'sandbox' && s.id !== 'endless') {
+      // 教程（含进阶 mini 教程）/沙盒/无尽外的关卡应有有限目标日
+      if (!/^tut/.test(s.id) && s.id !== 'sandbox' && s.id !== 'endless') {
         expect(Number.isFinite(sim.goalDay)).toBe(true);
       }
     }

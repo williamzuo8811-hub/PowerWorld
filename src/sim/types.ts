@@ -165,4 +165,5 @@ export interface SimSnapshot {
   outageEnergyTotal: number; // 累计失负荷电量 (MWh)
   voltage: number; // 主电网电压（pu）
   customerSatisfaction: number; // 大客户加权满意度 0..1
+  objectives: { label: string; done: boolean; failed: boolean; progress: string }[]; // 附加目标追踪
 }

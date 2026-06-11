@@ -1,12 +1,35 @@
 // 自定义关卡（Mod 入口）：用 JSON 描述初始电网/目标/经济参数。
 // 玩法：沙盒里搭好局面 → "导出为关卡文件" → 分享给朋友 → 对方导入即可游玩。
+// v2 起支持"剧本"三件套：events[]（定时天气事件）、objectives[]（附加目标）、overrides{}（规则覆盖），
+// 自定义关卡从"分享布局"升级为"分享剧本"。
 import type { Simulation } from '../sim/simulation';
 import type { Scenario } from './scenarios';
 import type { PlantType, LoadProfile } from '../sim/types';
+import type { WeatherKind } from '../sim/events';
+import { validateObjective, type ObjectiveSpec } from '../sim/objectives';
 import { PLANTS, STORAGE, KEY_ACCOUNTS, type StorageType } from '../config/components';
 
 export const SCENARIO_FORMAT = 'powerworld-scenario';
-export const SCENARIO_VERSION = 1;
+export const SCENARIO_VERSION = 2; // v1 仍可导入（新字段全部可选）
+
+const WEATHER_KINDS: WeatherKind[] = ['clear', 'heatwave', 'coldsnap', 'calm', 'overcast', 'storm'];
+
+/** 剧本事件：第 day 天 hour 点触发一场指定天气 */
+export interface CustomEvent {
+  day: number;
+  hour?: number; // 缺省 12 点
+  kind: WeatherKind;
+}
+
+/** 规则覆盖：改变本关的全局玩法参数 */
+export interface CustomOverrides {
+  noLoans?: boolean; // 禁止贷款
+  banPlants?: PlantType[]; // 禁建机组类型
+  competitorScale?: number; // 对手装机倍率（0.3~3）
+  eventIntensity?: number; // 天气事件频率倍率（0.3~3）
+  fuelVolatilityMult?: number; // 燃料波动率倍率（0.3~4）
+  startDebt?: number; // 开局负债
+}
 
 export interface CustomBus {
   id: string; // 关卡内唯一标识（连线引用）
@@ -35,6 +58,10 @@ export interface CustomScenarioData {
   startClockHours?: number; // 开局时刻（累计仿真小时）：可指定开局季节/时辰，缺省 0
   buses: CustomBus[];
   lines?: [string, string][]; // 引用 bus id
+  // —— v2 剧本三件套（全部可选，向后兼容 v1）——
+  events?: CustomEvent[]; // 定时天气事件
+  objectives?: ObjectiveSpec[]; // 附加目标（deadline/atWin）
+  overrides?: CustomOverrides; // 规则覆盖
 }
 
 /** 校验关卡数据；合法返回 null，否则返回错误描述 */
@@ -61,6 +88,26 @@ export function validateCustom(d: unknown): string | null {
   }
   for (const [a, b] of c.lines ?? []) {
     if (!ids.has(a) || !ids.has(b)) return `线路引用了不存在的设施：${a} → ${b}`;
+  }
+  // —— v2 剧本字段校验 ——
+  for (const e of c.events ?? []) {
+    if (typeof e.day !== 'number' || e.day < 0 || e.day > 1000) return `剧本事件的 day 非法：${e.day}`;
+    if (e.hour != null && (typeof e.hour !== 'number' || e.hour < 0 || e.hour >= 24)) return `剧本事件的 hour 非法：${e.hour}`;
+    if (!WEATHER_KINDS.includes(e.kind)) return `剧本事件的 kind 非法：${e.kind}`;
+  }
+  for (const o of c.objectives ?? []) {
+    const err = validateObjective(o);
+    if (err) return `附加目标非法：${err}`;
+  }
+  const ov = c.overrides;
+  if (ov) {
+    if (ov.competitorScale != null && (typeof ov.competitorScale !== 'number' || ov.competitorScale < 0.3 || ov.competitorScale > 3)) return 'overrides.competitorScale 须在 0.3~3';
+    if (ov.eventIntensity != null && (typeof ov.eventIntensity !== 'number' || ov.eventIntensity < 0.3 || ov.eventIntensity > 3)) return 'overrides.eventIntensity 须在 0.3~3';
+    if (ov.fuelVolatilityMult != null && (typeof ov.fuelVolatilityMult !== 'number' || ov.fuelVolatilityMult < 0.3 || ov.fuelVolatilityMult > 4)) return 'overrides.fuelVolatilityMult 须在 0.3~4';
+    if (ov.startDebt != null && (typeof ov.startDebt !== 'number' || ov.startDebt < 0 || ov.startDebt > 10_000_000)) return 'overrides.startDebt 非法';
+    for (const p of ov.banPlants ?? []) {
+      if (!(p in PLANTS)) return `overrides.banPlants 含非法机组类型：${p}`;
+    }
   }
   return null;
 }
@@ -95,6 +142,18 @@ export function toScenario(data: CustomScenarioData): Scenario {
       for (const [a, b] of data.lines ?? []) {
         const fa = idMap.get(a)!, fb = idMap.get(b)!;
         if (g.canConnect(fa, fb).ok) g.addLine(fa, fb); // 非法连线（如未经变电站）跳过
+      }
+      // —— v2 剧本三件套 ——
+      sim.scriptedWeather = (data.events ?? []).map((e) => ({ atClock: e.day * 24 + (e.hour ?? 12), kind: e.kind }));
+      sim.objectives = (data.objectives ?? []).map((o) => ({ ...o }));
+      const ov = data.overrides;
+      if (ov) {
+        if (ov.noLoans) sim.loanBan = true;
+        for (const p of ov.banPlants ?? []) sim.bannedPlants.add(p);
+        if (ov.competitorScale != null) for (const cpt of sim.competitors) { cpt.base *= ov.competitorScale; cpt.capacity = cpt.base; }
+        if (ov.eventIntensity != null) { sim.events.intensity = ov.eventIntensity; sim.events.schedule(sim.clock); }
+        if (ov.fuelVolatilityMult != null) sim.fuelVolatilityMult = ov.fuelVolatilityMult;
+        if (ov.startDebt != null && ov.startDebt > 0) sim.debt = ov.startDebt;
       }
       sim.log('info', `【${data.name}】自定义关卡开局——${data.hint ?? '祝你好运！'}`);
     },
@@ -134,6 +193,11 @@ export function exportCurrentAsScenario(sim: Simulation, name: string): CustomSc
     }
   }
   for (const ln of g.lines.values()) lines.push([idOf(ln.from), idOf(ln.to)]);
+  const overrides: CustomOverrides = {};
+  if (sim.loanBan) overrides.noLoans = true;
+  if (sim.bannedPlants.size) overrides.banPlants = [...sim.bannedPlants];
+  if (sim.events.intensity !== 1) overrides.eventIntensity = sim.events.intensity;
+  if (sim.fuelVolatilityMult !== 1) overrides.fuelVolatilityMult = sim.fuelVolatilityMult;
   return {
     format: SCENARIO_FORMAT,
     version: SCENARIO_VERSION,
@@ -147,6 +211,8 @@ export function exportCurrentAsScenario(sim: Simulation, name: string): CustomSc
     startClockHours: Math.floor(sim.clock),
     buses,
     lines,
+    objectives: sim.objectives.length ? sim.objectives.map((o) => ({ ...o })) : undefined,
+    overrides: Object.keys(overrides).length ? overrides : undefined,
   };
 }
 
